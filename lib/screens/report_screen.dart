@@ -27,12 +27,25 @@ class _ReportScreenState extends State<ReportScreen> {
     return SafeArea(
       child: Column(
         children: [
-          _buildHeader(),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: Center(
+                      child: Text(
+                        'Summary',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text,
+                        ),
+                      ),
+                    ),
+                  ),
                   _buildTabs(),
                   const SizedBox(height: 24),
                   AnimatedSwitcher(
@@ -57,30 +70,6 @@ class _ReportScreenState extends State<ReportScreen> {
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      decoration: const BoxDecoration(
-        color: AppColors.card,
-        border: Border(bottom: BorderSide(color: AppColors.border)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          const SizedBox(width: 40, height: 40),
-          const Text(
-            'Summary',
-            style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: AppColors.text),
-          ),
-          _iconButton(FontAwesomeIcons.bell),
         ],
       ),
     );

@@ -185,41 +185,34 @@ class _CalenderScreenState extends State<CalenderScreen> {
   }
 
   Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: const BoxDecoration(
-        color: AppConfig.card,
-        border: Border(bottom: BorderSide(color: AppConfig.border)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const SizedBox(width: 40, height: 40),
-              const Text(
-                'My Schedule',
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: AppConfig.text),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Center(
+            child: Text(
+              'My Schedule',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: AppConfig.text,
               ),
-              _iconButton(FontAwesomeIcons.filter),
-            ],
+            ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _legendItem(AppConfig.branches['Main St']!.color, 'Main St'),
-              const SizedBox(width: 16),
-              _legendItem(AppConfig.branches['Downtown']!.color, 'Downtown'),
-              const SizedBox(width: 16),
-              _legendItem(AppConfig.branches['Westside']!.color, 'Westside'),
-            ],
-          )
-        ],
-      ),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _legendItem(AppConfig.branches['Main St']!.color, 'Main St'),
+            const SizedBox(width: 16),
+            _legendItem(AppConfig.branches['Downtown']!.color, 'Downtown'),
+            const SizedBox(width: 16),
+            _legendItem(AppConfig.branches['Westside']!.color, 'Westside'),
+          ],
+        )
+      ],
     );
   }
 
