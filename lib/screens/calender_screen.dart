@@ -196,7 +196,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _iconButton(FontAwesomeIcons.arrowLeft),
+              const SizedBox(width: 40, height: 40),
               const Text(
                 'My Schedule',
                 style: TextStyle(

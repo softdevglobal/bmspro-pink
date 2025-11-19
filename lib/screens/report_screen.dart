@@ -72,7 +72,7 @@ class _ReportScreenState extends State<ReportScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _iconButton(FontAwesomeIcons.arrowLeft),
+          const SizedBox(width: 40, height: 40),
           const Text(
             'Summary',
             style: TextStyle(
