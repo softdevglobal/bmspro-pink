@@ -23,12 +23,12 @@ class PrimaryGradientButton extends StatelessWidget {
 
     final Widget content = SizedBox(
       height: height,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
+      child: Material(
+        color: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        clipBehavior: Clip.antiAlias,
         child: Ink(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
             gradient: LinearGradient(colors: [primary, accent]),
             boxShadow: [
               BoxShadow(
@@ -38,22 +38,25 @@ class PrimaryGradientButton extends StatelessWidget {
               ),
             ],
           ),
-          child: Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (leadingIcon != null) ...[
-                  Icon(leadingIcon, color: Colors.white),
-                  const SizedBox(width: 8),
-                ],
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
+          child: InkWell(
+            onTap: onTap,
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (leadingIcon != null) ...[
+                    Icon(leadingIcon, color: Colors.white),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -66,5 +69,3 @@ class PrimaryGradientButton extends StatelessWidget {
     return content;
   }
 }
-
-

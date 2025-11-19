@@ -35,6 +35,12 @@ class BmsproPinkApp extends StatelessWidget {
         scaffoldBackgroundColor: backgroundPink,
         // Use DM Sans app-wide
         fontFamily: GoogleFonts.dmSans().fontFamily,
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+            foregroundColor: primaryPink,
+            textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
         textTheme: const TextTheme(
           headlineLarge: TextStyle(fontWeight: FontWeight.w700),
           headlineMedium: TextStyle(fontWeight: FontWeight.w700),

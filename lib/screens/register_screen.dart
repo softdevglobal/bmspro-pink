@@ -265,8 +265,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 MaterialPageRoute(
                                     builder: (_) => const _GoLogin()),
                               ),
-                              child:
-                                  const Text('Already have an account? Login'),
+                              style: TextButton.styleFrom(
+                                foregroundColor:
+                                    Theme.of(context).colorScheme.primary,
+                              ),
+                              child: const Text('Already have an account? Login'),
                             ),
                           ),
                         ],
