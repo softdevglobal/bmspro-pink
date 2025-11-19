@@ -243,12 +243,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   PrimaryGradientButton(
                                     label: 'Create Account',
                                     onTap: () {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                            content: Text(
-                                                'Register pressed (UI only)')),
-                                      );
+                                      Navigator.pushReplacementNamed(
+                                          context, AppRoutes.login);
                                     },
                                   ),
                                 ],
@@ -269,7 +265,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 foregroundColor:
                                     Theme.of(context).colorScheme.primary,
                               ),
-                              child: const Text('Already have an account? Login'),
+                              child:
+                                  const Text('Already have an account? Login'),
                             ),
                           ),
                         ],

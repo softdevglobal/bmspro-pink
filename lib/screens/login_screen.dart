@@ -243,12 +243,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   PrimaryGradientButton(
                                     label: 'Sign In',
                                     onTap: () {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                            content: Text(
-                                                'Login pressed (UI only)')),
-                                      );
+                                      Navigator.pushReplacementNamed(
+                                          context, AppRoutes.home);
                                     },
                                   ),
                                 ],
