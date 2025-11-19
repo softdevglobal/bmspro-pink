@@ -12,37 +12,73 @@ class PinkBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color primary = Theme.of(context).colorScheme.primary;
-    return NavigationBar(
-      selectedIndex: currentIndex,
-      onDestinationSelected: onChanged,
-      height: 72,
-      surfaceTintColor: Colors.white,
-      backgroundColor: Colors.white,
-      indicatorColor: primary.withOpacity(0.12),
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.home_outlined),
-          selectedIcon: Icon(Icons.home_rounded),
-          label: 'Home',
+
+    const List<IconData> icons = <IconData>[
+      Icons.home_rounded,
+      Icons.calendar_month_rounded,
+      Icons.bar_chart_rounded,
+      Icons.settings_rounded,
+    ];
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: Container(
+          height: 78,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: primary.withOpacity(0.18),
+                blurRadius: 24,
+                offset: const Offset(0, -8),
+              ),
+            ],
+          ),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final double barWidth = constraints.maxWidth;
+            final double slotWidth = barWidth / icons.length;
+
+            return Stack(
+              children: [
+                // Icons row
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: List.generate(icons.length, (i) {
+                    final bool selected = i == currentIndex;
+                    return SizedBox(
+                      width: slotWidth,
+                      height: 78,
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(24),
+                          onTap: () => onChanged(i),
+                          child: Center(
+                            child: AnimatedScale(
+                              duration: const Duration(milliseconds: 160),
+                              scale: selected ? 1.12 : 1.0,
+                              child: Icon(
+                                icons[i],
+                                size: 30,
+                                color: selected
+                                    ? primary
+                                    : const Color(0xFF9E9E9E),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ],
+            );
+          }),
         ),
-        NavigationDestination(
-          icon: Icon(Icons.calendar_today_outlined),
-          selectedIcon: Icon(Icons.calendar_month_rounded),
-          label: 'Schedule',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.bar_chart_outlined),
-          selectedIcon: Icon(Icons.bar_chart_rounded),
-          label: 'Reports',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.settings_outlined),
-          selectedIcon: Icon(Icons.settings_rounded),
-          label: 'Settings',
-        ),
-      ],
+      ),
     );
   }
 }
-
-

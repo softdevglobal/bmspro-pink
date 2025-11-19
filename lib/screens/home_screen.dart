@@ -17,7 +17,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = <Widget>[
       const _HomeDashboard(),
       const _PlaceholderPage(title: 'Schedule'),
-      const _PlaceholderPage(title: 'Clients'),
       const _PlaceholderPage(title: 'Reports'),
       const _PlaceholderPage(title: 'Settings'),
     ];
