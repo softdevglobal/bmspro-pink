@@ -12,16 +12,17 @@ class BmsproPinkApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const Color primaryPink = Color(0xFFFF4DA6); // vibrant pink
-    const Color deepPurple = Color(0xFF6A1B9A); // deep purple
-    const Color lightPink = Color(0xFFFFE3F1); // very light pink
+    // Design palette to match the provided mockup
+    const Color primaryPink = Color(0xFFFF2D8F); // #FF2D8F
+    const Color accentPink = Color(0xFFFF6FB5); // #FF6FB5
+    const Color backgroundPink = Color(0xFFFFF5FA); // #FFF5FA
 
     final ColorScheme colorScheme = ColorScheme.fromSeed(
       seedColor: primaryPink,
       brightness: Brightness.light,
       primary: primaryPink,
-      secondary: deepPurple,
-      background: Colors.white,
+      secondary: accentPink,
+      background: backgroundPink,
       surface: Colors.white,
     );
 
@@ -31,7 +32,7 @@ class BmsproPinkApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
-        scaffoldBackgroundColor: Colors.white,
+        scaffoldBackgroundColor: backgroundPink,
         // Use DM Sans app-wide
         fontFamily: GoogleFonts.dmSans().fontFamily,
         textTheme: const TextTheme(
@@ -43,14 +44,14 @@ class BmsproPinkApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: lightPink.withOpacity(0.25),
+          fillColor: Colors.white,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide(color: primaryPink.withOpacity(0.35)),
+            borderSide: BorderSide(color: const Color(0xFFF2D2E9)),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide(color: primaryPink.withOpacity(0.25)),
+            borderSide: const BorderSide(color: Color(0xFFF2D2E9)),
           ),
           focusedBorder: const OutlineInputBorder(
             borderRadius: BorderRadius.all(Radius.circular(14)),

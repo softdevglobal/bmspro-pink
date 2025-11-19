@@ -30,19 +30,14 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     final Color primary = Theme.of(context).colorScheme.primary;
-    final Color secondary = Theme.of(context).colorScheme.secondary;
+    final Color accent = Theme.of(context).colorScheme.secondary;
+    const Color background = Color(0xFFFFF5FA);
 
     return Scaffold(
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [primary.withOpacity(0.95), secondary.withOpacity(0.95)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
+        color: background,
         child: SafeArea(
           child: Center(
             child: Column(
@@ -52,23 +47,32 @@ class _SplashScreenState extends State<SplashScreen> {
                   width: 120,
                   height: 120,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: Colors.white.withOpacity(0.35), width: 1.5),
+                    borderRadius: BorderRadius.circular(24),
+                    gradient: LinearGradient(
+                      colors: [primary, accent],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: primary.withOpacity(0.18),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      )
+                    ],
                   ),
                   child: const Center(
-                    child: Icon(Icons.spa, color: Colors.white, size: 64),
+                    child: Icon(Icons.content_cut, color: Colors.white, size: 48),
                   ),
                 ),
                 const SizedBox(height: 20),
                 const Text(
-                  'BMSPRO PINK',
+                  'BMS Pro Pink',
                   style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
+                    color: Color(0xFF1A1A1A),
+                    fontSize: 26,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
+                    letterSpacing: 0.3,
                   ),
                 ),
               ],

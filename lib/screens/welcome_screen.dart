@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../routes.dart';
+import '../widgets/primary_gradient_button.dart';
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -39,10 +40,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   @override
   Widget build(BuildContext context) {
     final Color primary = Theme.of(context).colorScheme.primary;
-    final Color secondary = Theme.of(context).colorScheme.secondary;
+    final Color accent = Theme.of(context).colorScheme.secondary;
+    const Color background = Color(0xFFFFF5FA);
     final bool isLast = _currentPage == _pages.length - 1;
 
     return Scaffold(
+      backgroundColor: background,
       body: SafeArea(
         child: Column(
           children: [
@@ -60,7 +63,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         const SizedBox(height: 24),
-                        // "Image" area - icon inside gradient circle (no external assets required)
+                        // "Image" area - icon inside gradient rounded square
                         Container(
                           height: MediaQuery.of(context).size.height * 0.33,
                           alignment: Alignment.center,
@@ -68,11 +71,11 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                             width: 200,
                             height: 200,
                             decoration: BoxDecoration(
-                              shape: BoxShape.circle,
+                              borderRadius: BorderRadius.circular(32),
                               gradient: LinearGradient(
                                 colors: [
-                                  primary.withOpacity(0.85),
-                                  secondary.withOpacity(0.85),
+                                  primary,
+                                  accent,
                                 ],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
@@ -93,7 +96,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                           data.title,
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            color: secondary,
+                            color: primary,
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -141,7 +144,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                               duration: const Duration(milliseconds: 300),
                               curve: Curves.easeOut,
                             ),
-                    child: Text(_currentPage == 0 ? 'Skip' : 'Back'),
+                    child: Text(
+                      _currentPage == 0 ? 'Skip' : 'Back',
+                      style: TextStyle(color: primary, fontWeight: FontWeight.w600),
+                    ),
                   ),
                   const Spacer(),
                   if (!isLast)
@@ -153,12 +159,11 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       child: const Text('Next'),
                     ),
                   if (isLast)
-                    SizedBox(
+                    PrimaryGradientButton(
+                      label: 'Get Started',
                       width: 160,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pushReplacementNamed(context, AppRoutes.login),
-                        child: const Text('Get Started'),
-                      ),
+                      height: 48,
+                      onTap: () => Navigator.pushReplacementNamed(context, AppRoutes.login),
                     ),
                 ],
               ),
