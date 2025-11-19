@@ -3,6 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:async';
 import '../widgets/pink_bottom_nav.dart';
+import 'calender_screen.dart';
+import 'report_screen.dart';
+import 'profile_screen.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -102,28 +105,43 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 24, 16, 100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(),
-              const SizedBox(height: 24),
-              _buildStatusCard(),
-              const SizedBox(height: 24),
-              _buildAppointmentsSection(),
-              const SizedBox(height: 24),
-              _buildQuickActions(),
-            ],
-          ),
-        ),
-      ),
+      body: _navIndex == 0
+          ? SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(),
+                    const SizedBox(height: 24),
+                    _buildStatusCard(),
+                    const SizedBox(height: 24),
+                    _buildAppointmentsSection(),
+                    const SizedBox(height: 24),
+                    _buildQuickActions(),
+                  ],
+                ),
+              ),
+            )
+          : _buildTabBody(),
       bottomNavigationBar: PinkBottomNav(
         currentIndex: _navIndex,
         onChanged: (index) => setState(() => _navIndex = index),
       ),
     );
+  }
+
+  Widget _buildTabBody() {
+    switch (_navIndex) {
+      case 1:
+        return const CalenderScreen();
+      case 2:
+        return const ReportScreen();
+      case 3:
+        return const ProfileScreen();
+      default:
+        return const SizedBox.shrink();
+    }
   }
 
   // --- UI Components ---

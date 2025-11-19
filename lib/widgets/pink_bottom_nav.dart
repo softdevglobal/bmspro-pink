@@ -17,7 +17,7 @@ class PinkBottomNav extends StatelessWidget {
       Icons.home_rounded,
       Icons.calendar_month_rounded,
       Icons.bar_chart_rounded,
-      Icons.settings_rounded,
+      Icons.person_rounded,
     ];
 
     return SafeArea(

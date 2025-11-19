@@ -1,0 +1,428 @@
+import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'dart:math' as math;
+
+class AppColors {
+  static const primary = Color(0xFFFF2D8F);
+  static const primaryDark = Color(0xFFD81F75);
+  static const accent = Color(0xFFFF6FB5);
+  static const background = Color(0xFFFFF5FA);
+  static const card = Colors.white;
+  static const text = Color(0xFF1A1A1A);
+  static const muted = Color(0xFF9E9E9E);
+  static const border = Color(0xFFF2D2E9);
+}
+
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen>
+    with TickerProviderStateMixin {
+  late AnimationController _entranceController;
+  late AnimationController _avatarPulseController;
+  final List<Animation<Offset>> _menuSlideAnimations = [];
+  final List<Animation<double>> _menuFadeAnimations = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _avatarPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat(reverse: false);
+    for (int i = 0; i < 4; i++) {
+      final start = 0.2 + (i * 0.1);
+      final end = start + 0.4;
+      _menuSlideAnimations.add(
+        Tween<Offset>(begin: const Offset(-0.2, 0), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _entranceController,
+            curve:
+                Interval(start, end > 1.0 ? 1.0 : end, curve: Curves.easeOut),
+          ),
+        ),
+      );
+      _menuFadeAnimations.add(
+        Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(
+            parent: _entranceController,
+            curve:
+                Interval(start, end > 1.0 ? 1.0 : end, curve: Curves.easeOut),
+          ),
+        ),
+      );
+    }
+    _entranceController.forward();
+  }
+
+  @override
+  void dispose() {
+    _entranceController.dispose();
+    _avatarPulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        children: [
+          _buildHeader(),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  _buildProfileHeader(),
+                  const SizedBox(height: 24),
+                  _buildMenu(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: const BoxDecoration(
+        color: AppColors.card,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _iconButton(FontAwesomeIcons.arrowLeft),
+          const Text(
+            'Profile',
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: AppColors.text),
+          ),
+          _iconButton(FontAwesomeIcons.bell),
+        ],
+      ),
+    );
+  }
+
+  Widget _iconButton(IconData icon) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(child: Icon(icon, size: 16, color: AppColors.text)),
+    );
+  }
+
+  Widget _buildProfileHeader() {
+    return SlideTransition(
+      position:
+          Tween<Offset>(begin: const Offset(0, -0.1), end: Offset.zero).animate(
+        CurvedAnimation(parent: _entranceController, curve: Curves.easeOut),
+      ),
+      child: FadeTransition(
+        opacity: _entranceController,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.primary, AppColors.accent],
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.08),
+                blurRadius: 25,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              Stack(
+                children: [
+                  AnimatedBuilder(
+                    animation: _avatarPulseController,
+                    builder: (context, child) {
+                      final value = _avatarPulseController.value;
+                      final scale = 1.0 + (math.sin(value * math.pi) * 0.02);
+                      final shadowBlur =
+                          30.0 + (math.sin(value * math.pi) * 20.0);
+                      return Transform.scale(
+                        scale: scale,
+                        child: Container(
+                          width: 96,
+                          height: 96,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withOpacity(0.4),
+                                blurRadius: shadowBlur,
+                                spreadRadius: 0,
+                              ),
+                            ],
+                            image: const DecorationImage(
+                              image: NetworkImage(
+                                  'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg'),
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  Positioned(
+                    bottom: -4,
+                    right: -4,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: const [
+                          BoxShadow(
+                              color: Colors.black12,
+                              blurRadius: 5,
+                              offset: Offset(0, 2))
+                        ],
+                      ),
+                      child: const Icon(FontAwesomeIcons.camera,
+                          color: AppColors.primary, size: 14),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Emma Moore',
+                style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Senior Therapist',
+                style: TextStyle(fontSize: 14, color: Colors.white70),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(FontAwesomeIcons.star,
+                      color: Color(0xFFFDE047), size: 14),
+                  SizedBox(width: 4),
+                  Text('4.9 Rating',
+                      style: TextStyle(color: Colors.white, fontSize: 14)),
+                  SizedBox(width: 16),
+                  Icon(FontAwesomeIcons.calendar,
+                      color: Colors.white70, size: 14),
+                  SizedBox(width: 4),
+                  Text('3 Years',
+                      style: TextStyle(color: Colors.white, fontSize: 14)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenu() {
+    return Column(
+      children: [
+        _buildMenuItem(0, FontAwesomeIcons.calendarDays, 'My Schedule',
+            'View upcoming appointments'),
+        const SizedBox(height: 16),
+        _buildMenuItem(1, FontAwesomeIcons.userPen, 'Edit Profile',
+            'Update personal information'),
+        const SizedBox(height: 16),
+        _buildMenuItem(2, FontAwesomeIcons.gear, 'Settings',
+            'App preferences and notifications'),
+        const SizedBox(height: 16),
+        _buildMenuItem(3, FontAwesomeIcons.rightFromBracket, 'Logout',
+            'Sign out of your account',
+            isLogout: true),
+      ],
+    );
+  }
+
+  Widget _buildMenuItem(int index, IconData icon, String title, String subtitle,
+      {bool isLogout = false}) {
+    return FadeTransition(
+      opacity: _menuFadeAnimations[index],
+      child: SlideTransition(
+        position: _menuSlideAnimations[index],
+        child: _LedBorderButton(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: isLogout
+                          ? null
+                          : const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [AppColors.primary, AppColors.accent],
+                            ),
+                      color: isLogout ? Colors.red.shade500 : null,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Center(
+                        child: Icon(icon, color: Colors.white, size: 20)),
+                  ),
+                  const SizedBox(width: 16),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: isLogout
+                                ? Colors.red.shade600
+                                : AppColors.text),
+                      ),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                            fontSize: 14,
+                            color: isLogout
+                                ? Colors.red.shade400
+                                : AppColors.muted),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              Icon(FontAwesomeIcons.chevronRight,
+                  size: 16,
+                  color: isLogout ? Colors.red.shade400 : AppColors.muted),
+            ],
+          ),
+          isLogout: isLogout,
+          onTap: () {},
+        ),
+      ),
+    );
+  }
+}
+
+class _LedBorderButton extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+  final bool isLogout;
+  const _LedBorderButton({
+    required this.child,
+    required this.onTap,
+    this.isLogout = false,
+  });
+
+  @override
+  State<_LedBorderButton> createState() => _LedBorderButtonState();
+}
+
+class _LedBorderButtonState extends State<_LedBorderButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.isLogout) {
+      return Material(
+        color: Colors.red.shade50,
+        borderRadius: BorderRadius.circular(16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.red.shade200, width: 2),
+        ),
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: widget.child,
+          ),
+        ),
+      );
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Container(
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: SweepGradient(
+              colors: const [
+                AppColors.primary,
+                AppColors.accent,
+                AppColors.primary,
+              ],
+              transform: GradientRotation(_controller.value * 2 * math.pi),
+            ),
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: widget.onTap,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: widget.child,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
