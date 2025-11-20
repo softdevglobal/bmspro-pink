@@ -7,6 +7,7 @@ import 'calender_screen.dart';
 import 'report_screen.dart';
 import 'profile_screen.dart';
 import 'notifications_page.dart';
+import 'all_appointments_page.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -410,7 +411,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const AllAppointmentsPage()),
+                );
+              },
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 side: const BorderSide(color: AppColors.primary),
