@@ -9,6 +9,7 @@ import 'profile_screen.dart';
 import 'notifications_page.dart';
 import 'all_appointments_page.dart';
 import 'appointment_details_page.dart';
+import 'clients_screen.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -139,8 +140,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       case 1:
         return const CalenderScreen();
       case 2:
-        return const ReportScreen();
+        return const ClientsScreen();
       case 3:
+        return const ReportScreen();
+      case 4:
         return const ProfileScreen();
       default:
         return const SizedBox.shrink();

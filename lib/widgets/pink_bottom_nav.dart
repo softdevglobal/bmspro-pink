@@ -16,6 +16,7 @@ class PinkBottomNav extends StatelessWidget {
     const List<IconData> icons = <IconData>[
       Icons.home_rounded,
       Icons.calendar_month_rounded,
+      Icons.groups_rounded, // Clients (3rd)
       Icons.bar_chart_rounded,
       Icons.person_rounded,
     ];
