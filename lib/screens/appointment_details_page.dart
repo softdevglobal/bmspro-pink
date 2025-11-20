@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'task_details_page.dart';
 
 // --- 1. Theme & Colors ---
 class AppColors {
@@ -372,7 +373,15 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
   Widget _buildActionButtons() {
     return Column(
       children: [
-        _GradientButton(text: 'Start Appointment', icon: FontAwesomeIcons.play, onPressed: () {}),
+        _GradientButton(
+          text: 'Start Appointment',
+          icon: FontAwesomeIcons.play,
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const TaskDetailsPage()),
+            );
+          },
+        ),
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
