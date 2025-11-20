@@ -323,10 +323,112 @@ class _ProfileScreenState extends State<ProfileScreen>
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const EditProfilePage()),
               );
+            } else if (isLogout) {
+              _showLogoutConfirmDialog();
             }
           },
         ),
       ),
+    );
+  }
+}
+
+extension _LogoutDialog on _ProfileScreenState {
+  void _showLogoutConfirmDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: const [
+                    Icon(FontAwesomeIcons.rightFromBracket,
+                        color: AppColors.primary, size: 18),
+                    SizedBox(width: 8),
+                    Text('Confirm Logout',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.text)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Are you sure you want to sign out of your account?',
+                  style: TextStyle(fontSize: 14, color: AppColors.muted),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppColors.border),
+                          foregroundColor: AppColors.text,
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Logged out'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                          // TODO: Implement actual logout flow
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: Ink(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                                colors: [AppColors.primary, AppColors.accent]),
+                            borderRadius:
+                                BorderRadius.all(Radius.circular(12)),
+                          ),
+                          child: Container(
+                            alignment: Alignment.center,
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                            child: const Text('Logout',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -369,7 +471,6 @@ class _LedBorderButtonState extends State<_LedBorderButton>
     if (widget.isLogout) {
       return Material(
         color: Colors.red.shade50,
-        borderRadius: BorderRadius.circular(16),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: Colors.red.shade200, width: 2),
