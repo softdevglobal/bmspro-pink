@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:math' as math;
+import 'edit_profile_page.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -317,7 +318,13 @@ class _ProfileScreenState extends State<ProfileScreen>
             ],
           ),
           isLogout: isLogout,
-          onTap: () {},
+          onTap: () {
+            if (title == 'Edit Profile') {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const EditProfilePage()),
+              );
+            }
+          },
         ),
       ),
     );
