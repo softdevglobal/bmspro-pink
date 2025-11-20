@@ -6,6 +6,7 @@ import '../widgets/pink_bottom_nav.dart';
 import 'calender_screen.dart';
 import 'report_screen.dart';
 import 'profile_screen.dart';
+import 'notifications_page.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -193,23 +194,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
           ],
         ),
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            const Icon(FontAwesomeIcons.bell, color: AppColors.muted, size: 24),
-            Positioned(
-              top: -2,
-              right: -2,
-              child: Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  color: AppColors.primary,
-                  shape: BoxShape.circle,
-                ),
+        InkWell(
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NotificationsPage()),
+            );
+          },
+          borderRadius: BorderRadius.circular(20),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(4.0),
+                child: Icon(FontAwesomeIcons.bell,
+                    color: AppColors.muted, size: 24),
               ),
-            )
-          ],
+              Positioned(
+                top: -2,
+                right: -2,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              )
+            ],
+          ),
         )
       ],
     );
