@@ -39,6 +39,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
   int _navIndex = 0;
+  // Work timer (shows elapsed time after clocking in)
+  Timer? _workTimer;
+  int _workedSeconds = 0;
+  bool _timerRunning = false;
 
   @override
   void initState() {
@@ -57,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _pulseController.dispose();
+    _workTimer?.cancel();
     super.dispose();
   }
 
@@ -74,6 +79,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 _selectedBranch = branch;
                 _status = ClockStatus.clockedIn;
               });
+              _resetWorkTimer();
+              _startWorkTimer();
             });
           },
         ),
@@ -85,19 +92,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _status = ClockStatus.out;
           _selectedBranch = null;
         });
+        _resetWorkTimer();
       });
     }
   }
 
   void _handleBreakAction() {
     _startLoading(() {
+      final next = _status == ClockStatus.clockedIn
+          ? ClockStatus.onBreak
+          : ClockStatus.clockedIn;
       setState(() {
-        if (_status == ClockStatus.clockedIn) {
-          _status = ClockStatus.onBreak;
-        } else {
-          _status = ClockStatus.clockedIn;
-        }
+        _status = next;
       });
+      if (next == ClockStatus.onBreak) {
+        _pauseWorkTimer();
+      } else if (next == ClockStatus.clockedIn) {
+        _startWorkTimer();
+      }
     });
   }
 
@@ -105,6 +117,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _startLoading(VoidCallback onComplete) {
     // Here you would add sound effects logic
     Future.delayed(const Duration(seconds: 1), onComplete);
+  }
+
+  // --- Work Timer Helpers ---
+  void _startWorkTimer() {
+    if (_timerRunning) return;
+    _timerRunning = true;
+    _workTimer?.cancel();
+    _workTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_status == ClockStatus.clockedIn) {
+        setState(() {
+          _workedSeconds += 1;
+        });
+      }
+    });
+  }
+
+  void _pauseWorkTimer() {
+    _workTimer?.cancel();
+    _timerRunning = false;
+  }
+
+  void _resetWorkTimer() {
+    _pauseWorkTimer();
+    setState(() {
+      _workedSeconds = 0;
+    });
+  }
+
+  String _formatElapsed(int totalSeconds) {
+    final hrs = (totalSeconds ~/ 3600).toString().padLeft(2, '0');
+    final mins = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
+    final secs = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$hrs:$mins:$secs';
   }
 
   @override
@@ -297,7 +343,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         subtitle = 'Enjoy your rest!';
 
         mainButton = _GradientButton(
-          text: 'Finish Break',
+          text: 'Start Again',
           icon: FontAwesomeIcons.play,
           onPressed: _handleBreakAction,
           gradient: LinearGradient(
@@ -344,9 +390,87 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             subtitle,
             style: const TextStyle(fontSize: 14, color: AppColors.muted),
           ),
+          if (_status != ClockStatus.out) ...[
+            const SizedBox(height: 8),
+            _buildTimerChip(paused: _status == ClockStatus.onBreak),
+          ],
           const SizedBox(height: 16),
           mainButton,
           if (secondaryButton != null) secondaryButton,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimerChip({required bool paused}) {
+    final Gradient gradient = paused
+        ? LinearGradient(
+            colors: [Colors.orange.shade400, Colors.orange.shade600])
+        : const LinearGradient(colors: [AppColors.primary, AppColors.accent]);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: gradient,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.25),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Icon(
+                paused ? FontAwesomeIcons.pause : FontAwesomeIcons.clock,
+                size: 12,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            _formatElapsed(_workedSeconds),
+            style: GoogleFonts.shareTechMono(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.0,
+            ),
+          ),
+          const SizedBox(width: 8),
+          ScaleTransition(
+            scale: _pulseAnimation,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          if (paused) ...[
+            const SizedBox(width: 8),
+            const Text(
+              'Paused',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w600),
+            ),
+          ]
         ],
       ),
     );
