@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../routes.dart';
+import 'forgot_password_request.dart';
 import '../widgets/primary_gradient_button.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -226,7 +227,13 @@ class _LoginScreenState extends State<LoginScreen> {
                                   Align(
                                     alignment: Alignment.centerRight,
                                     child: TextButton(
-                                      onPressed: () {},
+                                      onPressed: () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) => const ForgotPasswordRequestPage(),
+                                          ),
+                                        );
+                                      },
                                       child: Text(
                                         'Forgot Password?',
                                         style: TextStyle(
