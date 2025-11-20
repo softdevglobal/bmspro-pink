@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'client_profile_page.dart';
 
 // --- 1. Theme & Colors ---
 class AppColors {
@@ -292,7 +293,9 @@ class _ClientCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () {
-        // Navigate to Profile
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ClientProfilePage()),
+        );
       },
       child: Container(
         padding: const EdgeInsets.all(16),
