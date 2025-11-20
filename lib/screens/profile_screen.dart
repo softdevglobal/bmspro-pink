@@ -393,13 +393,11 @@ extension _LogoutDialog on _ProfileScreenState {
                       child: ElevatedButton(
                         onPressed: () {
                           Navigator.of(context).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Logged out'),
-                              duration: Duration(seconds: 2),
-                            ),
+                          // Navigate to login and clear the stack
+                          Navigator.of(context).pushNamedAndRemoveUntil(
+                            '/login',
+                            (route) => false,
                           );
-                          // TODO: Implement actual logout flow
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.transparent,
