@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'appointment_details_page.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -95,54 +96,62 @@ class _ApptTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.08),
-            blurRadius: 25,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(appt.gradient[0]),
-                  Color(appt.gradient[1]),
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AppointmentDetailsPage()),
+        );
+      },
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withOpacity(0.08),
+              blurRadius: 25,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(appt.gradient[0]),
+                    Color(appt.gradient[1]),
+                  ],
+                ),
+              ),
+              child: Center(
+                  child: Icon(appt.icon, color: Colors.white, size: 18)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(appt.title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 14)),
+                  Text(appt.time,
+                      style: const TextStyle(color: AppColors.muted, fontSize: 12)),
                 ],
               ),
             ),
-            child: Center(
-                child: Icon(appt.icon, color: Colors.white, size: 18)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(appt.title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 14)),
-                Text(appt.time,
-                    style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-              ],
-            ),
-          ),
-          const Icon(FontAwesomeIcons.chevronRight,
-              size: 14, color: AppColors.muted),
-        ],
+            const Icon(FontAwesomeIcons.chevronRight,
+                size: 14, color: AppColors.muted),
+          ],
+        ),
       ),
     );
   }

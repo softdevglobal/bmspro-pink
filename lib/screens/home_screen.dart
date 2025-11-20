@@ -8,6 +8,7 @@ import 'report_screen.dart';
 import 'profile_screen.dart';
 import 'notifications_page.dart';
 import 'all_appointments_page.dart';
+import 'appointment_details_page.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -439,49 +440,57 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     List<Color> gradientColors, {
     bool isNext = false,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: gradientColors,
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AppointmentDetailsPage()),
+        );
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: gradientColors,
+                ),
+              ),
+              child: Center(child: Icon(icon, color: Colors.white, size: 14)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w500, fontSize: 14)),
+                  Text(time,
+                      style: const TextStyle(
+                          color: AppColors.muted, fontSize: 12)),
+                ],
               ),
             ),
-            child: Center(child: Icon(icon, color: Colors.white, size: 14)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w500, fontSize: 14)),
-                Text(time,
-                    style:
-                        const TextStyle(color: AppColors.muted, fontSize: 12)),
-              ],
-            ),
-          ),
-          if (isNext)
-            const Text('Next',
-                style: TextStyle(
-                    color: AppColors.primary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold)),
-        ],
+            if (isNext)
+              const Text('Next',
+                  style: TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold)),
+          ],
+        ),
       ),
     );
   }
