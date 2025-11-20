@@ -10,6 +10,7 @@ import 'notifications_page.dart';
 import 'all_appointments_page.dart';
 import 'appointment_details_page.dart';
 import 'clients_screen.dart';
+import 'walk_in_booking_page.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -122,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     const SizedBox(height: 24),
                     _buildAppointmentsSection(),
                     const SizedBox(height: 24),
-                    _buildQuickActions(),
+                    _buildCreateBookingSection(),
                   ],
                 ),
               ),
@@ -498,29 +499,51 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildQuickActions() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Quick Actions',
-          style: TextStyle(
-              fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.text),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            _buildActionBtn('My Tasks', FontAwesomeIcons.listCheck,
-                [Colors.blue.shade400, Colors.blue.shade600]),
-            const SizedBox(width: 12),
-            _buildActionBtn('Calendar', FontAwesomeIcons.calendar,
-                [Colors.green.shade400, Colors.green.shade600]),
-            const SizedBox(width: 12),
-            _buildActionBtn('Profile', FontAwesomeIcons.user,
-                [AppColors.primary, AppColors.accent]),
-          ],
-        )
-      ],
+  Widget _buildCreateBookingSection() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.08),
+            blurRadius: 25,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Create a New Booking',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Choose a date and time, then assign a client.',
+            style: TextStyle(fontSize: 14, color: AppColors.muted),
+          ),
+          const SizedBox(height: 16),
+          _GradientButton(
+            text: 'Create Booking',
+            icon: FontAwesomeIcons.calendarPlus,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const WalkInBookingPage()),
+              );
+            },
+            gradient: const LinearGradient(
+              colors: [AppColors.primary, AppColors.accent],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
