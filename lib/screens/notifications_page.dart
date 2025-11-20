@@ -8,7 +8,6 @@ class _NotifTheme {
   static const Color card = Colors.white;
   static const Color text = Color(0xFF1A1A1A);
   static const Color muted = Color(0xFF9E9E9E);
-  static const Color border = Color(0xFFF2D2E9);
   static const Color unreadBg = Color(0xFFFFF1F7);
 }
 
@@ -143,6 +142,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _NotifTheme.background,
       body: SafeArea(
         child: Column(
           children: [
@@ -169,64 +169,30 @@ class _NotificationsPageState extends State<NotificationsPage>
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      decoration: const BoxDecoration(
-        color: _NotifTheme.card,
-        border: Border(bottom: BorderSide(color: _NotifTheme.border)),
-      ),
+      decoration: const BoxDecoration(color: _NotifTheme.background),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _iconButton(FontAwesomeIcons.arrowLeft,
-              onTap: () => Navigator.pop(context)),
-          const Text(
-            'Notifications',
-            style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: _NotifTheme.text),
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: const Icon(
+              FontAwesomeIcons.chevronLeft,
+              size: 18,
+              color: _NotifTheme.text,
+            ),
           ),
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              _iconButton(FontAwesomeIcons.bell),
-              if (_unreadCount > 0)
-                Positioned(
-                  top: -2,
-                  right: -2,
-                  child: ScaleTransition(
-                    scale: Tween<double>(begin: 1.0, end: 1.2).animate(
-                      CurvedAnimation(
-                          parent: _bellBadgeController,
-                          curve: Curves.easeInOut),
-                    ),
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: const BoxDecoration(
-                        color: _NotifTheme.primary,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+          const Expanded(
+            child: Center(
+              child: Text(
+                'Notifications',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: _NotifTheme.text),
+              ),
+            ),
           ),
+          const SizedBox(width: 24),
         ],
-      ),
-    );
-  }
-
-  Widget _iconButton(IconData icon, {VoidCallback? onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: _NotifTheme.background,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Center(child: Icon(icon, size: 16, color: _NotifTheme.text)),
       ),
     );
   }
