@@ -14,6 +14,7 @@ import 'appointment_details_page.dart';
 import 'clients_screen.dart';
 import 'walk_in_booking_page.dart';
 import 'admin_dashboard.dart';
+import 'branch_admin_dashboard.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -214,10 +215,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildHomeTab() {
     // Check if user is admin or owner
-    if (_userRole == 'salon_owner' || _userRole == 'salon_branch_admin') {
+    if (_userRole == 'salon_owner') {
       return AdminDashboard(
         role: _userRole!,
         branchName: _branchName,
+      );
+    } else if (_userRole == 'salon_branch_admin') {
+      return BranchAdminDashboard(
+        branchName: _branchName ?? 'Branch',
       );
     }
     // Default to Staff Dashboard
