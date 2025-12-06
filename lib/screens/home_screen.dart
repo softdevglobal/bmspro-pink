@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/pink_bottom_nav.dart';
 import 'calender_screen.dart';
 import 'report_screen.dart';
@@ -11,6 +13,7 @@ import 'all_appointments_page.dart';
 import 'appointment_details_page.dart';
 import 'clients_screen.dart';
 import 'walk_in_booking_page.dart';
+import 'admin_dashboard.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -44,6 +47,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _workedSeconds = 0;
   bool _timerRunning = false;
 
+  // Role state
+  String? _userRole;
+  String? _branchName; // Store branch name if available
+  bool _isLoadingRole = true;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +64,38 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _pulseAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+
+    _fetchUserRole();
+  }
+
+  Future<void> _fetchUserRole() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        if (mounted && doc.exists) {
+          final data = doc.data();
+          setState(() {
+            _userRole = data?['role'];
+            // Try to find a branch name or branch field
+            // Assuming 'branch' or 'branchName' exists in the user document
+            _branchName = data?['branchName'] ?? data?['branch'];
+            _isLoadingRole = false;
+          });
+        } else {
+          if (mounted) setState(() => _isLoadingRole = false);
+        }
+      } else {
+        if (mounted) setState(() => _isLoadingRole = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching role: $e');
+      if (mounted) setState(() => _isLoadingRole = false);
+    }
   }
 
   @override
@@ -155,29 +195,51 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingRole) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+      );
+    }
+
     return Scaffold(
       body: _navIndex == 0
-          ? SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildHeader(),
-                    const SizedBox(height: 24),
-                    _buildStatusCard(),
-                    const SizedBox(height: 24),
-                    _buildAppointmentsSection(),
-                    const SizedBox(height: 24),
-                    _buildCreateBookingSection(),
-                  ],
-                ),
-              ),
-            )
+          ? _buildHomeTab()
           : _buildTabBody(),
       bottomNavigationBar: PinkBottomNav(
         currentIndex: _navIndex,
         onChanged: (index) => setState(() => _navIndex = index),
+      ),
+    );
+  }
+
+  Widget _buildHomeTab() {
+    // Check if user is admin or owner
+    if (_userRole == 'salon_owner' || _userRole == 'salon_branch_admin') {
+      return AdminDashboard(
+        role: _userRole!,
+        branchName: _branchName,
+      );
+    }
+    // Default to Staff Dashboard
+    return _buildStaffDashboard();
+  }
+
+  Widget _buildStaffDashboard() {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildHeader(),
+            const SizedBox(height: 24),
+            _buildStatusCard(),
+            const SizedBox(height: 24),
+            _buildAppointmentsSection(),
+            const SizedBox(height: 24),
+            _buildCreateBookingSection(),
+          ],
+        ),
       ),
     );
   }
