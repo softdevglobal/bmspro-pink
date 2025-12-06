@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../widgets/animated_toggle.dart';
 
 class Appointment {
   final String time;
@@ -8,12 +11,15 @@ class Appointment {
   final String service;
   final String room;
   final IconData icon;
+  final String staffId; // Added to support filtering
+  
   Appointment({
     required this.time,
     required this.client,
     required this.service,
     required this.room,
     required this.icon,
+    required this.staffId,
   });
 }
 
@@ -73,14 +79,57 @@ class _CalenderScreenState extends State<CalenderScreen> {
   DateTime _selectedDate = DateTime(2025, 3, 17);
 
   late Map<int, DaySchedule> _scheduleData;
+  
+  // Role & filtering state
+  String? _currentUserRole;
+  String? _currentUserId;
+  bool _isBranchView = false; // false = My Schedule, true = Branch Schedule
+  bool _isLoadingRole = true;
 
   @override
   void initState() {
     super.initState();
     _initializeData();
+    _fetchUserRole();
+  }
+
+  Future<void> _fetchUserRole() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        _currentUserId = user.uid;
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        if (mounted && doc.exists) {
+          final userData = doc.data();
+          setState(() {
+            _currentUserRole = userData?['role'];
+            _isLoadingRole = false;
+          });
+        }
+      } else {
+         if (mounted) setState(() => _isLoadingRole = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching role: $e');
+      if (mounted) setState(() => _isLoadingRole = false);
+    }
   }
 
   void _initializeData() {
+    // Assign some items to a mock "current user" ID and others to different IDs
+    // Since we don't know the real UID at compile time, we'll use placeholders
+    // and logic in filtering will handle it. For demo purposes, assume
+    // 'current_user_id' matches the logged in user if we want to test "My Schedule"
+    // effectively with mock data, but we will implement filtering logic.
+    
+    // Using 'me' as a placeholder for current user's appointments in mock data
+    const myId = 'me'; 
+    const otherId = 'other';
+
     _scheduleData = {
       15: DaySchedule(branch: 'Main St', items: [
         Appointment(
@@ -88,7 +137,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
             client: 'Sarah Johnson',
             service: 'Massage - 60m',
             room: 'R1',
-            icon: FontAwesomeIcons.spa),
+            icon: FontAwesomeIcons.spa,
+            staffId: myId),
       ]),
       16: DaySchedule(branch: 'Downtown', items: [
         Appointment(
@@ -96,13 +146,15 @@ class _CalenderScreenState extends State<CalenderScreen> {
             client: 'Mike Ross',
             service: 'Deep Tissue',
             room: 'D2',
-            icon: FontAwesomeIcons.handSparkles),
+            icon: FontAwesomeIcons.handSparkles,
+            staffId: otherId),
         Appointment(
             time: '11:30 AM',
             client: 'Rachel Green',
             service: 'Manicure',
             room: 'D4',
-            icon: FontAwesomeIcons.gem),
+            icon: FontAwesomeIcons.gem,
+            staffId: myId),
       ]),
       17: DaySchedule(branch: 'Main St', items: [
         Appointment(
@@ -110,19 +162,22 @@ class _CalenderScreenState extends State<CalenderScreen> {
             client: 'Sarah Johnson',
             service: 'Massage - 60m',
             room: 'R1',
-            icon: FontAwesomeIcons.spa),
+            icon: FontAwesomeIcons.spa,
+            staffId: myId),
         Appointment(
             time: '12:00 PM',
             client: 'Emily Davis',
             service: 'Facial - 45m',
             room: 'R2',
-            icon: FontAwesomeIcons.faceSmile),
+            icon: FontAwesomeIcons.faceSmile,
+            staffId: otherId),
         Appointment(
             time: '03:00 PM',
             client: 'Jessica Miller',
             service: 'Manicure',
             room: 'R3',
-            icon: FontAwesomeIcons.handSparkles),
+            icon: FontAwesomeIcons.handSparkles,
+            staffId: myId),
       ]),
       18: DaySchedule(isOffDay: true),
       20: DaySchedule(branch: 'Westside', items: [
@@ -131,13 +186,15 @@ class _CalenderScreenState extends State<CalenderScreen> {
             client: 'John Doe',
             service: 'Pedicure',
             room: 'W1',
-            icon: FontAwesomeIcons.shoePrints),
+            icon: FontAwesomeIcons.shoePrints,
+            staffId: myId),
         Appointment(
             time: '02:30 PM',
             client: 'Jane Smith',
             service: 'Massage',
             room: 'W2',
-            icon: FontAwesomeIcons.spa),
+            icon: FontAwesomeIcons.spa,
+            staffId: otherId),
       ]),
       22: DaySchedule(branch: 'Downtown', items: [
         Appointment(
@@ -145,7 +202,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
             client: 'Alice Cooper',
             service: 'Facial',
             room: 'D1',
-            icon: FontAwesomeIcons.faceSmile),
+            icon: FontAwesomeIcons.faceSmile,
+            staffId: otherId),
       ]),
       24: DaySchedule(branch: 'Westside', items: [
         Appointment(
@@ -153,7 +211,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
             client: 'Gary Oldman',
             service: 'Haircut',
             room: 'W4',
-            icon: FontAwesomeIcons.scissors),
+            icon: FontAwesomeIcons.scissors,
+            staffId: myId),
       ]),
     };
   }
@@ -185,36 +244,62 @@ class _CalenderScreenState extends State<CalenderScreen> {
   }
 
   Widget _buildHeader() {
+    final bool isBranchAdmin = _currentUserRole == 'salon_branch_admin';
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 12),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
           child: Center(
-            child: Text(
-              'My Schedule',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: AppConfig.text,
-              ),
+            child: Column(
+              children: [
+                Text(
+                  _isBranchView ? 'Branch Schedule' : 'My Schedule',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: AppConfig.text,
+                  ),
+                ),
+                if (isBranchAdmin) ...[
+                  const SizedBox(height: 12),
+                  _buildViewToggle(),
+                ],
+              ],
             ),
           ),
         ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _legendItem(AppConfig.branches['Main St']!.color, 'Main St'),
-            const SizedBox(width: 16),
-            _legendItem(AppConfig.branches['Downtown']!.color, 'Downtown'),
-            const SizedBox(width: 16),
-            _legendItem(AppConfig.branches['Westside']!.color, 'Westside'),
-          ],
-        )
+        if (!_isBranchView || !isBranchAdmin) // Only show legend if complicated, or always? Keeping it simple.
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _legendItem(AppConfig.branches['Main St']!.color, 'Main St'),
+              const SizedBox(width: 16),
+              _legendItem(AppConfig.branches['Downtown']!.color, 'Downtown'),
+              const SizedBox(width: 16),
+              _legendItem(AppConfig.branches['Westside']!.color, 'Westside'),
+            ],
+          )
       ],
     );
   }
+
+  Widget _buildViewToggle() {
+    return SizedBox(
+      width: 300,
+      child: AnimatedToggle(
+        backgroundColor: Colors.white,
+        values: const ['My Schedule', 'Branch Schedule'],
+        selectedIndex: _isBranchView ? 1 : 0,
+        onChanged: (index) => setState(() => _isBranchView = index == 1),
+      ),
+    );
+  }
+
+  // Removed manual toggle buttons as we use AnimatedToggle now
+
 
   Widget _buildMonthSelector() {
     final daysInMonth =
@@ -470,8 +555,25 @@ class _CalenderScreenState extends State<CalenderScreen> {
     if (data.isOffDay) {
       return _emptyState(FontAwesomeIcons.mugHot, "Enjoy your day off!");
     }
+
+    // Filter items based on view mode
+    final filteredItems = data.items.where((appt) {
+      if (_currentUserRole == 'salon_branch_admin' && _isBranchView) {
+        // Branch admin can see everything in branch view
+        return true; 
+      }
+      // Otherwise (staff view or admin toggled to 'My Schedule'), only show 'me'
+      // In real app, compare appt.staffId == _currentUserId
+      return appt.staffId == 'me';
+    }).toList();
+
+    if (filteredItems.isEmpty) {
+       return _emptyState(
+          FontAwesomeIcons.calendarXmark, "No appointments for you today.");
+    }
+
     return Column(
-      children: data.items.map((appt) {
+      children: filteredItems.map((appt) {
         final theme = AppConfig.branches[data.branch]!;
         return Container(
           margin: const EdgeInsets.only(bottom: 16),

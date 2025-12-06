@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/splash_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/login_screen.dart';
-import 'screens/register_screen.dart';
+// import 'screens/register_screen.dart';
 import 'screens/home_screen.dart';
 
 class AppRoutes {
@@ -20,8 +20,8 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => const WelcomeScreen());
       case login:
         return MaterialPageRoute(builder: (_) => const LoginScreen());
-      case register:
-        return MaterialPageRoute(builder: (_) => const RegisterScreen());
+      // case register:
+      //   return MaterialPageRoute(builder: (_) => const RegisterScreen());
       case home:
         return MaterialPageRoute(builder: (_) => const HomeScreen());
       default:

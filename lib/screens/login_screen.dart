@@ -15,7 +15,6 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  String _role = 'Staff';
   bool _obscure = true;
   bool _isLoading = false;
 
@@ -72,23 +71,25 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       final userData = userDoc.data() as Map<String, dynamic>;
-      final String userRole = userData['role'] ?? 'unknown';
+      // Robust role retrieval
+      final rawRole = userData['role'];
+      final String userRole = rawRole != null ? rawRole.toString().trim() : 'unknown';
 
-      // 3. Validate Role based on selection
+      // 3. Validate Role
       bool isAuthorized = false;
-      if (_role == 'Staff') {
-         // Staff app can arguably be used by anyone, or just staff+
-         isAuthorized = true; 
-      } else {
-         // 'Admin' mode implies higher privileges
-         if (['salon_owner', 'super_admin', 'salon_branch_admin'].contains(userRole)) {
-           isAuthorized = true;
-         }
+      
+      // Allowed roles: salon_staff, salon_owner, salon_branch_admin
+      const allowedRoles = ['salon_staff', 'salon_owner', 'salon_branch_admin'];
+      
+      if (allowedRoles.contains(userRole)) {
+         isAuthorized = true;
       }
 
       if (!isAuthorized) {
         await FirebaseAuth.instance.signOut();
-        throw FirebaseAuthException(code: 'permission-denied', message: 'Insufficient permissions for $_role role.');
+        throw FirebaseAuthException(
+            code: 'permission-denied',
+            message: 'Access denied. Role "$userRole" is not authorized.');
       }
 
       if (mounted) {
@@ -274,16 +275,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                                   const SizedBox(height: 16),
 
-                                  // Toggle Staff/Admin
-                                  _RoleSegmented(
-                                    value: _role,
-                                    primary: primary,
-                                    accent: accent,
-                                    onChanged: (v) => setState(() => _role = v),
-                                  ),
-
-                                  const SizedBox(height: 16),
-
                                   // Email
                                   _FocusGlow(
                                     glowColor: primary.withOpacity(0.10),
@@ -367,17 +358,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           // Bottom text
                           Column(
                             children: [
-                              TextButton(
-                                onPressed: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => const _GoRegister()),
-                                ),
-                                style: TextButton.styleFrom(
-                                    foregroundColor: primary),
-                                child: const Text(
-                                    "Don't have an account? Register"),
-                              ),
                               const SizedBox(height: 6),
                               const Text(
                                 'Need help? Contact support@bmspro.com',
@@ -402,123 +382,8 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // Wrapper to route to Register using named route while showing push usage
-class _GoRegister extends StatelessWidget {
-  const _GoRegister();
-  @override
-  Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (context.mounted) {
-        Navigator.pushReplacementNamed(context, AppRoutes.register);
-      }
-    });
-    return const SizedBox.shrink();
-  }
-}
+// removed registration class
 
-class _RoleSegmented extends StatelessWidget {
-  final String value;
-  final Color primary;
-  final Color accent;
-  final ValueChanged<String> onChanged;
-  const _RoleSegmented({
-    required this.value,
-    required this.primary,
-    required this.accent,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bool left = value == 'Staff';
-    const Color background = Color(0xFFFFF5FA);
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: SizedBox(
-        height: 48,
-        child: Stack(
-          children: [
-            // Sliding highlight
-            AnimatedAlign(
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-              alignment: value == 'Staff'
-                  ? Alignment.centerLeft
-                  : Alignment.centerRight,
-              child: FractionallySizedBox(
-                widthFactor: 0.5,
-                heightFactor: 1,
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: left
-                        ? const BorderRadius.only(
-                            topLeft: Radius.circular(14),
-                            bottomLeft: Radius.circular(14),
-                          )
-                        : const BorderRadius.only(
-                            topRight: Radius.circular(14),
-                            bottomRight: Radius.circular(14),
-                          ),
-                    gradient: LinearGradient(colors: [primary, accent]),
-                    boxShadow: [
-                      BoxShadow(
-                        color: primary.withOpacity(0.25),
-                        blurRadius: 16,
-                        offset: const Offset(0, 8),
-                      )
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            // Labels and taps
-            Row(
-              children: [
-                Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => onChanged('Staff'),
-                    child: Center(
-                      child: Text(
-                        'Staff',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: value == 'Staff'
-                              ? Colors.white
-                              : const Color(0xFF9E9E9E),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => onChanged('Admin'),
-                    child: Center(
-                      child: Text(
-                        'Admin',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: value == 'Admin'
-                              ? Colors.white
-                              : const Color(0xFF9E9E9E),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _FocusGlow extends StatefulWidget {
   final Widget child;

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../widgets/animated_toggle.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -21,9 +24,47 @@ class ReportScreen extends StatefulWidget {
 
 class _ReportScreenState extends State<ReportScreen> {
   String _selectedTab = 'day'; // 'day', 'week', 'month'
+  
+  // Role & Toggle state
+  String? _currentUserRole;
+  bool _isBranchView = false; // false = My Summary, true = Branch Summary
+  bool _isLoadingRole = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserRole();
+  }
+
+  Future<void> _fetchUserRole() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        if (mounted && doc.exists) {
+          final userData = doc.data();
+          setState(() {
+            _currentUserRole = userData?['role'];
+            _isLoadingRole = false;
+          });
+        }
+      } else {
+         if (mounted) setState(() => _isLoadingRole = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching role: $e');
+      if (mounted) setState(() => _isLoadingRole = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final bool isBranchAdmin = _currentUserRole == 'salon_branch_admin';
+
     return SafeArea(
       child: Column(
         children: [
@@ -32,17 +73,25 @@ class _ReportScreenState extends State<ReportScreen> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
                     child: Center(
-                      child: Text(
-                        'Summary',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.text,
-                        ),
+                      child: Column(
+                        children: [
+                          Text(
+                            _isBranchView ? 'Branch Summary' : 'My Summary',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.text,
+                            ),
+                          ),
+                          if (isBranchAdmin) ...[
+                            const SizedBox(height: 12),
+                            _buildViewToggle(),
+                          ],
+                        ],
                       ),
                     ),
                   ),
@@ -75,6 +124,21 @@ class _ReportScreenState extends State<ReportScreen> {
     );
   }
 
+  Widget _buildViewToggle() {
+    return SizedBox(
+      width: 300,
+      child: AnimatedToggle(
+        backgroundColor: Colors.white,
+        values: const ['My Summary', 'Branch Summary'],
+        selectedIndex: _isBranchView ? 1 : 0,
+        onChanged: (index) => setState(() => _isBranchView = index == 1),
+      ),
+    );
+  }
+
+  // Removed manual toggle buttons
+
+
   Widget _iconButton(IconData icon) {
     return Container(
       width: 40,
@@ -88,59 +152,17 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Widget _buildTabs() {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.08),
-            blurRadius: 25,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          _buildTabBtn('Day', 'day'),
-          _buildTabBtn('Week', 'week'),
-          _buildTabBtn('Month', 'month'),
-        ],
-      ),
+    final tabs = ['day', 'week', 'month'];
+    return AnimatedToggle(
+      backgroundColor: Colors.white,
+      values: const ['Day', 'Week', 'Month'],
+      selectedIndex: tabs.indexOf(_selectedTab),
+      onChanged: (index) => setState(() => _selectedTab = tabs[index]),
     );
   }
 
-  Widget _buildTabBtn(String label, String id) {
-    final isSelected = _selectedTab == id;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedTab = id),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            gradient: isSelected
-                ? const LinearGradient(
-                    colors: [AppColors.primary, AppColors.accent])
-                : null,
-            color: isSelected ? null : Colors.transparent,
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : AppColors.muted,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  // Removed manual tab buttons
+
 
   Widget _buildCurrentView() {
     switch (_selectedTab) {
@@ -156,36 +178,50 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Widget _buildDayView() {
+    // Mock Data Switch
+    final hours = _isBranchView ? '45h 30m' : '7h 45m';
+    final tasks = _isBranchView ? '42' : '6';
+    final tips = _isBranchView ? '\$580' : '\$85';
+    final rating = _isBranchView ? '4.9' : '4.8';
+
     return Column(
       key: const ValueKey('day'),
       children: [
         _buildSummaryHeader('Daily Summary', 'Tuesday, 17 March 2025'),
         const SizedBox(height: 24),
         _buildKpiGrid([
-          _KpiData(FontAwesomeIcons.clock, '7h 45m', 'Hours Worked'),
-          _KpiData(FontAwesomeIcons.circleCheck, '6', 'Tasks Completed'),
-          _KpiData(FontAwesomeIcons.dollarSign, '\$85', 'Total Tips'),
-          _KpiData(FontAwesomeIcons.star, '4.8', 'Rating'),
+          _KpiData(FontAwesomeIcons.clock, hours, 'Hours Worked'),
+          _KpiData(FontAwesomeIcons.circleCheck, tasks, 'Tasks Completed'),
+          _KpiData(FontAwesomeIcons.dollarSign, tips, 'Total Tips'),
+          _KpiData(FontAwesomeIcons.star, rating, 'Rating'),
         ]),
         const SizedBox(height: 24),
-        _buildNotesCard(),
-        const SizedBox(height: 24),
+        if (!_isBranchView) ...[
+          _buildNotesCard(),
+          const SizedBox(height: 24),
+        ],
         _buildDownloadBtn('Download Day PDF'),
       ],
     );
   }
 
   Widget _buildWeekView() {
+    // Mock Data Switch
+    final totalHours = _isBranchView ? '280h' : '38h 12m';
+    final tasks = _isBranchView ? '195' : '28';
+    final tips = _isBranchView ? '\$2,450' : '\$360';
+    final rating = _isBranchView ? '4.8' : '4.7';
+
     return Column(
       key: const ValueKey('week'),
       children: [
         _buildSummaryHeader('Week Summary', '10 → 17 March 2025'),
         const SizedBox(height: 24),
         _buildKpiGrid([
-          _KpiData(FontAwesomeIcons.clock, '38h 12m', 'Total Hours'),
-          _KpiData(FontAwesomeIcons.listCheck, '28', 'Tasks Completed'),
-          _KpiData(FontAwesomeIcons.dollarSign, '\$360', 'Total Tips'),
-          _KpiData(FontAwesomeIcons.star, '4.7', 'Avg Rating'),
+          _KpiData(FontAwesomeIcons.clock, totalHours, 'Total Hours'),
+          _KpiData(FontAwesomeIcons.listCheck, tasks, 'Tasks Completed'),
+          _KpiData(FontAwesomeIcons.dollarSign, tips, 'Total Tips'),
+          _KpiData(FontAwesomeIcons.star, rating, 'Avg Rating'),
         ]),
         const SizedBox(height: 24),
         _buildChartContainer('Hours per Day', _buildWeekChart()),
@@ -196,16 +232,22 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Widget _buildMonthView() {
+    // Mock Data Switch
+    final totalHours = _isBranchView ? '1,200h' : '152h';
+    final tasks = _isBranchView ? '850' : '118';
+    final tips = _isBranchView ? '\$9,500' : '\$1,240';
+    final rating = _isBranchView ? '4.85' : '4.75';
+
     return Column(
       key: const ValueKey('month'),
       children: [
         _buildSummaryHeader('Month Summary', 'March 2025'),
         const SizedBox(height: 24),
         _buildKpiGrid([
-          _KpiData(FontAwesomeIcons.clock, '152h', 'Total Hours'),
-          _KpiData(FontAwesomeIcons.listCheck, '118', 'Tasks Completed'),
-          _KpiData(FontAwesomeIcons.dollarSign, '\$1,240', 'Total Tips'),
-          _KpiData(FontAwesomeIcons.star, '4.75', 'Avg Rating'),
+          _KpiData(FontAwesomeIcons.clock, totalHours, 'Total Hours'),
+          _KpiData(FontAwesomeIcons.listCheck, tasks, 'Tasks Completed'),
+          _KpiData(FontAwesomeIcons.dollarSign, tips, 'Total Tips'),
+          _KpiData(FontAwesomeIcons.star, rating, 'Avg Rating'),
         ]),
         const SizedBox(height: 24),
         _buildChartContainer('Weekly Breakdown', _buildMonthChart()),
