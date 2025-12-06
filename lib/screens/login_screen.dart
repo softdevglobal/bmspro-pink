@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../routes.dart';
 import 'forgot_password_request.dart';
 import '../widgets/primary_gradient_button.dart';
@@ -15,12 +17,112 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   String _role = 'Staff';
   bool _obscure = true;
+  bool _isLoading = false;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  void _signIn() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please enter email and password")),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // 1. Authenticate with Firebase Auth
+      final UserCredential userCredential =
+          await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      final User? user = userCredential.user;
+      if (user == null) {
+        throw FirebaseAuthException(
+            code: 'user-not-found', message: 'Authentication failed.');
+      }
+
+      // 2. Fetch user details from Firestore "users" collection
+      final DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        await FirebaseAuth.instance.signOut();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("User profile not found.")),
+          );
+        }
+        return;
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final String userRole = userData['role'] ?? 'unknown';
+
+      // 3. Validate Role based on selection
+      bool isAuthorized = false;
+      if (_role == 'Staff') {
+         // Staff app can arguably be used by anyone, or just staff+
+         isAuthorized = true; 
+      } else {
+         // 'Admin' mode implies higher privileges
+         if (['salon_owner', 'super_admin', 'salon_branch_admin'].contains(userRole)) {
+           isAuthorized = true;
+         }
+      }
+
+      if (!isAuthorized) {
+        await FirebaseAuth.instance.signOut();
+        throw FirebaseAuthException(code: 'permission-denied', message: 'Insufficient permissions for $_role role.');
+      }
+
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, AppRoutes.home);
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        String message = "Login failed";
+        if (e.code == 'user-not-found') {
+          message = 'No user found for that email.';
+        } else if (e.code == 'wrong-password') {
+          message = 'Wrong password provided for that user.';
+        } else if (e.code == 'invalid-credential') {
+          message = 'Invalid credentials provided.';
+        } else if (e.code == 'permission-denied') {
+          message = e.message ?? "Insufficient permissions.";
+        } else {
+          message = e.message ?? "An unknown error occurred.";
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   @override
@@ -247,13 +349,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                   const SizedBox(height: 8),
 
                                   // Gradient Sign In Button
-                                  PrimaryGradientButton(
-                                    label: 'Sign In',
-                                    onTap: () {
-                                      Navigator.pushReplacementNamed(
-                                          context, AppRoutes.home);
-                                    },
-                                  ),
+                                  _isLoading
+                                      ? Center(
+                                          child: CircularProgressIndicator(
+                                              color: primary))
+                                      : PrimaryGradientButton(
+                                          label: 'Sign In',
+                                          onTap: _signIn,
+                                        ),
                                 ],
                               ),
                             ),
@@ -270,8 +373,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                   MaterialPageRoute(
                                       builder: (_) => const _GoRegister()),
                                 ),
-                                style: TextButton.styleFrom(foregroundColor: primary),
-                                child: const Text("Don't have an account? Register"),
+                                style: TextButton.styleFrom(
+                                    foregroundColor: primary),
+                                child: const Text(
+                                    "Don't have an account? Register"),
                               ),
                               const SizedBox(height: 6),
                               const Text(
