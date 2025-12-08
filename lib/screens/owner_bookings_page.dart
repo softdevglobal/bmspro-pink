@@ -194,21 +194,32 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       {List<Map<String, dynamic>>? updatedServices}) async {
     final db = FirebaseFirestore.instance;
     try {
+      // Check if services need update
+      final bool hasServicesUpdate = updatedServices != null && updatedServices.isNotEmpty;
+
       // If confirming a booking request, move it to 'bookings' collection
       if (booking.collection == 'bookingRequests' && newStatus == 'confirmed') {
+        // Update services array in the booking request itself first (cleaner logic)
+        // This ensures the object we copy from is up to date, though we construct newData manually below.
+        
         final newData = Map<String, dynamic>.from(booking.rawData);
         newData['status'] = 'confirmed';
         newData['updatedAt'] = FieldValue.serverTimestamp();
+        
+        // Ensure services are updated in the new booking document
+        if (hasServicesUpdate) {
+          newData['services'] = updatedServices;
+        }
+
         if (newData['createdAt'] == null) {
           newData['createdAt'] = FieldValue.serverTimestamp();
         }
 
-        // Update services and top-level staff info if provided
-        if (updatedServices != null && updatedServices.isNotEmpty) {
-          newData['services'] = updatedServices;
-          // Update top-level staffName/staffId from the first service as fallback
-          newData['staffName'] = updatedServices.first['staffName'];
-          newData['staffId'] = updatedServices.first['staffId'];
+        // Remove top-level staff fields if they exist to avoid confusion
+        // Only if we have services list, otherwise keep them for legacy support
+        if (hasServicesUpdate || (newData['services'] != null && (newData['services'] as List).isNotEmpty)) {
+          newData.remove('staffId');
+          newData.remove('staffName');
         }
 
         // Add to bookings
@@ -225,8 +236,18 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         );
 
       } else {
-        // Just update status
+        // Update existing booking
         final Map<String, dynamic> updateData = {'status': newStatus};
+        
+        // CRITICAL FIX: Also update services array in the existing document if provided
+        if (hasServicesUpdate) {
+          updateData['services'] = updatedServices;
+          
+          // Also clean up top-level fields if they exist
+          updateData['staffId'] = FieldValue.delete();
+          updateData['staffName'] = FieldValue.delete();
+        }
+
         await db
             .collection(booking.collection)
             .doc(booking.id)
@@ -279,7 +300,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       final content = _getNotificationContent(
         status: newStatus,
         bookingCode: raw['bookingCode']?.toString(),
-        staffName: finalStaffName,
+        staffName: finalStaffName, // This is just for the message text
         serviceName: booking.service,
         bookingDate: booking.date,
         bookingTime: (raw['time'] ?? '').toString(),
@@ -296,6 +317,11 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         'read': false,
         'createdAt': FieldValue.serverTimestamp(),
       };
+      
+      // Remove top-level staffName from notification data if it exists in raw
+      // But we might want to keep it if the notification UI expects it for display
+      // For now, we'll keep it as a fallback display value
+      notifData['staffName'] = finalStaffName;
 
       // Add optional fields
       if (raw['customerUid'] != null) notifData['customerUid'] = raw['customerUid'];
