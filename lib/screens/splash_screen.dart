@@ -48,11 +48,7 @@ class _SplashScreenState extends State<SplashScreen> {
                   height: 120,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(24),
-                    gradient: LinearGradient(
-                      colors: [primary, accent],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+                    color: Colors.white,
                     boxShadow: [
                       BoxShadow(
                         color: primary.withOpacity(0.18),
@@ -61,8 +57,13 @@ class _SplashScreenState extends State<SplashScreen> {
                       )
                     ],
                   ),
-                  child: const Center(
-                    child: Icon(Icons.content_cut, color: Colors.white, size: 48),
+                  child: Center(
+                    child: Image.asset(
+                      'assets/icons/bmspink-icon.jpeg',
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.contain,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),

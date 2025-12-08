@@ -54,6 +54,8 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^4.0.0
 
+  flutter_launcher_icons: ^0.13.1
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
@@ -64,6 +66,16 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/icons/bmspink-icon.jpeg
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/bmspink-icon.jpeg"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icons/bmspink-icon.jpeg"
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -63,7 +63,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         const SizedBox(height: 24),
-                        // "Image" area - icon inside gradient rounded square
+                        // "Image" area - app icon inside rounded card
                         Container(
                           height: MediaQuery.of(context).size.height * 0.33,
                           alignment: Alignment.center,
@@ -72,14 +72,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                             height: 200,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(32),
-                              gradient: LinearGradient(
-                                colors: [
-                                  primary,
-                                  accent,
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
+                              color: Colors.white,
                               boxShadow: [
                                 BoxShadow(
                                   color: primary.withOpacity(0.25),
@@ -88,7 +81,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                                 )
                               ],
                             ),
-                            child: Icon(data.icon, color: Colors.white, size: 96),
+                            child: Center(
+                              child: Image.asset(
+                                'assets/icons/bmspink-icon.jpeg',
+                                width: 140,
+                                height: 140,
+                                fit: BoxFit.contain,
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 32),

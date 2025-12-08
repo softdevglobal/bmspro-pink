@@ -172,11 +172,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   height: 84,
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(20),
-                                    gradient: LinearGradient(
-                                      colors: [primary, accent],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
+                                    color: Colors.white,
                                     boxShadow: [
                                       BoxShadow(
                                         color: primary.withOpacity(0.15),
@@ -185,9 +181,13 @@ class _LoginScreenState extends State<LoginScreen> {
                                       )
                                     ],
                                   ),
-                                  child: const Center(
-                                    child: Icon(Icons.content_cut,
-                                        color: Colors.white, size: 32),
+                                  child: Center(
+                                    child: Image.asset(
+                                      'assets/icons/bmspink-icon.jpeg',
+                                      width: 64,
+                                      height: 64,
+                                      fit: BoxFit.contain,
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 12),
