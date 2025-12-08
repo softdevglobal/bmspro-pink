@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'client_profile_page.dart';
 
 // --- 1. Theme & Colors ---
@@ -21,17 +23,24 @@ class AppColors {
 
 // --- 2. Client Model ---
 class Client {
+  final String id;
   final String name;
   final String phone;
   final String email;
   final String type; // 'vip', 'new', 'risk', 'active'
   final String avatarUrl;
+  final int visits;
+  final DateTime? lastVisit;
+
   Client({
+    required this.id,
     required this.name,
     required this.phone,
     required this.email,
     required this.type,
     required this.avatarUrl,
+    required this.visits,
+    required this.lastVisit,
   });
 }
 
@@ -43,17 +52,8 @@ class ClientsScreen extends StatefulWidget {
 }
 
 class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateMixin {
-  // Data
-  final List<Client> _allClients = [
-    Client(name: "Amanda Chen", phone: "+61 412 345 678", email: "amanda@email.com", type: "vip", avatarUrl: "https://i.pravatar.cc/150?img=1"),
-    Client(name: "Bella Rodriguez", phone: "+61 423 456 789", email: "bella@email.com", type: "new", avatarUrl: "https://i.pravatar.cc/150?img=5"),
-    Client(name: "Charlotte Wilson", phone: "+61 434 567 890", email: "charlotte@email.com", type: "risk", avatarUrl: "https://i.pravatar.cc/150?img=6"),
-    Client(name: "Diana Foster", phone: "+61 445 678 901", email: "diana@email.com", type: "active", avatarUrl: "https://i.pravatar.cc/150?img=7"),
-    Client(name: "Emma Thompson", phone: "+61 456 789 012", email: "emma@email.com", type: "vip", avatarUrl: "https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg"),
-    Client(name: "Grace Martinez", phone: "+61 467 890 123", email: "grace@email.com", type: "active", avatarUrl: "https://i.pravatar.cc/150?img=9"),
-    Client(name: "Hannah Lee", phone: "+61 478 901 234", email: "hannah@email.com", type: "new", avatarUrl: "https://i.pravatar.cc/150?img=10"),
-    Client(name: "Sarah Johnson", phone: "+61 489 012 345", email: "sarah@email.com", type: "vip", avatarUrl: "https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-1.jpg"),
-  ];
+  // Live data from Firestore
+  List<Client> _allClients = [];
 
   // State
   String _currentFilter = 'all';
@@ -66,14 +66,128 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
   @override
   void initState() {
     super.initState();
-    _filteredClients = _allClients;
-    for (int i = 0; i < _allClients.length; i++) {
-      _staggerControllers.add(AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 600),
-      ));
-    }
-    _startAnimations();
+    _filteredClients = [];
+    _listenToClients();
+  }
+
+  void _listenToClients() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final ownerUid = user.uid;
+
+    FirebaseFirestore.instance
+        .collection('bookings')
+        .where('ownerUid', isEqualTo: ownerUid)
+        .snapshots()
+        .listen((snap) {
+      final Map<String, Map<String, dynamic>> map = {};
+
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final name = (data['client'] ?? '').toString().trim();
+        final email = (data['clientEmail'] ?? '').toString().trim();
+        final phone = (data['clientPhone'] ?? '').toString().trim();
+
+        if (name.isEmpty && email.isEmpty && phone.isEmpty) continue;
+
+        final keySource = data['customerUid'] ??
+            (email.isNotEmpty
+                ? email
+                : (phone.isNotEmpty ? phone : name));
+        final key = keySource.toString().toLowerCase();
+
+        final dateStr = (data['date'] ?? '').toString();
+        DateTime? bookingDate;
+        try {
+          if (dateStr.isNotEmpty) {
+            bookingDate = DateTime.parse(dateStr);
+          }
+        } catch (_) {}
+
+        final existing = map[key];
+        if (existing == null) {
+          map[key] = {
+            'name': name.isNotEmpty ? name : (email.isNotEmpty ? email : phone),
+            'email': email,
+            'phone': phone,
+            'visits': 1,
+            'lastVisit': bookingDate,
+          };
+        } else {
+          existing['visits'] = (existing['visits'] as int) + 1;
+          final currentLast = existing['lastVisit'] as DateTime?;
+          if (bookingDate != null &&
+              (currentLast == null || bookingDate.isAfter(currentLast))) {
+            existing['lastVisit'] = bookingDate;
+          }
+        }
+      }
+
+      final now = DateTime.now();
+      final clients = map.entries.map((entry) {
+        final data = entry.value;
+        final visits = (data['visits'] as int?) ?? 0;
+        final DateTime? lastVisit = data['lastVisit'] as DateTime?;
+
+        String type = 'active';
+        if (visits >= 8) {
+          type = 'vip';
+        } else if (visits <= 1) {
+          type = 'new';
+        }
+        if (lastVisit != null &&
+            now.difference(lastVisit).inDays > 120 &&
+            visits > 0) {
+          type = 'risk';
+        }
+
+        final name = (data['name'] as String?) ?? 'Customer';
+        final email = (data['email'] as String?) ?? '';
+        final phone = (data['phone'] as String?) ?? '';
+
+        final avatarUrl =
+            'https://ui-avatars.com/api/?background=FF2D8F&color=fff&name=${Uri.encodeComponent(name)}';
+
+        return Client(
+          id: entry.key,
+          name: name,
+          phone: phone,
+          email: email,
+          type: type,
+          avatarUrl: avatarUrl,
+          visits: visits,
+          lastVisit: lastVisit,
+        );
+      }).toList()
+        ..sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        );
+
+      if (!mounted) return;
+
+      setState(() {
+        _allClients = clients;
+
+        // Recreate stagger controllers for current list
+        for (final c in _staggerControllers) {
+          c.dispose();
+        }
+        _staggerControllers.clear();
+        for (int i = 0; i < clients.length; i++) {
+          _staggerControllers.add(
+            AnimationController(
+              vsync: this,
+              duration: const Duration(milliseconds: 600),
+            ),
+          );
+        }
+      });
+
+      _filterClients();
+    }, onError: (e) {
+      debugPrint('Error loading clients: $e');
+    });
   }
 
   void _startAnimations() {
@@ -96,19 +210,35 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
 
   // --- Logic ---
   void _filterClients() {
+    final filtered = _allClients.where((client) {
+      final query = _searchQuery.toLowerCase();
+      final matchesSearch =
+          client.name.toLowerCase().contains(query) ||
+          client.phone.contains(_searchQuery) ||
+          client.email.toLowerCase().contains(query);
+      final matchesFilter =
+          _currentFilter == 'all' || client.type == _currentFilter;
+      return matchesSearch && matchesFilter;
+    }).toList();
+
+    // Rebuild animations for filtered list
+    for (final c in _staggerControllers) {
+      c.dispose();
+    }
+    _staggerControllers.clear();
+    for (int i = 0; i < filtered.length; i++) {
+      _staggerControllers.add(
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 600),
+        ),
+      );
+    }
+
     setState(() {
-      _filteredClients = _allClients.where((client) {
-        final matchesSearch = client.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-            client.phone.contains(_searchQuery) ||
-            client.email.toLowerCase().contains(_searchQuery.toLowerCase());
-        final matchesFilter = _currentFilter == 'all' || client.type == _currentFilter;
-        return matchesSearch && matchesFilter;
-      }).toList();
-      for (var controller in _staggerControllers) {
-        controller.reset();
-      }
-      _startAnimations();
+      _filteredClients = filtered;
     });
+    _startAnimations();
   }
 
   void _onSearchChanged(String query) {
@@ -294,7 +424,9 @@ class _ClientCard extends StatelessWidget {
     return GestureDetector(
       onTap: () {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const ClientProfilePage()),
+          MaterialPageRoute(
+            builder: (_) => ClientProfilePage(client: client),
+          ),
         );
       },
       child: Container(
