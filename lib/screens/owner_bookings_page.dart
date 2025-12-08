@@ -130,49 +130,15 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                 decoration: BoxDecoration(
                   color: background,
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text(
-                          'Bookings',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Manage appointments',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF6B7280),
-                          ),
-                        ),
-                      ],
+                child: const Center(
+                  child: Text(
+                    'Bookings',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black,
                     ),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        backgroundColor: primary,
-                        foregroundColor: Colors.white,
-                        elevation: 2,
-                      ),
-                      onPressed: () {},
-                      icon: const Icon(Icons.download, size: 16),
-                      label: const Text(
-                        'Export',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
 
