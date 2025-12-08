@@ -18,8 +18,16 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
 
   // Live booking data from Firestore (bookings + bookingRequests for this owner)
   List<_Booking> _bookings = [];
+  // List of available staff
+  List<Map<String, dynamic>> _staffList = [];
+  // List of services for staff assignment validation
+  List<Map<String, dynamic>> _servicesList = [];
+
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingsSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingRequestsSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _staffSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _servicesSub;
+
   bool _loading = true;
   String? _error;
 
@@ -27,14 +35,82 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   void initState() {
     super.initState();
     _listenToBookings();
+    _listenToStaff();
+    _listenToServices();
   }
 
   @override
   void dispose() {
     _bookingsSub?.cancel();
     _bookingRequestsSub?.cancel();
+    _staffSub?.cancel();
+    _servicesSub?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _listenToServices() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    _servicesSub = FirebaseFirestore.instance
+        .collection('services')
+        .where('ownerUid', isEqualTo: user.uid)
+        .snapshots()
+        .listen((snap) {
+      final List<Map<String, dynamic>> loaded = [];
+      for (var doc in snap.docs) {
+        final data = doc.data();
+        loaded.add({
+          'id': doc.id,
+          'name': (data['name'] ?? '').toString(),
+          'staffIds': List<String>.from(data['staffIds'] ?? []),
+        });
+      }
+      if (mounted) {
+        setState(() {
+          _servicesList = loaded;
+        });
+      }
+    }, onError: (e) {
+      debugPrint("Error fetching services: $e");
+    });
+  }
+
+  void _listenToStaff() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Listen to users where ownerUid matches current user
+    // and role is 'salon_staff' or 'salon_branch_admin'
+    _staffSub = FirebaseFirestore.instance
+        .collection('users')
+        .where('ownerUid', isEqualTo: user.uid)
+        .snapshots()
+        .listen((snap) {
+      final List<Map<String, dynamic>> loaded = [];
+      for (var doc in snap.docs) {
+        final data = doc.data();
+        final role = (data['role'] ?? '').toString();
+        if (role == 'salon_staff' || role == 'salon_branch_admin') {
+          loaded.add({
+            'id': doc.id,
+            'name': (data['displayName'] ?? data['name'] ?? 'Unknown').toString(),
+            'role': (data['staffRole'] ?? data['role'] ?? 'Staff').toString(),
+            'avatarUrl': (data['photoURL'] ?? data['avatarUrl']).toString(),
+            'branchId': (data['branchId'] ?? '').toString(),
+            'weeklySchedule': data['weeklySchedule'] as Map<String, dynamic>?,
+          });
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _staffList = loaded;
+        });
+      }
+    }, onError: (e) {
+      debugPrint("Error fetching staff: $e");
+    });
   }
 
   void _listenToBookings() {
@@ -114,7 +190,8 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     );
   }
 
-  Future<void> _updateBookingStatus(_Booking booking, String newStatus) async {
+  Future<void> _updateBookingStatus(_Booking booking, String newStatus,
+      {List<Map<String, dynamic>>? updatedServices}) async {
     final db = FirebaseFirestore.instance;
     try {
       // If confirming a booking request, move it to 'bookings' collection
@@ -126,16 +203,46 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
           newData['createdAt'] = FieldValue.serverTimestamp();
         }
 
+        // Update services and top-level staff info if provided
+        if (updatedServices != null && updatedServices.isNotEmpty) {
+          newData['services'] = updatedServices;
+          // Update top-level staffName/staffId from the first service as fallback
+          newData['staffName'] = updatedServices.first['staffName'];
+          newData['staffId'] = updatedServices.first['staffId'];
+        }
+
         // Add to bookings
-        await db.collection('bookings').add(newData);
+        final ref = await db.collection('bookings').add(newData);
         // Delete from bookingRequests
         await db.collection('bookingRequests').doc(booking.id).delete();
+        
+        // Create notification
+        await _createNotification(
+          bookingId: ref.id,
+          booking: booking,
+          newStatus: 'Confirmed',
+          updatedServices: updatedServices,
+        );
+
       } else {
         // Just update status
+        final Map<String, dynamic> updateData = {'status': newStatus};
         await db
             .collection(booking.collection)
             .doc(booking.id)
-            .update({'status': newStatus});
+            .update(updateData);
+            
+        // Create notification
+        // normalize status string for notification function (Capitalized)
+        String notifStatus = _capitalise(newStatus);
+        if (newStatus == 'cancelled') notifStatus = 'Canceled';
+        
+        await _createNotification(
+          bookingId: booking.id,
+          booking: booking,
+          newStatus: notifStatus,
+          updatedServices: updatedServices,
+        );
       }
 
       if (mounted) {
@@ -150,6 +257,629 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         );
       }
     }
+  }
+
+  Future<void> _createNotification({
+    required String bookingId,
+    required _Booking booking,
+    required String newStatus,
+    List<Map<String, dynamic>>? updatedServices,
+  }) async {
+    try {
+      final db = FirebaseFirestore.instance;
+      final raw = booking.rawData;
+      
+      // Determine final values (updated or existing)
+      final finalServices = updatedServices ?? booking.items;
+      final finalStaffName = (updatedServices != null && updatedServices.isNotEmpty)
+          ? (updatedServices.first['staffName'] ?? booking.staff)
+          : booking.staff;
+      
+      // Generate content
+      final content = _getNotificationContent(
+        status: newStatus,
+        bookingCode: raw['bookingCode']?.toString(),
+        staffName: finalStaffName,
+        serviceName: booking.service,
+        bookingDate: booking.date,
+        bookingTime: (raw['time'] ?? '').toString(),
+        services: finalServices,
+      );
+
+      final notifData = {
+        'bookingId': bookingId,
+        'type': content['type'],
+        'title': content['title'],
+        'message': content['message'],
+        'status': newStatus,
+        'ownerUid': raw['ownerUid'],
+        'read': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      // Add optional fields
+      if (raw['customerUid'] != null) notifData['customerUid'] = raw['customerUid'];
+      if (raw['clientEmail'] != null) notifData['customerEmail'] = raw['clientEmail'];
+      if (raw['clientPhone'] != null) notifData['customerPhone'] = raw['clientPhone'];
+      if (raw['bookingCode'] != null) notifData['bookingCode'] = raw['bookingCode'];
+      
+      // Richer details
+      notifData['staffName'] = finalStaffName;
+      notifData['serviceName'] = booking.service;
+      if (raw['branchName'] != null) notifData['branchName'] = raw['branchName'];
+      if (booking.date.isNotEmpty) notifData['bookingDate'] = booking.date;
+      final time = (raw['time'] ?? '').toString();
+      if (time.isNotEmpty) notifData['bookingTime'] = time;
+      
+      if (finalServices.isNotEmpty) {
+        notifData['services'] = finalServices.map((s) => {
+          'name': s['name'] ?? 'Service',
+          'staffName': s['staffName'] ?? 'Any Available',
+        }).toList();
+      }
+
+      await db.collection('notifications').add(notifData);
+    } catch (e) {
+      debugPrint("Error creating notification: $e");
+    }
+  }
+
+  Map<String, String> _getNotificationContent({
+    required String status,
+    String? bookingCode,
+    String? staffName,
+    String? serviceName,
+    String? bookingDate,
+    String? bookingTime,
+    List<Map<String, dynamic>>? services,
+  }) {
+    String code = bookingCode != null ? " ($bookingCode)" : "";
+    String serviceAndStaff = "";
+    String datetime = "";
+
+    if (bookingDate != null && bookingTime != null) {
+      datetime = " on $bookingDate at $bookingTime";
+    }
+
+    if (services != null && services.length > 1) {
+      serviceAndStaff = " for ${services.length} services";
+    } else {
+      String s = serviceName ?? "Service";
+      String st = staffName != null && staffName.isNotEmpty && staffName != 'Any staff' 
+          ? " with $staffName" 
+          : "";
+      serviceAndStaff = " for $s$st";
+    }
+
+    switch (status) {
+      case "Pending":
+        return {
+          "title": "Booking Request Received",
+          "message": "Your booking request$code$serviceAndStaff has been received successfully! We'll confirm your appointment soon.",
+          "type": "booking_status_changed"
+        };
+      case "Confirmed":
+        return {
+          "title": "Booking Confirmed",
+          "message": "Your booking$code$serviceAndStaff$datetime has been confirmed. We look forward to seeing you!",
+          "type": "booking_confirmed"
+        };
+      case "Completed":
+        return {
+          "title": "Booking Completed",
+          "message": "Your booking$code$serviceAndStaff has been completed. Thank you for visiting us!",
+          "type": "booking_completed"
+        };
+      case "Canceled":
+      case "Cancelled":
+        return {
+          "title": "Booking Canceled",
+          "message": "Your booking$code$serviceAndStaff$datetime has been canceled. Please contact us if you have any questions.",
+          "type": "booking_canceled"
+        };
+      default:
+        return {
+          "title": "Booking Status Updated",
+          "message": "Your booking$code status has been updated to $status.",
+          "type": "booking_status_changed"
+        };
+    }
+  }
+
+  // New dialog for confirming booking with detailed service-wise staff assignment
+  void _showConfirmationWithDetailsDialog(
+      BuildContext context, _Booking booking) {
+    // Prepare initial state for services
+    final List<Map<String, dynamic>> servicesToEdit = [];
+    final List<bool> isLocked = [];
+
+    if (booking.items.isNotEmpty) {
+      for (var item in booking.items) {
+        final m = Map<String, dynamic>.from(item);
+        servicesToEdit.add(m);
+        final sName = (m['staffName'] ?? '').toString().toLowerCase();
+        isLocked.add(sName.isNotEmpty &&
+            !sName.contains('any staff') &&
+            !sName.contains('any available'));
+      }
+    } else {
+      servicesToEdit.add({
+        'name': booking.service,
+        'staffName': booking.staff,
+        'staffId': booking.rawData['staffId'],
+        'price': booking.priceValue,
+        'duration': booking.duration,
+      });
+      final sName = booking.staff.toLowerCase();
+      isLocked.add(sName.isNotEmpty &&
+          !sName.contains('any staff') &&
+          !sName.contains('any available'));
+    }
+
+    // Pre-calculate available staff for each service
+    String dayName = '';
+    try {
+      final parts = booking.date.split('-');
+      if (parts.length == 3) {
+        final dt = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+        // 1=Mon, 7=Sun. Map to keys used in DB (Monday, Tuesday...)
+        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        dayName = days[dt.weekday - 1];
+      }
+    } catch (_) {}
+
+    List<List<Map<String, dynamic>>> availableStaffPerService = [];
+    for (var service in servicesToEdit) {
+      final sName = (service['name'] ?? '').toString();
+      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName));
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (context, setState) {
+          bool canConfirm = true;
+          for (var service in servicesToEdit) {
+            final staffName =
+                (service['staffName'] ?? '').toString().toLowerCase();
+            if (staffName.isEmpty ||
+                staffName.contains('any staff') ||
+                staffName.contains('any available')) {
+              canConfirm = false;
+              break;
+            }
+          }
+
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.all(16),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF5FA),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          FontAwesomeIcons.calendarCheck,
+                          color: Color(0xFFFF2D8F),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Confirm Booking',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              "Assign staff to proceed",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: servicesToEdit.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final service = entry.value;
+                          final locked = isLocked[index];
+                          final currentStaffId = service['staffId'];
+                          final availableStaff = availableStaffPerService[index];
+
+                          // Ensure current staff is in the list even if filtered out (e.g. strict rules changed)
+                          // This avoids UI bugs if data is slightly inconsistent
+                          List<Map<String, dynamic>> dropdownStaff = [...availableStaff];
+                          if (currentStaffId != null && 
+                              !dropdownStaff.any((s) => s['id'] == currentStaffId)) {
+                             final found = _staffList.firstWhere((s) => s['id'] == currentStaffId, orElse: () => {});
+                             if (found.isNotEmpty) dropdownStaff.add(found);
+                          }
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: const Color(0xFFF3F4F6)),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.02),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        service['name'] ?? 'Service',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                    ),
+                                    if (locked)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFECFDF5),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Row(
+                                          children: [
+                                            Icon(Icons.check_circle,
+                                                size: 12,
+                                                color: Color(0xFF059669)),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              "Assigned",
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF059669),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                if (locked)
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF9FAFB),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                          color: const Color(0xFFE5E7EB)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(FontAwesomeIcons.userTie,
+                                            size: 14, color: Color(0xFF6B7280)),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                          service['staffName'] ?? '',
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        const Icon(Icons.lock_outline,
+                                            size: 16, color: Color(0xFF9CA3AF)),
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(
+                                            color: canConfirm
+                                                ? const Color(0xFFE5E7EB)
+                                                : const Color(0xFFFEE2E2),
+                                            width: 1.5,
+                                          ),
+                                        ),
+                                        child: DropdownButtonHideUnderline(
+                                          child: DropdownButton<String>(
+                                            isExpanded: true,
+                                            icon: const Icon(
+                                                Icons.keyboard_arrow_down_rounded),
+                                            hint: const Row(
+                                              children: [
+                                                Icon(FontAwesomeIcons.user,
+                                                    size: 14,
+                                                    color: Color(0xFF9CA3AF)),
+                                                SizedBox(width: 12),
+                                                Text("Select Staff Member"),
+                                              ],
+                                            ),
+                                            value: dropdownStaff.any((s) =>
+                                                    s['id'] == currentStaffId)
+                                                ? currentStaffId
+                                                : null,
+                                            items: dropdownStaff.map((staff) {
+                                              final String avatar = (staff['avatarUrl'] ?? '').toString();
+                                              final String name = staff['name'];
+                                              final String url = (avatar.isNotEmpty && avatar != 'null')
+                                                  ? avatar
+                                                  : 'https://ui-avatars.com/api/?background=random&color=fff&name=${Uri.encodeComponent(name)}';
+
+                                              return DropdownMenuItem<String>(
+                                                value: staff['id'],
+                                                child: Row(
+                                                  children: [
+                                                    CircleAvatar(
+                                                      radius: 12,
+                                                      backgroundImage: NetworkImage(url),
+                                                      backgroundColor: Colors.grey.shade200,
+                                                    ),
+                                                    const SizedBox(width: 10),
+                                                    Text(
+                                                      name,
+                                                      style: const TextStyle(
+                                                        fontSize: 14,
+                                                        color: Colors.black87,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }).toList(),
+                                            onChanged: (val) {
+                                              if (val != null) {
+                                                final selectedStaff =
+                                                    _staffList.firstWhere(
+                                                        (s) => s['id'] == val);
+                                                setState(() {
+                                                  service['staffId'] =
+                                                      selectedStaff['id'];
+                                                  service['staffName'] =
+                                                      selectedStaff['name'];
+                                                });
+                                              }
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                      if ((service['staffName'] ?? '')
+                                              .toString()
+                                              .toLowerCase()
+                                              .contains('any staff') ||
+                                          (service['staffName'] ?? '')
+                                              .toString()
+                                              .toLowerCase()
+                                              .contains('any available'))
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                              top: 6, left: 4),
+                                          child: Row(
+                                            children: const [
+                                              Icon(Icons.info_outline,
+                                                  size: 12,
+                                                  color: Color(0xFFEF4444)),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                "Staff assignment required",
+                                                style: TextStyle(
+                                                  color: Color(0xFFEF4444),
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: canConfirm
+                              ? () {
+                                  Navigator.pop(ctx);
+                                  _updateBookingStatus(
+                                    booking,
+                                    'confirmed',
+                                    updatedServices: servicesToEdit,
+                                  );
+                                }
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFF2D8F),
+                            disabledBackgroundColor:
+                                const Color(0xFFFF2D8F).withOpacity(0.5),
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Confirm Booking',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
+  List<Map<String, dynamic>> _getAvailableStaffForService(
+      String serviceName, String branchId, String dayName) {
+    // 1. Find service definition
+    final service = _servicesList.firstWhere(
+      (s) => s['name'] == serviceName,
+      orElse: () => {},
+    );
+    final List<String> allowedStaffIds =
+        service.isNotEmpty ? List<String>.from(service['staffIds'] ?? []) : [];
+
+    return _staffList.where((staff) {
+      // 2. Check Service Capability (if defined)
+      if (service.isNotEmpty && allowedStaffIds.isNotEmpty) {
+        if (!allowedStaffIds.contains(staff['id'])) return false;
+      }
+
+      // 3. Check Schedule and Branch
+      // If dayName is valid, check if staff works on this day
+      if (dayName.isNotEmpty) {
+        final schedule = staff['weeklySchedule'] as Map<String, dynamic>?;
+        if (schedule != null) {
+          final daySchedule = schedule[dayName];
+          if (daySchedule == null) return false; // Not working today
+
+          // Check if scheduled at the booking branch
+          final scheduledBranch = daySchedule['branchId'];
+          if (scheduledBranch != null && scheduledBranch.toString() != branchId) {
+             return false; // Scheduled at a different branch
+          }
+        } else {
+          // No schedule defined - fallback to home branch check
+           if (staff['branchId'] != branchId) return false;
+        }
+      } else {
+        // No date info - fallback to home branch check
+        if (staff['branchId'] != branchId) return false;
+      }
+
+      return true;
+    }).toList();
+  }
+
+  void _showConfirmDialog(BuildContext context, String action,
+      VoidCallback onConfirm, {String? subtitle}) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          '${_capitalise(action)} Booking?',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Are you sure you want to $action this booking?'),
+            if (subtitle != null) ...[
+              const SizedBox(height: 8),
+              Text(subtitle, style: const TextStyle(color: Colors.grey)),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('No', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onConfirm();
+            },
+            child: const Text('Yes',
+                style: TextStyle(
+                    color: Color(0xFFFF2D8F), fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   String _capitalise(String value) {
@@ -428,8 +1158,18 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                             padding: const EdgeInsets.only(bottom: 12),
                             child: _BookingCard(
                               booking: b,
-                              onStatusUpdate: (status) =>
-                                  _updateBookingStatus(b, status),
+                              onStatusUpdate: (status) {
+                                if (status == 'confirmed') {
+                                  // Show detailed service-wise staff assignment dialog
+                                  _showConfirmationWithDetailsDialog(context, b);
+                                } else {
+                                  _showConfirmDialog(
+                                    context,
+                                    status,
+                                    () => _updateBookingStatus(b, status),
+                                  );
+                                }
+                              },
                             ),
                           ))
                       .toList(),
@@ -503,6 +1243,8 @@ class _Booking {
   final String status; // confirmed, pending, completed, cancelled
   final String service;
   final String staff;
+  final String branchId;
+  final String date; // Keep raw date for schedule checking
   final String dateTime;
   final String duration;
   final String price;
@@ -522,6 +1264,8 @@ class _Booking {
     required this.status,
     required this.service,
     required this.staff,
+    required this.branchId,
+    required this.date,
     required this.dateTime,
     required this.duration,
     required this.price,
@@ -537,6 +1281,7 @@ class _Booking {
     final client = (data['client'] ?? 'Walk-in').toString();
     final email = (data['clientEmail'] ?? '').toString();
     final staffName = (data['staffName'] ?? 'Any staff').toString();
+    final branchId = (data['branchId'] ?? '').toString();
     
     // Parse items list
     List<Map<String, dynamic>> items = [];
@@ -637,6 +1382,8 @@ class _Booking {
       status: status,
       service: serviceName,
       staff: staffName,
+      branchId: branchId,
+      date: date,
       dateTime: dateTimeLabel,
       duration: durationLabel,
       price: priceLabel,
@@ -681,34 +1428,6 @@ class _BookingCard extends StatelessWidget {
       default:
         return const Color(0xFF4B5563);
     }
-  }
-
-  void _showConfirmDialog(BuildContext context, String action, VoidCallback onConfirm) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          '${_capitalise(action)} Booking?',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        content: Text('Are you sure you want to $action this booking?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('No', style: TextStyle(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              onConfirm();
-            },
-            child: const Text('Yes', style: TextStyle(color: Color(0xFFFF2D8F), fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -834,22 +1553,14 @@ class _BookingCard extends StatelessWidget {
                         label: "Confirm",
                         background: const Color(0xFFDCFCE7),
                         color: const Color(0xFF166534),
-                        onTap: () => _showConfirmDialog(
-                          context,
-                          'confirm',
-                          () => onStatusUpdate('confirmed'),
-                        ),
+                        onTap: () => onStatusUpdate('confirmed'),
                       ),
                       const SizedBox(width: 8),
                       _ActionButton(
                         label: "Decline",
                         background: const Color(0xFFFEE2E2),
                         color: const Color(0xFFB91C1C),
-                        onTap: () => _showConfirmDialog(
-                          context,
-                          'decline',
-                          () => onStatusUpdate('cancelled'),
-                        ),
+                        onTap: () => onStatusUpdate('cancelled'),
                       ),
                     ] else if (booking.status == 'confirmed') ...[
                       const SizedBox(width: 8),
@@ -857,22 +1568,14 @@ class _BookingCard extends StatelessWidget {
                         label: "Complete",
                         background: const Color(0xFFDBEAFE),
                         color: const Color(0xFF1D4ED8),
-                        onTap: () => _showConfirmDialog(
-                          context,
-                          'complete',
-                          () => onStatusUpdate('completed'),
-                        ),
+                        onTap: () => onStatusUpdate('completed'),
                       ),
                       const SizedBox(width: 8),
                       _ActionButton(
                         label: "Cancel",
                         background: const Color(0xFFFEE2E2),
                         color: const Color(0xFFB91C1C),
-                        onTap: () => _showConfirmDialog(
-                          context,
-                          'cancel',
-                          () => onStatusUpdate('cancelled'),
-                        ),
+                        onTap: () => onStatusUpdate('cancelled'),
                       ),
                     ],
                   ],
