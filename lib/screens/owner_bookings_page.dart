@@ -306,23 +306,58 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                         items: const [
                           DropdownMenuItem(
                             value: 'all',
-                            child: Text('All Statuses'),
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.list,
+                                    size: 14, color: Colors.black54),
+                                SizedBox(width: 12),
+                                Text('All Statuses'),
+                              ],
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 'pending',
-                            child: Text('Booking Requests'),
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.hourglassHalf,
+                                    size: 14, color: Color(0xFFD97706)),
+                                SizedBox(width: 12),
+                                Text('Booking Requests'),
+                              ],
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 'confirmed',
-                            child: Text('Confirmed Bookings'),
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.check,
+                                    size: 14, color: Color(0xFF166534)),
+                                SizedBox(width: 12),
+                                Text('Confirmed Bookings'),
+                              ],
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 'completed',
-                            child: Text('Completed Bookings'),
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.checkDouble,
+                                    size: 14, color: Color(0xFF1D4ED8)),
+                                SizedBox(width: 12),
+                                Text('Completed Bookings'),
+                              ],
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 'cancelled',
-                            child: Text('Cancelled Bookings'),
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.ban,
+                                    size: 14, color: Color(0xFFB91C1C)),
+                                SizedBox(width: 12),
+                                Text('Cancelled Bookings'),
+                              ],
+                            ),
                           ),
                         ],
                         onChanged: (value) {
@@ -418,6 +453,7 @@ class _Booking {
   final String price;
   final double priceValue;
   final IconData icon;
+  final List<Map<String, dynamic>> items;
 
   const _Booking({
     required this.mergeKey,
@@ -433,6 +469,7 @@ class _Booking {
     required this.price,
     required this.priceValue,
     required this.icon,
+    required this.items,
   });
 
   // Build a booking model from a Firestore document
@@ -441,15 +478,25 @@ class _Booking {
     final client = (data['client'] ?? 'Walk-in').toString();
     final email = (data['clientEmail'] ?? '').toString();
     final staffName = (data['staffName'] ?? 'Any staff').toString();
-    String serviceName = (data['serviceName'] ?? '').toString();
-    if (serviceName.isEmpty && data['services'] is List) {
+    
+    // Parse items list
+    List<Map<String, dynamic>> items = [];
+    if (data['services'] is List) {
       final list = data['services'] as List;
-      if (list.isNotEmpty && list.first is Map) {
-        serviceName =
-            (list.first['name'] ?? 'Service').toString();
+      for (var item in list) {
+        if (item is Map) {
+          items.add(Map<String, dynamic>.from(item));
+        }
       }
     }
+
+    String serviceName = (data['serviceName'] ?? '').toString();
+    if (serviceName.isEmpty && items.isNotEmpty) {
+       serviceName = (items.first['name'] ?? 'Service').toString();
+    }
     if (serviceName.isEmpty) serviceName = 'Service';
+
+    // ... (rest of parsing logic remains similar but we can use items)
 
     final date = (data['date'] ?? '').toString(); // YYYY-MM-DD
     final time = (data['time'] ?? '').toString(); // HH:mm
@@ -535,6 +582,7 @@ class _Booking {
       price: priceLabel,
       priceValue: priceValue,
       icon: icon,
+      items: items,
     );
   }
 }
@@ -798,42 +846,73 @@ class _BookingCard extends StatelessWidget {
                         ],
                       ),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _detailRow(
-                            'Service',
-                            booking.service,
-                            booking.icon,
-                            const Color(0xFFFF2D8F),
+                          const Text(
+                            "Services",
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
                           ),
-                          const Divider(height: 24),
-                          _detailRow(
-                            'Staff',
-                            booking.staff,
-                            FontAwesomeIcons.userTie,
-                            const Color(0xFF8B5CF6),
-                          ),
-                          const Divider(height: 24),
-                          _detailRow(
-                            'Date & Time',
-                            booking.dateTime,
-                            FontAwesomeIcons.calendarCheck,
-                            const Color(0xFF10B981),
-                          ),
-                          const Divider(height: 24),
-                          _detailRow(
-                            'Duration',
-                            booking.duration,
-                            FontAwesomeIcons.hourglassHalf,
-                            const Color(0xFFF59E0B),
-                          ),
-                          const Divider(height: 24),
-                          _detailRow(
-                            'Price',
-                            booking.price,
-                            FontAwesomeIcons.tag,
-                            const Color(0xFFEF4444),
-                            isPrice: true,
-                          ),
+                          const SizedBox(height: 16),
+                          if (booking.items.isEmpty)
+                            // Fallback if no items list (legacy bookings)
+                            _buildServiceItem(
+                              name: booking.service,
+                              staff: booking.staff,
+                              time: booking.dateTime,
+                              duration: booking.duration,
+                              price: booking.price,
+                            )
+                          else
+                            ...booking.items.map((item) {
+                              final name = (item['name'] ?? 'Service').toString();
+                              final staff =
+                                  (item['staffName'] ?? booking.staff).toString();
+                              final dur = (item['duration'] ?? 0);
+                              final durStr = '$dur min';
+                              final pr = (item['price'] ?? 0);
+                              final prStr = '\$${pr}';
+                              
+                              // Use booking time if per-service time is missing
+                              final time = booking.dateTime; 
+
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 24),
+                                child: _buildServiceItem(
+                                  name: name,
+                                  staff: staff,
+                                  time: time, // or specific time if available
+                                  duration: durStr,
+                                  price: prStr,
+                                ),
+                              );
+                            }).toList(),
+                          
+                          const Divider(height: 32),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                "Total Price",
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              Text(
+                                booking.price,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFFFF2D8F),
+                                ),
+                              ),
+                            ],
+                          )
                         ],
                       ),
                     ),
@@ -868,6 +947,70 @@ class _BookingCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildServiceItem({
+    required String name,
+    required String staff,
+    required String time,
+    required String duration,
+    required String price,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF3F4F6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                name,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              Text(
+                price,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFFFF2D8F),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _itemDetailRow(FontAwesomeIcons.userTie, staff, const Color(0xFF8B5CF6)),
+          const SizedBox(height: 8),
+          _itemDetailRow(FontAwesomeIcons.clock, "$time • $duration", const Color(0xFF10B981)),
+        ],
+      ),
+    );
+  }
+
+  Widget _itemDetailRow(IconData icon, String text, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFF6B7280),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 
