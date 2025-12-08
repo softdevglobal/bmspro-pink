@@ -3,23 +3,23 @@ import 'package:flutter/material.dart';
 class PinkBottomNav extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onChanged;
+  final List<IconData> icons;
   const PinkBottomNav({
     super.key,
     required this.currentIndex,
     required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final Color primary = Theme.of(context).colorScheme.primary;
-
-    const List<IconData> icons = <IconData>[
+    this.icons = const <IconData>[
       Icons.home_rounded,
       Icons.calendar_month_rounded,
       Icons.groups_rounded, // Clients (3rd)
       Icons.bar_chart_rounded,
       Icons.person_rounded,
-    ];
+    ],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final Color primary = Theme.of(context).colorScheme.primary;
 
     return SafeArea(
       top: false,

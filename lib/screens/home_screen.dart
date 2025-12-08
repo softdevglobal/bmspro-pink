@@ -15,6 +15,7 @@ import 'clients_screen.dart';
 import 'walk_in_booking_page.dart';
 import 'admin_dashboard.dart';
 import 'branch_admin_dashboard.dart';
+import 'owner_bookings_page.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -27,6 +28,24 @@ class AppColors {
   static const muted = Color(0xFF9E9E9E);
   static const border = Color(0xFFF2D2E9);
 }
+
+// Default bottom navigation icons (staff / branch admin)
+const List<IconData> kDefaultNavIcons = <IconData>[
+  Icons.home_rounded,
+  Icons.calendar_month_rounded,
+  Icons.groups_rounded,
+  Icons.bar_chart_rounded,
+  Icons.person_rounded,
+];
+
+// Salon owner navigation: replace profile with a dedicated booking tab in 3rd position
+const List<IconData> kOwnerNavIcons = <IconData>[
+  Icons.home_rounded,
+  Icons.calendar_month_rounded,
+  Icons.calendar_today_rounded, // Bookings (3rd)
+  Icons.groups_rounded,
+  Icons.bar_chart_rounded,
+];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -202,6 +221,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
     }
 
+    final bool isOwner = _userRole == 'salon_owner';
+    final List<IconData> icons = isOwner ? kOwnerNavIcons : kDefaultNavIcons;
+
     return Scaffold(
       body: _navIndex == 0
           ? _buildHomeTab()
@@ -209,6 +231,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       bottomNavigationBar: PinkBottomNav(
         currentIndex: _navIndex,
         onChanged: (index) => setState(() => _navIndex = index),
+        icons: icons,
       ),
     );
   }
@@ -250,17 +273,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildTabBody() {
-    switch (_navIndex) {
-      case 1:
-        return const CalenderScreen();
-      case 2:
-        return const ClientsScreen();
-      case 3:
-        return const ReportScreen();
-      case 4:
-        return const ProfileScreen();
-      default:
-        return const SizedBox.shrink();
+    final bool isOwner = _userRole == 'salon_owner';
+
+    if (isOwner) {
+      // For salon owners: 3rd tab is Bookings, no Profile tab
+      switch (_navIndex) {
+        case 1:
+          return const CalenderScreen();
+        case 2:
+          return const OwnerBookingsPage(); // Booking page (3rd)
+        case 3:
+          return const ClientsScreen();
+        case 4:
+          return const ReportScreen();
+        default:
+          return const SizedBox.shrink();
+      }
+    } else {
+      // Default mapping for staff / branch admins (includes Profile tab)
+      switch (_navIndex) {
+        case 1:
+          return const CalenderScreen();
+        case 2:
+          return const ClientsScreen();
+        case 3:
+          return const ReportScreen();
+        case 4:
+          return const ProfileScreen();
+        default:
+          return const SizedBox.shrink();
+      }
     }
   }
 
