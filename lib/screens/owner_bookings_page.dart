@@ -1225,31 +1225,47 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: background.withOpacity(0.8)),
+        gradient: LinearGradient(
+          colors: [
+            background.withOpacity(0.9),
+            background.withOpacity(0.8),
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: background.withOpacity(0.9)),
+        boxShadow: [
+          BoxShadow(
+            color: background.withOpacity(0.65),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+            spreadRadius: -12,
+          ),
+        ],
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
           Text(
             label,
             style: const TextStyle(
               fontSize: 11,
-              color: Color(0xFF6B7280),
+              letterSpacing: 0.4,
+              color: Color(0xFF4B5563),
+              fontWeight: FontWeight.w600,
             ),
-            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
           ),
         ],
       ),
