@@ -309,20 +309,20 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                             child: Text('All Statuses'),
                           ),
                           DropdownMenuItem(
-                            value: 'confirmed',
-                            child: Text('Confirmed'),
+                            value: 'pending',
+                            child: Text('Booking Requests'),
                           ),
                           DropdownMenuItem(
-                            value: 'pending',
-                            child: Text('Pending'),
+                            value: 'confirmed',
+                            child: Text('Confirmed Bookings'),
                           ),
                           DropdownMenuItem(
                             value: 'completed',
-                            child: Text('Completed'),
+                            child: Text('Completed Bookings'),
                           ),
                           DropdownMenuItem(
                             value: 'cancelled',
-                            child: Text('Cancelled'),
+                            child: Text('Cancelled Bookings'),
                           ),
                         ],
                         onChanged: (value) {
@@ -681,20 +681,15 @@ class _BookingCard extends StatelessWidget {
                 ),
               ),
               Row(
-                children: const [
+                children: [
                   _ActionIcon(
-                    icon: FontAwesomeIcons.penToSquare,
-                    background: Color(0xFFE0EDFF),
-                    color: Color(0xFF2563EB),
+                    icon: FontAwesomeIcons.eye,
+                    background: const Color(0xFFE0EDFF),
+                    color: const Color(0xFF2563EB),
+                    onTap: () => _showBookingDetails(context, booking),
                   ),
-                  SizedBox(width: 6),
-                  _ActionIcon(
-                    icon: FontAwesomeIcons.trash,
-                    background: Color(0xFFFEE2E2),
-                    color: Color(0xFFB91C1C),
-                  ),
-                  SizedBox(width: 6),
-                  _ActionIcon(
+                  const SizedBox(width: 6),
+                  const _ActionIcon(
                     icon: FontAwesomeIcons.ellipsisVertical,
                     background: Color(0xFFF3F4F6),
                     color: Color(0xFF4B5563),
@@ -705,6 +700,215 @@ class _BookingCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  void _showBookingDetails(BuildContext context, _Booking booking) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.75,
+        decoration: const BoxDecoration(
+          color: Color(0xFFFFF5FA),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Handle bar
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 20),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  children: [
+                    // Header with Avatar and Status
+                    Center(
+                      child: Column(
+                        children: [
+                          CircleAvatar(
+                            radius: 40,
+                            backgroundImage: NetworkImage(booking.avatarUrl),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            booking.customerName,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            booking.email,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Color(0xFF6B7280),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _statusBg(booking.status),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              _capitalise(booking.status),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: _statusColor(booking.status),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Details Section
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          _detailRow(
+                            'Service',
+                            booking.service,
+                            booking.icon,
+                            const Color(0xFFFF2D8F),
+                          ),
+                          const Divider(height: 24),
+                          _detailRow(
+                            'Staff',
+                            booking.staff,
+                            FontAwesomeIcons.userTie,
+                            const Color(0xFF8B5CF6),
+                          ),
+                          const Divider(height: 24),
+                          _detailRow(
+                            'Date & Time',
+                            booking.dateTime,
+                            FontAwesomeIcons.calendarCheck,
+                            const Color(0xFF10B981),
+                          ),
+                          const Divider(height: 24),
+                          _detailRow(
+                            'Duration',
+                            booking.duration,
+                            FontAwesomeIcons.hourglassHalf,
+                            const Color(0xFFF59E0B),
+                          ),
+                          const Divider(height: 24),
+                          _detailRow(
+                            'Price',
+                            booking.price,
+                            FontAwesomeIcons.tag,
+                            const Color(0xFFEF4444),
+                            isPrice: true,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                  ],
+                ),
+              ),
+            ),
+            // Close Button
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF2D8F),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value, IconData icon, Color color,
+      {bool isPrice = false}) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF6B7280),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isPrice ? const Color(0xFFFF2D8F) : Colors.black87,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -744,19 +948,25 @@ class _ActionIcon extends StatelessWidget {
     required this.icon,
     required this.background,
     required this.color,
+    this.onTap,
   });
+
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 30,
-      height: 30,
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Center(
-        child: Icon(icon, size: 14, color: color),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Center(
+          child: Icon(icon, size: 14, color: color),
+        ),
       ),
     );
   }
