@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
@@ -12,98 +16,122 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   final TextEditingController _searchController = TextEditingController();
   String _statusFilter = 'all';
 
-  // Mock booking data based on the HTML prototype
-  final List<_Booking> _bookings = [
-    _Booking(
-      customerName: 'Sarah Johnson',
-      email: 'sarah.j@email.com',
-      avatarUrl:
-          'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg',
-      status: 'confirmed',
-      service: 'Hair Styling & Color',
-      staff: 'Emma Wilson',
-      dateTime: 'Dec 8, 2024 at 10:00 AM',
-      duration: '2 hours',
-      price: '\$150',
-      icon: FontAwesomeIcons.scissors,
-    ),
-    _Booking(
-      customerName: 'Michael Chen',
-      email: 'mchen@email.com',
-      avatarUrl:
-          'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-2.jpg',
-      status: 'pending',
-      service: 'Mens Haircut',
-      staff: 'David Brown',
-      dateTime: 'Dec 8, 2024 at 11:30 AM',
-      duration: '45 minutes',
-      price: '\$45',
-      icon: FontAwesomeIcons.scissors,
-    ),
-    _Booking(
-      customerName: 'Jessica Martinez',
-      email: 'jmartinez@email.com',
-      avatarUrl:
-          'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-7.jpg',
-      status: 'confirmed',
-      service: 'Manicure & Pedicure',
-      staff: 'Sophie Taylor',
-      dateTime: 'Dec 9, 2024 at 2:00 PM',
-      duration: '1.5 hours',
-      price: '\$85',
-      icon: FontAwesomeIcons.handSparkles,
-    ),
-    _Booking(
-      customerName: 'Robert Williams',
-      email: 'rwilliams@email.com',
-      avatarUrl:
-          'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-3.jpg',
-      status: 'completed',
-      service: 'Facial Treatment',
-      staff: 'Emma Wilson',
-      dateTime: 'Dec 9, 2024 at 3:30 PM',
-      duration: '1 hour',
-      price: '\$120',
-      icon: FontAwesomeIcons.spa,
-    ),
-    _Booking(
-      customerName: 'Amanda Lee',
-      email: 'alee@email.com',
-      avatarUrl:
-          'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-6.jpg',
-      status: 'confirmed',
-      service: 'Hair Extensions',
-      staff: 'Sophie Taylor',
-      dateTime: 'Dec 10, 2024 at 9:00 AM',
-      duration: '3 hours',
-      price: '\$350',
-      icon: FontAwesomeIcons.wandMagicSparkles,
-    ),
-    _Booking(
-      customerName: 'David Park',
-      email: 'dpark@email.com',
-      avatarUrl:
-          'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-4.jpg',
-      status: 'cancelled',
-      service: 'Beard Trim & Shape',
-      staff: 'David Brown',
-      dateTime: 'Dec 10, 2024 at 1:00 PM',
-      duration: '30 minutes',
-      price: '\$35',
-      icon: FontAwesomeIcons.scissors,
-    ),
-  ];
+  // Live booking data from Firestore (bookings + bookingRequests for this owner)
+  List<_Booking> _bookings = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingsSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingRequestsSub;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToBookings();
+  }
 
   @override
   void dispose() {
+    _bookingsSub?.cancel();
+    _bookingRequestsSub?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _listenToBookings() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() {
+        _loading = false;
+        _error = "Not signed in";
+      });
+      return;
+    }
+
+    final uid = user.uid;
+
+    List<_Booking> bookingsData = [];
+    List<_Booking> bookingRequestsData = [];
+
+    void mergeAndSet() {
+      // Merge and deduplicate by an internal key (client+date+time+service as fallback)
+      final Map<String, _Booking> map = {};
+      for (final b in bookingsData) {
+        map[b.mergeKey] = b;
+      }
+      for (final b in bookingRequestsData) {
+        map[b.mergeKey] = b;
+      }
+      final merged = map.values.toList()
+        ..sort((a, b) => a.sortKey.compareTo(b.sortKey));
+
+      if (mounted) {
+        setState(() {
+          _bookings = merged;
+          _loading = false;
+        });
+      }
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    _bookingsSub = FirebaseFirestore.instance
+        .collection('bookings')
+        .where('ownerUid', isEqualTo: uid)
+        .snapshots()
+        .listen(
+      (snap) {
+        bookingsData = snap.docs.map(_Booking.fromDoc).toList();
+        mergeAndSet();
+      },
+      onError: (e) {
+        if (mounted) {
+          setState(() => _error ??= e.toString());
+        }
+      },
+    );
+
+    _bookingRequestsSub = FirebaseFirestore.instance
+        .collection('bookingRequests')
+        .where('ownerUid', isEqualTo: uid)
+        .snapshots()
+        .listen(
+      (snap) {
+        bookingRequestsData = snap.docs.map(_Booking.fromDoc).toList();
+        mergeAndSet();
+      },
+      onError: (e) {
+        if (mounted) {
+          setState(() => _error ??= e.toString());
+        }
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     const Color primary = Color(0xFFFF2D8F);
     const Color background = Color(0xFFFFF5FA);
+
+    // Aggregate stats from all bookings (not filtered by search)
+    final totalCount = _bookings.length;
+    final confirmedCount =
+        _bookings.where((b) => b.status == 'confirmed').length;
+    final pendingCount = _bookings.where((b) => b.status == 'pending').length;
+    final completedCount =
+        _bookings.where((b) => b.status == 'completed').length;
+
+    double revenue = 0.0;
+    for (final b in _bookings) {
+      if (b.status == 'confirmed' || b.status == 'completed') {
+        revenue += b.priceValue;
+      }
+    }
+
+    final revenueLabel =
+        revenue > 0 ? '\$${revenue.toStringAsFixed(0)}' : '\$0';
 
     final filtered = _bookings.where((b) {
       final matchesStatus =
@@ -150,53 +178,53 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                 child: Column(
                   children: [
                     Row(
-                      children: const [
+                      children: [
                         Expanded(
                           child: _StatCard(
                             label: 'Total',
-                            value: '18',
+                            value: '$totalCount',
                             color: Colors.black87,
                             background: Colors.white,
                           ),
                         ),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: _StatCard(
                             label: 'Confirmed',
-                            value: '12',
-                            color: Color(0xFF166534),
-                            background: Color(0xFFD1FAE5),
+                            value: '$confirmedCount',
+                            color: const Color(0xFF166534),
+                            background: const Color(0xFFD1FAE5),
                           ),
                         ),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: _StatCard(
                             label: 'Pending',
-                            value: '4',
-                            color: Color(0xFF92400E),
-                            background: Color(0xFFFEEFC3),
+                            value: '$pendingCount',
+                            color: const Color(0xFF92400E),
+                            background: const Color(0xFFFEEFC3),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
                     Row(
-                      children: const [
+                      children: [
                         Expanded(
                           child: _StatCard(
                             label: 'Completed',
-                            value: '8',
-                            color: Color(0xFF1D4ED8),
-                            background: Color(0xFFDBEAFE),
+                            value: '$completedCount',
+                            color: const Color(0xFF1D4ED8),
+                            background: const Color(0xFFDBEAFE),
                           ),
                         ),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: _StatCard(
                             label: 'Revenue',
-                            value: '\$2,840',
-                            color: Color(0xFF5B21B6),
-                            background: Color(0xFFEDE9FE),
+                            value: revenueLabel,
+                            color: const Color(0xFF5B21B6),
+                            background: const Color(0xFFEDE9FE),
                           ),
                         ),
                       ],
@@ -377,6 +405,8 @@ class _StatCard extends StatelessWidget {
 }
 
 class _Booking {
+  final String mergeKey;
+  final DateTime sortKey;
   final String customerName;
   final String email;
   final String avatarUrl;
@@ -386,9 +416,12 @@ class _Booking {
   final String dateTime;
   final String duration;
   final String price;
+  final double priceValue;
   final IconData icon;
 
   const _Booking({
+    required this.mergeKey,
+    required this.sortKey,
     required this.customerName,
     required this.email,
     required this.avatarUrl,
@@ -398,8 +431,112 @@ class _Booking {
     required this.dateTime,
     required this.duration,
     required this.price,
+    required this.priceValue,
     required this.icon,
   });
+
+  // Build a booking model from a Firestore document
+  static _Booking fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+    final client = (data['client'] ?? 'Walk-in').toString();
+    final email = (data['clientEmail'] ?? '').toString();
+    final staffName = (data['staffName'] ?? 'Any staff').toString();
+    String serviceName = (data['serviceName'] ?? '').toString();
+    if (serviceName.isEmpty && data['services'] is List) {
+      final list = data['services'] as List;
+      if (list.isNotEmpty && list.first is Map) {
+        serviceName =
+            (list.first['name'] ?? 'Service').toString();
+      }
+    }
+    if (serviceName.isEmpty) serviceName = 'Service';
+
+    final date = (data['date'] ?? '').toString(); // YYYY-MM-DD
+    final time = (data['time'] ?? '').toString(); // HH:mm
+    String dateTimeLabel;
+    DateTime sortKey;
+    try {
+      if (date.isNotEmpty && time.isNotEmpty) {
+        final parts = date.split('-');
+        final tParts = time.split(':');
+        sortKey = DateTime(
+          int.parse(parts[0]),
+          int.parse(parts[1]),
+          int.parse(parts[2]),
+          int.parse(tParts[0]),
+          tParts.length > 1 ? int.parse(tParts[1]) : 0,
+        );
+        dateTimeLabel = '$date at $time';
+      } else {
+        sortKey = DateTime.fromMillisecondsSinceEpoch(0);
+        dateTimeLabel = (date + (time.isNotEmpty ? ' $time' : '')).trim();
+      }
+    } catch (_) {
+      sortKey = DateTime.fromMillisecondsSinceEpoch(0);
+      dateTimeLabel = (date + (time.isNotEmpty ? ' $time' : '')).trim();
+    }
+
+    final durationMinutes = (data['duration'] ?? 0);
+    String durationLabel = '';
+    if (durationMinutes is num && durationMinutes > 0) {
+      if (durationMinutes >= 60 && durationMinutes % 60 == 0) {
+        final hours = durationMinutes ~/ 60;
+        durationLabel = '$hours hour${hours > 1 ? 's' : ''}';
+      } else {
+        durationLabel = '${durationMinutes.toString()} minutes';
+      }
+    }
+
+    final rawPrice = (data['price'] ?? 0);
+    double priceValue = 0;
+    if (rawPrice is num) {
+      priceValue = rawPrice.toDouble();
+    } else {
+      priceValue = double.tryParse(rawPrice.toString()) ?? 0.0;
+    }
+    final priceLabel =
+        priceValue > 0 ? '\$${priceValue.toStringAsFixed(0)}' : '\$0';
+
+    String status =
+        (data['status'] ?? 'pending').toString().toLowerCase();
+    if (status == 'canceled') status = 'cancelled';
+
+    final avatarUrl = (data['avatarUrl'] ??
+            'https://ui-avatars.com/api/?background=FF2D8F&color=fff&name=${Uri.encodeComponent(client)}')
+        .toString();
+
+    IconData icon = FontAwesomeIcons.scissors;
+    final serviceLower = serviceName.toLowerCase();
+    if (serviceLower.contains('nail')) {
+      icon = FontAwesomeIcons.handSparkles;
+    } else if (serviceLower.contains('facial') ||
+        serviceLower.contains('spa')) {
+      icon = FontAwesomeIcons.spa;
+    } else if (serviceLower.contains('massage')) {
+      icon = FontAwesomeIcons.spa;
+    } else if (serviceLower.contains('extension')) {
+      icon = FontAwesomeIcons.wandMagicSparkles;
+    }
+
+    final mergeKey =
+        doc.id.isNotEmpty ? doc.id : '$client|$date|$time|$serviceName';
+
+    return _Booking(
+      mergeKey: mergeKey,
+      sortKey: sortKey,
+      customerName: client,
+      email: email,
+      avatarUrl: avatarUrl,
+      status: status,
+      service: serviceName,
+      staff: staffName,
+      dateTime: dateTimeLabel,
+      duration: durationLabel,
+      price: priceLabel,
+      priceValue: priceValue,
+      icon: icon,
+    );
+  }
 }
 
 class _BookingCard extends StatelessWidget {
