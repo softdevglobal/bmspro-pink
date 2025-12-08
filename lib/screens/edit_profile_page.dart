@@ -1,6 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:math' as math;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 import 'change_password_page.dart';
 
 // --- 1. Theme & Colors ---
@@ -24,18 +30,16 @@ class EditProfilePage extends StatefulWidget {
 
 class _EditProfilePageState extends State<EditProfilePage>
     with TickerProviderStateMixin {
-  final TextEditingController _nameController =
-      TextEditingController(text: "Emma Moore");
-  final TextEditingController _emailController =
-      TextEditingController(text: "emma.moore@bmspro.com");
-  final TextEditingController _phoneController =
-      TextEditingController(text: "+61 412 345 678");
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
 
-  String _avatarUrl =
-      "https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg";
+  String _avatarUrl = '';
   bool _hasChanges = false;
   bool _isSaving = false;
   late Map<String, String> _originalValues;
+
+  bool _loadingProfile = true;
 
   late AnimationController _avatarPulseController;
   late AnimationController _savePulseController;
@@ -48,9 +52,10 @@ class _EditProfilePageState extends State<EditProfilePage>
   void initState() {
     super.initState();
     _originalValues = {
-      'name': _nameController.text,
-      'email': _emailController.text,
-      'phone': _phoneController.text,
+      'name': '',
+      'email': '',
+      'phone': '',
+      'avatar': '',
     };
     _nameController.addListener(_checkForChanges);
     _emailController.addListener(_checkForChanges);
@@ -89,6 +94,8 @@ class _EditProfilePageState extends State<EditProfilePage>
       );
     }
     _entranceController.forward();
+
+    _loadProfile();
   }
 
   @override
@@ -103,9 +110,11 @@ class _EditProfilePageState extends State<EditProfilePage>
   }
 
   void _checkForChanges() {
-    final bool hasChanges = _nameController.text != _originalValues['name'] ||
+    final bool hasChanges =
+        _nameController.text != _originalValues['name'] ||
         _emailController.text != _originalValues['email'] ||
-        _phoneController.text != _originalValues['phone'];
+        _phoneController.text != _originalValues['phone'] ||
+        _avatarUrl != _originalValues['avatar'];
     if (hasChanges != _hasChanges) {
       setState(() {
         _hasChanges = hasChanges;
@@ -113,31 +122,137 @@ class _EditProfilePageState extends State<EditProfilePage>
     }
   }
 
+  Future<void> _loadProfile() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          _loadingProfile = false;
+        });
+        return;
+      }
+
+      String name = user.displayName ?? '';
+      String email = user.email ?? '';
+      String phone = '';
+      String avatarUrl = user.photoURL ?? '';
+
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        if (snap.exists) {
+          final data = snap.data() as Map<String, dynamic>? ?? {};
+          name = (data['displayName'] ??
+                  data['name'] ??
+                  name ??
+                  email ??
+                  'Staff Member')
+              .toString();
+          email = (data['email'] ?? email).toString();
+          phone = (data['phone'] ?? data['clientPhone'] ?? '').toString();
+          avatarUrl =
+              (data['photoURL'] ?? data['avatarUrl'] ?? avatarUrl).toString();
+        }
+      } catch (e) {
+        debugPrint('Error loading profile in edit page: $e');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _nameController.text = name;
+        _emailController.text = email;
+        _phoneController.text = phone;
+        _avatarUrl = avatarUrl;
+        _originalValues = {
+          'name': name,
+          'email': email,
+          'phone': phone,
+          'avatar': avatarUrl,
+        };
+        _hasChanges = false;
+        _loadingProfile = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading profile: $e');
+      if (!mounted) return;
+      setState(() {
+        _loadingProfile = false;
+      });
+    }
+  }
+
   Future<void> _saveChanges() async {
     if (!_hasChanges) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
     setState(() => _isSaving = true);
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-    setState(() {
-      _isSaving = false;
-      _hasChanges = false;
-      _originalValues = {
-        'name': _nameController.text,
-        'email': _emailController.text,
-        'phone': _phoneController.text,
+
+    try {
+      final String name = _nameController.text.trim();
+      final String email = _emailController.text.trim();
+      final String phone = _phoneController.text.trim();
+
+      // Update auth profile (display name & photo)
+      if (name.isNotEmpty && name != user.displayName) {
+        await user.updateDisplayName(name);
+      }
+      if (_avatarUrl.isNotEmpty && _avatarUrl != (user.photoURL ?? '')) {
+        await user.updatePhotoURL(_avatarUrl);
+      }
+
+      // Update Firestore user document
+      final docRef =
+          FirebaseFirestore.instance.collection('users').doc(user.uid);
+      final Map<String, dynamic> update = {
+        'displayName': name,
+        'name': name,
+        'email': email,
+        'phone': phone,
       };
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(children: [
-          Icon(Icons.check, color: Colors.white),
-          SizedBox(width: 8),
-          Text("Saved!")
-        ]),
-        backgroundColor: Colors.green,
-        duration: Duration(seconds: 2),
-      ),
-    );
+      if (_avatarUrl.isNotEmpty) {
+        update['photoURL'] = _avatarUrl;
+        update['avatarUrl'] = _avatarUrl;
+      }
+      await docRef.set(update, SetOptions(merge: true));
+
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _hasChanges = false;
+        _originalValues = {
+          'name': name,
+          'email': email,
+          'phone': phone,
+          'avatar': _avatarUrl,
+        };
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(children: [
+            Icon(Icons.check, color: Colors.white),
+            SizedBox(width: 8),
+            Text("Profile updated")
+          ]),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error saving profile: $e');
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save profile: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   void _showPictureModal() {
@@ -145,12 +260,56 @@ class _EditProfilePageState extends State<EditProfilePage>
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => _PictureModal(
-        onImageSelected: (url) {
-          setState(() => _avatarUrl = url);
-          Navigator.pop(context);
-        },
+        onCamera: () => _pickAndUploadImage(ImageSource.camera),
+        onGallery: () => _pickAndUploadImage(ImageSource.gallery),
+        onRemove: _removePhoto,
       ),
     );
+  }
+
+  Future<void> _pickAndUploadImage(ImageSource source) async {
+    Navigator.pop(context);
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final picker = ImagePicker();
+      final XFile? picked =
+          await picker.pickImage(source: source, imageQuality: 85);
+      if (picked == null) return;
+
+      final file = File(picked.path);
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('staff_avatars')
+          .child('${user.uid}.jpg');
+
+      await storageRef.putFile(file);
+      final url = await storageRef.getDownloadURL();
+
+      if (!mounted) return;
+      setState(() {
+        _avatarUrl = url;
+        _hasChanges = true;
+      });
+    } catch (e) {
+      debugPrint('Error picking/uploading image: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to update picture: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  void _removePhoto() {
+    Navigator.pop(context);
+    setState(() {
+      _avatarUrl = '';
+      _hasChanges = true;
+    });
   }
 
   @override
@@ -165,7 +324,7 @@ class _EditProfilePageState extends State<EditProfilePage>
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    _buildProfilePictureSection(),
+                    if (!_loadingProfile) _buildProfilePictureSection(),
                     const SizedBox(height: 24),
                     _buildPersonalInfoSection(),
                     const SizedBox(height: 24),
@@ -616,8 +775,15 @@ class _ShimmerTextState extends State<_ShimmerText>
 
 // --- Helper: Picture Modal ---
 class _PictureModal extends StatelessWidget {
-  final Function(String) onImageSelected;
-  const _PictureModal({required this.onImageSelected});
+  final VoidCallback onCamera;
+  final VoidCallback onGallery;
+  final VoidCallback onRemove;
+
+  const _PictureModal({
+    required this.onCamera,
+    required this.onGallery,
+    required this.onRemove,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -646,20 +812,17 @@ class _PictureModal extends StatelessWidget {
               'Take Photo',
               FontAwesomeIcons.camera,
               const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
-              () => onImageSelected(
-                  'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-2.jpg')),
+              onCamera),
           const SizedBox(height: 12),
           _buildModalBtn(
               context,
               'Choose from Gallery',
               FontAwesomeIcons.images,
               const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
-              () => onImageSelected(
-                  'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-3.jpg')),
+              onGallery),
           const SizedBox(height: 12),
           _buildModalBtn(context, 'Remove Photo', FontAwesomeIcons.trash, null,
-              () => onImageSelected(
-                  'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-1.jpg'),
+              onRemove,
               isDestructive: true),
           const SizedBox(height: 12),
           TextButton(

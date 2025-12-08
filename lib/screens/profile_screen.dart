@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:math' as math;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'edit_profile_page.dart';
 import 'settings_page.dart';
 
@@ -28,6 +30,14 @@ class _ProfileScreenState extends State<ProfileScreen>
   late AnimationController _avatarPulseController;
   final List<Animation<Offset>> _menuSlideAnimations = [];
   final List<Animation<double>> _menuFadeAnimations = [];
+
+  // Live user data
+  String _name = '';
+  String _role = '';
+  String _photoUrl = '';
+  String? _ratingLabel;
+  String? _experienceLabel;
+  bool _loadingProfile = true;
 
   @override
   void initState() {
@@ -63,6 +73,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       );
     }
     _entranceController.forward();
+    _loadProfile();
   }
 
   @override
@@ -70,6 +81,90 @@ class _ProfileScreenState extends State<ProfileScreen>
     _entranceController.dispose();
     _avatarPulseController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          _loadingProfile = false;
+        });
+        return;
+      }
+
+      String name = user.displayName ?? '';
+      String role = '';
+      String photoUrl = user.photoURL ?? '';
+      String? ratingLabel;
+      String? experienceLabel;
+
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        if (snap.exists) {
+          final data = snap.data() as Map<String, dynamic>? ?? {};
+          name = (data['displayName'] ??
+                  data['name'] ??
+                  name ??
+                  user.email ??
+                  'Team Member')
+              .toString();
+          role = (data['staffRole'] ??
+                  data['role'] ??
+                  'Team Member')
+              .toString();
+          photoUrl = (data['photoURL'] ?? data['avatarUrl'] ?? photoUrl)
+              .toString();
+
+          final rating = data['rating'];
+          if (rating is num) {
+            ratingLabel = rating.toStringAsFixed(1);
+          }
+
+          final expYears = data['experienceYears'];
+          if (expYears is num && expYears > 0) {
+            experienceLabel = '${expYears.toInt()} Years';
+          } else if (data['createdAt'] != null) {
+            final ts = data['createdAt'];
+            DateTime? created;
+            if (ts is Timestamp) {
+              created = ts.toDate();
+            }
+            if (created != null) {
+              final years =
+                  DateTime.now().difference(created).inDays ~/ 365;
+              if (years >= 1) {
+                experienceLabel = '$years Year${years == 1 ? '' : 's'}';
+              } else {
+                experienceLabel = 'New Staff';
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error loading profile from Firestore: $e');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _name = name.isNotEmpty ? name : (user.email ?? 'Team Member');
+        _role = role.isNotEmpty ? role : 'Team Member';
+        _photoUrl = photoUrl;
+        _ratingLabel = ratingLabel;
+        _experienceLabel = experienceLabel;
+        _loadingProfile = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading profile: $e');
+      if (!mounted) return;
+      setState(() {
+        _loadingProfile = false;
+      });
+    }
   }
 
   @override
@@ -171,68 +266,94 @@ class _ProfileScreenState extends State<ProfileScreen>
                                 spreadRadius: 0,
                               ),
                             ],
-                            image: const DecorationImage(
-                              image: NetworkImage(
-                                  'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg'),
-                              fit: BoxFit.cover,
-                            ),
+                            color: _photoUrl.isEmpty
+                                ? Colors.white
+                                : null,
+                            image: _photoUrl.isNotEmpty
+                                ? DecorationImage(
+                                    image: NetworkImage(_photoUrl),
+                                    fit: BoxFit.cover,
+                                  )
+                                : null,
                           ),
+                          child: _photoUrl.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    (_name.isNotEmpty
+                                            ? _name.trim()[0]
+                                            : 'S')
+                                        .toUpperCase(),
+                                    style: const TextStyle(
+                                      fontSize: 32,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                )
+                              : null,
                         ),
                       );
                     },
                   ),
-                  Positioned(
-                    bottom: -4,
-                    right: -4,
-                    child: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: const [
-                          BoxShadow(
-                              color: Colors.black12,
-                              blurRadius: 5,
-                              offset: Offset(0, 2))
-                        ],
-                      ),
-                      child: const Icon(FontAwesomeIcons.camera,
-                          color: AppColors.primary, size: 14),
-                    ),
-                  ),
                 ],
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Emma Moore',
-                style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white),
+              Text(
+                _name.isNotEmpty ? _name : 'Team Member',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
               const SizedBox(height: 4),
-              const Text(
-                'Senior Therapist',
-                style: TextStyle(fontSize: 14, color: Colors.white70),
+              Text(
+                _role.isNotEmpty ? _role : '',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.white70,
+                ),
               ),
               const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(FontAwesomeIcons.star,
-                      color: Color(0xFFFDE047), size: 14),
-                  SizedBox(width: 4),
-                  Text('4.9 Rating',
-                      style: TextStyle(color: Colors.white, fontSize: 14)),
-                  SizedBox(width: 16),
-                  Icon(FontAwesomeIcons.calendar,
-                      color: Colors.white70, size: 14),
-                  SizedBox(width: 4),
-                  Text('3 Years',
-                      style: TextStyle(color: Colors.white, fontSize: 14)),
-                ],
-              ),
+              if (!_loadingProfile &&
+                  (_ratingLabel != null || _experienceLabel != null))
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_ratingLabel != null) ...[
+                      const Icon(
+                        FontAwesomeIcons.star,
+                        color: Color(0xFFFDE047),
+                        size: 14,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$_ratingLabel Rating',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                    if (_ratingLabel != null && _experienceLabel != null)
+                      const SizedBox(width: 16),
+                    if (_experienceLabel != null) ...[
+                      const Icon(
+                        FontAwesomeIcons.calendar,
+                        color: Colors.white70,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _experienceLabel!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
             ],
           ),
         ),
