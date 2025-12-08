@@ -83,7 +83,9 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         .snapshots()
         .listen(
       (snap) {
-        bookingsData = snap.docs.map(_Booking.fromDoc).toList();
+        bookingsData = snap.docs
+            .map((d) => _Booking.fromDoc(d, collection: 'bookings'))
+            .toList();
         mergeAndSet();
       },
       onError: (e) {
@@ -99,7 +101,9 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         .snapshots()
         .listen(
       (snap) {
-        bookingRequestsData = snap.docs.map(_Booking.fromDoc).toList();
+        bookingRequestsData = snap.docs
+            .map((d) => _Booking.fromDoc(d, collection: 'bookingRequests'))
+            .toList();
         mergeAndSet();
       },
       onError: (e) {
@@ -108,6 +112,49 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         }
       },
     );
+  }
+
+  Future<void> _updateBookingStatus(_Booking booking, String newStatus) async {
+    final db = FirebaseFirestore.instance;
+    try {
+      // If confirming a booking request, move it to 'bookings' collection
+      if (booking.collection == 'bookingRequests' && newStatus == 'confirmed') {
+        final newData = Map<String, dynamic>.from(booking.rawData);
+        newData['status'] = 'confirmed';
+        newData['updatedAt'] = FieldValue.serverTimestamp();
+        if (newData['createdAt'] == null) {
+          newData['createdAt'] = FieldValue.serverTimestamp();
+        }
+
+        // Add to bookings
+        await db.collection('bookings').add(newData);
+        // Delete from bookingRequests
+        await db.collection('bookingRequests').doc(booking.id).delete();
+      } else {
+        // Just update status
+        await db
+            .collection(booking.collection)
+            .doc(booking.id)
+            .update({'status': newStatus});
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Booking marked as ${_capitalise(newStatus)}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
+  String _capitalise(String value) {
+    if (value.isEmpty) return value;
+    return value[0].toUpperCase() + value.substring(1);
   }
 
   @override
@@ -181,7 +228,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                       children: [
                         Expanded(
                           child: _StatCard(
-                            label: 'Total',
+                            label: 'Total Bookings',
                             value: '$totalCount',
                             color: Colors.black87,
                             background: Colors.white,
@@ -190,7 +237,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: _StatCard(
-                            label: 'Confirmed',
+                            label: 'Confirmed Bookings',
                             value: '$confirmedCount',
                             color: const Color(0xFF166534),
                             background: const Color(0xFFD1FAE5),
@@ -199,7 +246,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: _StatCard(
-                            label: 'Pending',
+                            label: 'Booking Requests',
                             value: '$pendingCount',
                             color: const Color(0xFF92400E),
                             background: const Color(0xFFFEEFC3),
@@ -212,7 +259,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                       children: [
                         Expanded(
                           child: _StatCard(
-                            label: 'Completed',
+                            label: 'Completed Bookings',
                             value: '$completedCount',
                             color: const Color(0xFF1D4ED8),
                             background: const Color(0xFFDBEAFE),
@@ -379,7 +426,11 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                   children: filtered
                       .map((b) => Padding(
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: _BookingCard(booking: b),
+                            child: _BookingCard(
+                              booking: b,
+                              onStatusUpdate: (status) =>
+                                  _updateBookingStatus(b, status),
+                            ),
                           ))
                       .toList(),
                 ),
@@ -432,6 +483,7 @@ class _StatCard extends StatelessWidget {
               fontSize: 11,
               color: Color(0xFF6B7280),
             ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -440,6 +492,9 @@ class _StatCard extends StatelessWidget {
 }
 
 class _Booking {
+  final String id;
+  final String collection;
+  final Map<String, dynamic> rawData;
   final String mergeKey;
   final DateTime sortKey;
   final String customerName;
@@ -456,6 +511,9 @@ class _Booking {
   final List<Map<String, dynamic>> items;
 
   const _Booking({
+    required this.id,
+    required this.collection,
+    required this.rawData,
     required this.mergeKey,
     required this.sortKey,
     required this.customerName,
@@ -473,7 +531,8 @@ class _Booking {
   });
 
   // Build a booking model from a Firestore document
-  static _Booking fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+  static _Booking fromDoc(DocumentSnapshot<Map<String, dynamic>> doc,
+      {String collection = 'bookings'}) {
     final data = doc.data() ?? {};
     final client = (data['client'] ?? 'Walk-in').toString();
     final email = (data['clientEmail'] ?? '').toString();
@@ -495,8 +554,6 @@ class _Booking {
        serviceName = (items.first['name'] ?? 'Service').toString();
     }
     if (serviceName.isEmpty) serviceName = 'Service';
-
-    // ... (rest of parsing logic remains similar but we can use items)
 
     final date = (data['date'] ?? '').toString(); // YYYY-MM-DD
     final time = (data['time'] ?? '').toString(); // HH:mm
@@ -569,6 +626,9 @@ class _Booking {
         doc.id.isNotEmpty ? doc.id : '$client|$date|$time|$serviceName';
 
     return _Booking(
+      id: doc.id,
+      collection: collection,
+      rawData: data,
       mergeKey: mergeKey,
       sortKey: sortKey,
       customerName: client,
@@ -589,8 +649,9 @@ class _Booking {
 
 class _BookingCard extends StatelessWidget {
   final _Booking booking;
+  final Function(String) onStatusUpdate;
 
-  const _BookingCard({required this.booking});
+  const _BookingCard({required this.booking, required this.onStatusUpdate});
 
   Color _statusBg(String status) {
     switch (status) {
@@ -620,6 +681,34 @@ class _BookingCard extends StatelessWidget {
       default:
         return const Color(0xFF4B5563);
     }
+  }
+
+  void _showConfirmDialog(BuildContext context, String action, VoidCallback onConfirm) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          '${_capitalise(action)} Booking?',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: Text('Are you sure you want to $action this booking?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('No', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onConfirm();
+            },
+            child: const Text('Yes', style: TextStyle(color: Color(0xFFFF2D8F), fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -712,8 +801,8 @@ class _BookingCard extends StatelessWidget {
             text: booking.duration,
           ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 booking.price,
@@ -728,21 +817,66 @@ class _BookingCard extends StatelessWidget {
                       : TextDecoration.none,
                 ),
               ),
-              Row(
-                children: [
-                  _ActionIcon(
-                    icon: FontAwesomeIcons.eye,
-                    background: const Color(0xFFE0EDFF),
-                    color: const Color(0xFF2563EB),
-                    onTap: () => _showBookingDetails(context, booking),
-                  ),
-                  const SizedBox(width: 6),
-                  const _ActionIcon(
-                    icon: FontAwesomeIcons.ellipsisVertical,
-                    background: Color(0xFFF3F4F6),
-                    color: Color(0xFF4B5563),
-                  ),
-                ],
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _ActionIcon(
+                      icon: FontAwesomeIcons.eye,
+                      background: const Color(0xFFE0EDFF),
+                      color: const Color(0xFF2563EB),
+                      onTap: () => _showBookingDetails(context, booking),
+                    ),
+                    if (booking.status == 'pending') ...[
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        label: "Confirm",
+                        background: const Color(0xFFDCFCE7),
+                        color: const Color(0xFF166534),
+                        onTap: () => _showConfirmDialog(
+                          context,
+                          'confirm',
+                          () => onStatusUpdate('confirmed'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        label: "Decline",
+                        background: const Color(0xFFFEE2E2),
+                        color: const Color(0xFFB91C1C),
+                        onTap: () => _showConfirmDialog(
+                          context,
+                          'decline',
+                          () => onStatusUpdate('cancelled'),
+                        ),
+                      ),
+                    ] else if (booking.status == 'confirmed') ...[
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        label: "Complete",
+                        background: const Color(0xFFDBEAFE),
+                        color: const Color(0xFF1D4ED8),
+                        onTap: () => _showConfirmDialog(
+                          context,
+                          'complete',
+                          () => onStatusUpdate('completed'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        label: "Cancel",
+                        background: const Color(0xFFFEE2E2),
+                        color: const Color(0xFFB91C1C),
+                        onTap: () => _showConfirmDialog(
+                          context,
+                          'cancel',
+                          () => onStatusUpdate('cancelled'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -1014,47 +1148,6 @@ class _BookingCard extends StatelessWidget {
     );
   }
 
-  Widget _detailRow(String label, String value, IconData icon, Color color,
-      {bool isPrice = false}) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, size: 18, color: color),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF6B7280),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: isPrice ? const Color(0xFFFF2D8F) : Colors.black87,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _infoRow({required IconData icon, required String text}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -1086,6 +1179,7 @@ class _ActionIcon extends StatelessWidget {
   final IconData icon;
   final Color background;
   final Color color;
+  final VoidCallback? onTap;
 
   const _ActionIcon({
     required this.icon,
@@ -1094,21 +1188,55 @@ class _ActionIcon extends StatelessWidget {
     this.onTap,
   });
 
-  final VoidCallback? onTap;
-
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 30,
-        height: 30,
+        width: 32,
+        height: 32,
         decoration: BoxDecoration(
           color: background,
           borderRadius: BorderRadius.circular(8),
         ),
         child: Center(
           child: Icon(icon, size: 14, color: color),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final Color background;
+  final Color color;
+  final VoidCallback? onTap;
+
+  const _ActionButton({
+    required this.label,
+    required this.background,
+    required this.color,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: color,
+          ),
         ),
       ),
     );
