@@ -31,10 +31,57 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
 
   bool _loading = true;
   String? _error;
+  
+  // User role and branch for filtering
+  String? _userRole;
+  String? _userBranchId;
+  String? _ownerUid;
 
   @override
   void initState() {
     super.initState();
+    _loadUserContextAndListen();
+  }
+  
+  Future<void> _loadUserContextAndListen() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() {
+        _loading = false;
+        _error = "Not signed in";
+      });
+      return;
+    }
+
+    // Fetch user document to get role and branchId
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (userDoc.exists) {
+        final data = userDoc.data() ?? {};
+        _userRole = (data['role'] ?? '').toString();
+        _userBranchId = (data['branchId'] ?? '').toString();
+        
+        // Determine ownerUid based on role
+        if (_userRole == 'salon_owner') {
+          _ownerUid = user.uid;
+        } else if (data['ownerUid'] != null) {
+          _ownerUid = data['ownerUid'].toString();
+        } else {
+          _ownerUid = user.uid;
+        }
+      } else {
+        _ownerUid = user.uid;
+      }
+    } catch (e) {
+      debugPrint('Error loading user context: $e');
+      _ownerUid = user.uid;
+    }
+
+    // Now start listening with the proper context
     _listenToBookings();
     _listenToStaff();
     _listenToServices();
@@ -51,12 +98,11 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   }
 
   void _listenToServices() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (_ownerUid == null) return;
 
     _servicesSub = FirebaseFirestore.instance
         .collection('services')
-        .where('ownerUid', isEqualTo: user.uid)
+        .where('ownerUid', isEqualTo: _ownerUid)
         .snapshots()
         .listen((snap) {
       final List<Map<String, dynamic>> loaded = [];
@@ -79,14 +125,15 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   }
 
   void _listenToStaff() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (_ownerUid == null) return;
 
-    // Listen to users where ownerUid matches current user
+    final bool isBranchAdmin = _userRole == 'salon_branch_admin' && _userBranchId != null && _userBranchId!.isNotEmpty;
+
+    // Listen to users where ownerUid matches
     // and role is 'salon_staff' or 'salon_branch_admin'
     _staffSub = FirebaseFirestore.instance
         .collection('users')
-        .where('ownerUid', isEqualTo: user.uid)
+        .where('ownerUid', isEqualTo: _ownerUid)
         .snapshots()
         .listen((snap) {
       final List<Map<String, dynamic>> loaded = [];
@@ -94,12 +141,16 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         final data = doc.data();
         final role = (data['role'] ?? '').toString();
         if (role == 'salon_staff' || role == 'salon_branch_admin') {
+          final staffBranchId = (data['branchId'] ?? '').toString();
+          // For branch admins, only show staff from their branch
+          if (isBranchAdmin && staffBranchId != _userBranchId) continue;
+          
           loaded.add({
             'id': doc.id,
             'name': (data['displayName'] ?? data['name'] ?? 'Unknown').toString(),
             'role': (data['staffRole'] ?? data['role'] ?? 'Staff').toString(),
             'avatarUrl': (data['photoURL'] ?? data['avatarUrl']).toString(),
-            'branchId': (data['branchId'] ?? '').toString(),
+            'branchId': staffBranchId,
             'weeklySchedule': data['weeklySchedule'] as Map<String, dynamic>?,
           });
         }
@@ -115,8 +166,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   }
 
   void _listenToBookings() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    if (_ownerUid == null) {
       setState(() {
         _loading = false;
         _error = "Not signed in";
@@ -124,7 +174,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       return;
     }
 
-    final uid = user.uid;
+    final bool isBranchAdmin = _userRole == 'salon_branch_admin' && _userBranchId != null && _userBranchId!.isNotEmpty;
 
     List<_Booking> bookingsData = [];
     List<_Booking> bookingRequestsData = [];
@@ -133,9 +183,13 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       // Merge and deduplicate by an internal key (client+date+time+service as fallback)
       final Map<String, _Booking> map = {};
       for (final b in bookingsData) {
+        // For branch admins, filter by branchId
+        if (isBranchAdmin && b.branchId != _userBranchId) continue;
         map[b.mergeKey] = b;
       }
       for (final b in bookingRequestsData) {
+        // For branch admins, filter by branchId
+        if (isBranchAdmin && b.branchId != _userBranchId) continue;
         map[b.mergeKey] = b;
       }
       final merged = map.values.toList()
@@ -156,7 +210,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
 
     _bookingsSub = FirebaseFirestore.instance
         .collection('bookings')
-        .where('ownerUid', isEqualTo: uid)
+        .where('ownerUid', isEqualTo: _ownerUid)
         .snapshots()
         .listen(
       (snap) {
@@ -174,7 +228,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
 
     _bookingRequestsSub = FirebaseFirestore.instance
         .collection('bookingRequests')
-        .where('ownerUid', isEqualTo: uid)
+        .where('ownerUid', isEqualTo: _ownerUid)
         .snapshots()
         .listen(
       (snap) {
