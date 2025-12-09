@@ -109,16 +109,49 @@ class _ProfileScreenState extends State<ProfileScreen>
             .get();
         if (snap.exists) {
           final data = snap.data() as Map<String, dynamic>? ?? {};
-          name = (data['displayName'] ??
-                  data['name'] ??
-                  name ??
-                  user.email ??
-                  'Team Member')
-              .toString();
-          role = (data['staffRole'] ??
-                  data['role'] ??
-                  'Team Member')
-              .toString();
+
+          final displayName = (data['displayName'] ?? '').toString().trim();
+          final businessName = (data['name'] ?? '').toString().trim();
+          final email = user.email ?? '';
+
+          // Friendly display name:
+          // - For salon owners: prefer the business/name field first.
+          // - For others: prefer displayName, then name.
+          final rawRoleValue = (data['role'] ?? '').toString().trim();
+          final systemRole = rawRoleValue.toLowerCase();
+
+          if (systemRole == 'salon_owner' && businessName.isNotEmpty) {
+            name = businessName;
+          } else if (displayName.isNotEmpty) {
+            name = displayName;
+          } else if (businessName.isNotEmpty) {
+            name = businessName;
+          } else {
+            name = name.isNotEmpty
+                ? name
+                : (email.isNotEmpty ? email : 'Team Member');
+          }
+
+          // Role label:
+          // - If staffRole (job title) is present, show that.
+          // - Otherwise, map system role codes (e.g. salon_owner) to
+          //   human‑friendly labels for admins/owners.
+          final staffRole = data['staffRole'];
+          if (staffRole != null && staffRole.toString().trim().isNotEmpty) {
+            role = staffRole.toString();
+          } else {
+            if (systemRole == 'salon_owner') {
+              role = 'Salon Owner';
+            } else if (systemRole == 'salon_branch_admin') {
+              role = 'Branch Admin';
+            } else if (systemRole == 'salon_staff') {
+              role = 'Staff Member';
+            } else if (rawRoleValue.isNotEmpty) {
+              role = rawRoleValue;
+            } else {
+              role = 'Team Member';
+            }
+          }
           photoUrl = (data['photoURL'] ?? data['avatarUrl'] ?? photoUrl)
               .toString();
 

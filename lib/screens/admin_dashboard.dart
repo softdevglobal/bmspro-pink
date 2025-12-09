@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'profile_screen.dart' as profile_screen;
 
 class AppColors {
@@ -19,21 +21,159 @@ class AppColors {
   static const yellow = Color(0xFFFFD700);
 }
 
-class AdminDashboard extends StatelessWidget {
+class AdminDashboard extends StatefulWidget {
   final String role;
   final String? branchName;
 
   const AdminDashboard({
-    super.key, 
-    required this.role, 
+    super.key,
+    required this.role,
     this.branchName,
   });
+
+  @override
+  State<AdminDashboard> createState() => _AdminDashboardState();
+}
+
+class _AdminDashboardState extends State<AdminDashboard> {
+  bool _loadingMetrics = true;
+
+  double _totalRevenue = 0;
+  int _bookingCount = 0;
+  double _avgTicketValue = 0;
+  double _staffUtilization = 0; // 0–1
+  double _clientRetention = 0; // 0–1
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOwnerAnalytics();
+  }
+
+  Future<void> _loadOwnerAnalytics() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        if (!mounted) return;
+        setState(() => _loadingMetrics = false);
+        return;
+      }
+
+      final qs = await FirebaseFirestore.instance
+          .collection('bookings')
+          .where('ownerUid', isEqualTo: user.uid)
+          .get();
+
+      double totalRevenue = 0;
+      int bookingCount = 0;
+      final Set<String> staffIds = {};
+      final Map<String, int> clientVisits = {};
+
+      for (final doc in qs.docs) {
+        final data = doc.data();
+
+        // Only confirmed / completed bookings
+        final status =
+            (data['status'] ?? '').toString().toLowerCase().trim();
+        if (status != 'confirmed' && status != 'completed') continue;
+
+        bookingCount++;
+
+        // Price
+        double price = 0;
+        final rawPrice = data['price'];
+        if (rawPrice is num) {
+          price = rawPrice.toDouble();
+        } else if (rawPrice is String) {
+          price = double.tryParse(rawPrice) ?? 0;
+        }
+
+        // If price not set, derive from services list if present
+        if (price == 0 && data['services'] is List) {
+          final list = data['services'] as List;
+          for (final item in list) {
+            if (item is Map && item['price'] != null) {
+              final p = item['price'];
+              if (p is num) {
+                price += p.toDouble();
+              } else if (p is String) {
+                price += double.tryParse(p) ?? 0;
+              }
+            }
+          }
+        }
+
+        totalRevenue += price;
+
+        // Staff IDs for utilization
+        final topStaff = data['staffId'];
+        if (topStaff != null && topStaff.toString().isNotEmpty) {
+          staffIds.add(topStaff.toString());
+        }
+        if (data['services'] is List) {
+          for (final item in (data['services'] as List)) {
+            if (item is Map && item['staffId'] != null) {
+              final sid = item['staffId'].toString();
+              if (sid.isNotEmpty) staffIds.add(sid);
+            }
+          }
+        }
+
+        // Client visits for retention
+        final clientKeySource = data['customerUid'] ??
+            data['clientEmail'] ??
+            data['clientPhone'] ??
+            data['client'];
+        final clientKey = (clientKeySource ?? '').toString().trim();
+        if (clientKey.isNotEmpty) {
+          clientVisits[clientKey] = (clientVisits[clientKey] ?? 0) + 1;
+        }
+      }
+
+      double avgTicket = 0;
+      if (bookingCount > 0) {
+        avgTicket = totalRevenue / bookingCount;
+      }
+
+      double utilization = 0;
+      if (staffIds.isNotEmpty && bookingCount > 0) {
+        // Simple heuristic: assume 40 ideal bookings per staff member
+        final capacity = staffIds.length * 40;
+        utilization = (bookingCount / capacity).clamp(0.0, 1.0);
+      }
+
+      double retention = 0;
+      if (clientVisits.isNotEmpty) {
+        final totalClients = clientVisits.length;
+        final returningClients =
+            clientVisits.values.where((visits) => visits > 1).length;
+        retention = (returningClients / totalClients).clamp(0.0, 1.0);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _totalRevenue = totalRevenue;
+        _bookingCount = bookingCount;
+        _avgTicketValue = avgTicket;
+        _staffUtilization = utilization;
+        _clientRetention = retention;
+        _loadingMetrics = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading owner analytics: $e');
+      if (!mounted) return;
+      setState(() {
+        _loadingMetrics = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 80), // Bottom padding for nav bar
+        padding:
+            const EdgeInsets.fromLTRB(16, 16, 16, 80), // Bottom padding for nav bar
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -54,11 +194,12 @@ class AdminDashboard extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context) {
     String adminLabel = 'Admin';
+    final role = widget.role;
     if (role == 'salon_owner') {
       adminLabel = 'Salon Owner';
     } else if (role == 'salon_branch_admin') {
-      if (branchName != null && branchName!.isNotEmpty) {
-        adminLabel = '$branchName Admin';
+      if (widget.branchName != null && widget.branchName!.isNotEmpty) {
+        adminLabel = '${widget.branchName} Admin';
       } else {
         adminLabel = 'Branch Admin';
       }
@@ -199,6 +340,16 @@ class AdminDashboard extends StatelessWidget {
   }
 
   Widget _buildKpiSection() {
+    final totalRevenueLabel =
+        _loadingMetrics ? '—' : '\$${_totalRevenue.toStringAsFixed(0)}';
+    final staffUtilPercent = _loadingMetrics
+        ? '—'
+        : '${(_staffUtilization * 100).toStringAsFixed(0)}%';
+    final clientRetentionPercent = _loadingMetrics
+        ? '—'
+        : '${(_clientRetention * 100).toStringAsFixed(0)}%';
+    final avgTicketLabel =
+        _loadingMetrics ? '—' : '\$${_avgTicketValue.toStringAsFixed(0)}';
     return Column(
       children: [
         Row(
@@ -206,7 +357,7 @@ class AdminDashboard extends StatelessWidget {
             Expanded(
               child: _buildKpiCard(
                 title: 'Total Revenue',
-                value: '\$12,450',
+                value: totalRevenueLabel,
                 icon: FontAwesomeIcons.dollarSign,
                 iconColor: AppColors.green,
                 iconBg: AppColors.green.withOpacity(0.1),
@@ -219,11 +370,12 @@ class AdminDashboard extends StatelessWidget {
             Expanded(
               child: _buildKpiCard(
                 title: 'Staff Utilization',
-                value: '85%',
+                value: staffUtilPercent,
                 icon: FontAwesomeIcons.users,
                 iconColor: AppColors.blue,
                 iconBg: AppColors.blue.withOpacity(0.1),
-                progressBarValue: 0.85,
+                progressBarValue:
+                    _loadingMetrics ? 0.0 : _staffUtilization,
                 progressBarColor: AppColors.blue,
               ),
             ),
@@ -235,11 +387,11 @@ class AdminDashboard extends StatelessWidget {
             Expanded(
               child: _buildKpiCard(
                 title: 'Client Retention',
-                value: '68%',
+                value: clientRetentionPercent,
                 icon: FontAwesomeIcons.heart,
                 iconColor: AppColors.purple,
                 iconBg: AppColors.purple.withOpacity(0.1),
-                trend: '68%',
+                trend: clientRetentionPercent,
                 trendUp: true, // Just showing value as pill
                 trendColor: AppColors.purple,
                 isPill: true,
@@ -249,7 +401,7 @@ class AdminDashboard extends StatelessWidget {
             Expanded(
               child: _buildKpiCard(
                 title: 'Avg Ticket Value',
-                value: '\$95',
+                value: avgTicketLabel,
                 icon: FontAwesomeIcons.receipt,
                 iconColor: AppColors.primary,
                 iconBg: AppColors.primary.withOpacity(0.1),
