@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
@@ -43,6 +44,7 @@ class BranchTheme {
 
 class AppConfig {
   static const primary = Color(0xFFFF2D8F);
+  static const accent = Color(0xFFFF6FB5);
   static const background = Color(0xFFFFF5FA);
   static const card = Colors.white;
   static const text = Color(0xFF1A1A1A);
@@ -75,21 +77,28 @@ class CalenderScreen extends StatefulWidget {
 }
 
 class _CalenderScreenState extends State<CalenderScreen> {
-  DateTime _focusedMonth = DateTime(2025, 3, 1);
-  DateTime _selectedDate = DateTime(2025, 3, 17);
+  DateTime _focusedMonth = DateTime.now();
+  DateTime _selectedDate = DateTime.now();
 
-  late Map<int, DaySchedule> _scheduleData;
+  Map<int, DaySchedule> _scheduleData = {};
   
   // Role & filtering state
   String? _currentUserRole;
   String? _currentUserId;
+  String? _ownerUid;
+  String? _branchId;
   bool _isBranchView = false; // false = My Schedule, true = Branch Schedule
   bool _isLoadingRole = true;
+
+  // Live bookings state
+  bool _isLoadingBookings = true;
+  String? _bookingsError;
+  final List<Map<String, dynamic>> _allBookings = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingsSub;
 
   @override
   void initState() {
     super.initState();
-    _initializeData();
     _fetchUserRole();
   }
 
@@ -107,8 +116,12 @@ class _CalenderScreenState extends State<CalenderScreen> {
           final userData = doc.data();
           setState(() {
             _currentUserRole = userData?['role'];
+            _ownerUid = (userData?['ownerUid'] ?? user.uid).toString();
+            _branchId = (userData?['branchId'] ?? '').toString();
             _isLoadingRole = false;
           });
+
+          _startBookingsListener();
         }
       } else {
          if (mounted) setState(() => _isLoadingRole = false);
@@ -119,102 +132,227 @@ class _CalenderScreenState extends State<CalenderScreen> {
     }
   }
 
-  void _initializeData() {
-    // Assign some items to a mock "current user" ID and others to different IDs
-    // Since we don't know the real UID at compile time, we'll use placeholders
-    // and logic in filtering will handle it. For demo purposes, assume
-    // 'current_user_id' matches the logged in user if we want to test "My Schedule"
-    // effectively with mock data, but we will implement filtering logic.
-    
-    // Using 'me' as a placeholder for current user's appointments in mock data
-    const myId = 'me'; 
-    const otherId = 'other';
+  @override
+  void dispose() {
+    _bookingsSub?.cancel();
+    super.dispose();
+  }
 
-    _scheduleData = {
-      15: DaySchedule(branch: 'Main St', items: [
-        Appointment(
-            time: '10:00 AM',
-            client: 'Sarah Johnson',
-            service: 'Massage - 60m',
-            room: 'R1',
-            icon: FontAwesomeIcons.spa,
-            staffId: myId),
-      ]),
-      16: DaySchedule(branch: 'Downtown', items: [
-        Appointment(
-            time: '09:00 AM',
-            client: 'Mike Ross',
-            service: 'Deep Tissue',
-            room: 'D2',
-            icon: FontAwesomeIcons.handSparkles,
-            staffId: otherId),
-        Appointment(
-            time: '11:30 AM',
-            client: 'Rachel Green',
-            service: 'Manicure',
-            room: 'D4',
-            icon: FontAwesomeIcons.gem,
-            staffId: myId),
-      ]),
-      17: DaySchedule(branch: 'Main St', items: [
-        Appointment(
-            time: '10:00 AM',
-            client: 'Sarah Johnson',
-            service: 'Massage - 60m',
-            room: 'R1',
-            icon: FontAwesomeIcons.spa,
-            staffId: myId),
-        Appointment(
-            time: '12:00 PM',
-            client: 'Emily Davis',
-            service: 'Facial - 45m',
-            room: 'R2',
-            icon: FontAwesomeIcons.faceSmile,
-            staffId: otherId),
-        Appointment(
-            time: '03:00 PM',
-            client: 'Jessica Miller',
-            service: 'Manicure',
-            room: 'R3',
-            icon: FontAwesomeIcons.handSparkles,
-            staffId: myId),
-      ]),
-      18: DaySchedule(isOffDay: true),
-      20: DaySchedule(branch: 'Westside', items: [
-        Appointment(
-            time: '01:00 PM',
-            client: 'John Doe',
-            service: 'Pedicure',
-            room: 'W1',
-            icon: FontAwesomeIcons.shoePrints,
-            staffId: myId),
-        Appointment(
-            time: '02:30 PM',
-            client: 'Jane Smith',
-            service: 'Massage',
-            room: 'W2',
-            icon: FontAwesomeIcons.spa,
-            staffId: otherId),
-      ]),
-      22: DaySchedule(branch: 'Downtown', items: [
-        Appointment(
-            time: '09:00 AM',
-            client: 'Alice Cooper',
-            service: 'Facial',
-            room: 'D1',
-            icon: FontAwesomeIcons.faceSmile,
-            staffId: otherId),
-      ]),
-      24: DaySchedule(branch: 'Westside', items: [
-        Appointment(
-            time: '04:00 PM',
-            client: 'Gary Oldman',
-            service: 'Haircut',
-            room: 'W4',
-            icon: FontAwesomeIcons.scissors,
-            staffId: myId),
-      ]),
-    };
+  void _startBookingsListener() {
+    final ownerUid = _ownerUid;
+    if (ownerUid == null || ownerUid.isEmpty) {
+      setState(() {
+        _isLoadingBookings = false;
+        _bookingsError = 'Missing owner UID';
+      });
+      return;
+    }
+
+    _bookingsSub?.cancel();
+    setState(() {
+      _isLoadingBookings = true;
+      _bookingsError = null;
+      _scheduleData = {};
+      _allBookings.clear();
+    });
+
+    _bookingsSub = FirebaseFirestore.instance
+        .collection('bookings')
+        .where('ownerUid', isEqualTo: ownerUid)
+        .snapshots()
+        .listen((snap) {
+      _allBookings
+        ..clear()
+        ..addAll(snap.docs.map((d) => d.data()));
+      _rebuildScheduleFromBookings();
+    }, onError: (e) {
+      debugPrint('Error listening to bookings: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingBookings = false;
+          _bookingsError = e.toString();
+        });
+      }
+    });
+  }
+
+  void _rebuildScheduleFromBookings() {
+    final Map<int, DaySchedule> byDay = {};
+
+    for (final data in _allBookings) {
+      // Status filter: confirmed only
+      final statusRaw = (data['status'] ?? '').toString().toLowerCase();
+      if (statusRaw != 'confirmed') continue;
+
+      final dateStr = (data['date'] ?? '').toString();
+      if (dateStr.isEmpty) continue;
+
+      DateTime date;
+      try {
+        date = DateTime.parse(dateStr);
+      } catch (_) {
+        continue;
+      }
+
+      // Match currently focused month
+      if (date.year != _focusedMonth.year || date.month != _focusedMonth.month) {
+        continue;
+      }
+
+      // Role-based inclusion
+      if (!_shouldIncludeBookingForCurrentUser(data, date)) {
+        continue;
+      }
+
+      final int dayKey = date.day;
+
+      final branchName = (data['branchName'] ?? '').toString();
+      final clientName = (data['client'] ?? 'Walk-in').toString();
+
+      // Derive service name similar to owner bookings page
+      String serviceName = (data['serviceName'] ?? '').toString();
+      if (serviceName.isEmpty && data['services'] is List) {
+        final list = data['services'] as List;
+        if (list.isNotEmpty && list.first is Map) {
+          final first = list.first as Map;
+          serviceName = (first['name'] ?? 'Service').toString();
+        }
+      }
+      if (serviceName.isEmpty) serviceName = 'Service';
+
+      final timeStr = (data['time'] ?? '').toString();
+      String timeLabel = timeStr;
+      try {
+        if (timeStr.isNotEmpty) {
+          final t = DateFormat('HH:mm').parse(timeStr);
+          timeLabel = DateFormat('h:mm a').format(t);
+        }
+      } catch (_) {}
+
+      // Use branch name as "room" label for now
+      final roomLabel = branchName.isNotEmpty ? branchName : 'Salon';
+
+      // Icon heuristic
+      IconData icon = FontAwesomeIcons.scissors;
+      final lower = serviceName.toLowerCase();
+      if (lower.contains('nail')) {
+        icon = FontAwesomeIcons.handSparkles;
+      } else if (lower.contains('facial') || lower.contains('spa')) {
+        icon = FontAwesomeIcons.spa;
+      } else if (lower.contains('massage')) {
+        icon = FontAwesomeIcons.spa;
+      } else if (lower.contains('extension')) {
+        icon = FontAwesomeIcons.wandMagicSparkles;
+      }
+
+      final appt = Appointment(
+        time: timeLabel,
+        client: clientName,
+        service: serviceName,
+        room: roomLabel,
+        icon: icon,
+        staffId: _extractStaffId(data),
+      );
+
+      final existing = byDay[dayKey];
+      if (existing == null) {
+        byDay[dayKey] = DaySchedule(
+          branch: branchName.isNotEmpty ? branchName : null,
+          items: [appt],
+        );
+      } else {
+        // Merge items and handle multiple branches
+        final List<Appointment> items = List.of(existing.items)..add(appt);
+        String? mergedBranch = existing.branch;
+        if (mergedBranch == null && branchName.isNotEmpty) {
+          mergedBranch = branchName;
+        } else if (mergedBranch != null &&
+            branchName.isNotEmpty &&
+            branchName != mergedBranch) {
+          mergedBranch = 'Multiple Branches';
+        }
+        byDay[dayKey] = DaySchedule(
+          branch: mergedBranch,
+          items: items,
+          isOffDay: false,
+        );
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _scheduleData = byDay;
+      _isLoadingBookings = false;
+    });
+  }
+
+  bool _shouldIncludeBookingForCurrentUser(
+      Map<String, dynamic> data, DateTime date) {
+    final role = _currentUserRole;
+    final uid = _currentUserId;
+    final branchId = _branchId;
+
+    // Salon owner: see all confirmed bookings for their salon
+    if (role == 'salon_owner') return true;
+
+    final bookingBranchId = (data['branchId'] ?? '').toString();
+
+    // Branch admin: see only their branch in calendar;
+    // per-staff vs branch-wide is handled later in _buildAppointmentsList.
+    if (role == 'salon_branch_admin') {
+      if (branchId != null &&
+          branchId.isNotEmpty &&
+          bookingBranchId.isNotEmpty &&
+          bookingBranchId != branchId) {
+        return false;
+      }
+      return true;
+    }
+
+    // Staff: only their own bookings
+    if (uid == null || uid.isEmpty) return false;
+    return _isBookingForStaff(data, uid);
+  }
+
+  bool _isBookingForStaff(Map<String, dynamic> data, String staffUid) {
+    final topLevelStaff = data['staffId'];
+    if (topLevelStaff != null &&
+        topLevelStaff.toString().isNotEmpty &&
+        topLevelStaff.toString() == staffUid) {
+      return true;
+    }
+
+    if (data['services'] is List) {
+      final list = data['services'] as List;
+      for (final item in list) {
+        if (item is Map && item['staffId'] != null) {
+          final sid = item['staffId'].toString();
+          if (sid.isNotEmpty && sid == staffUid) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  String _extractStaffId(Map<String, dynamic> data) {
+    final topLevelStaff = data['staffId'];
+    if (topLevelStaff != null && topLevelStaff.toString().isNotEmpty) {
+      return topLevelStaff.toString();
+    }
+    if (data['services'] is List) {
+      final list = data['services'] as List;
+      for (final item in list) {
+        if (item is Map && item['staffId'] != null) {
+          final sid = item['staffId'].toString();
+          if (sid.isNotEmpty) {
+            return sid;
+          }
+        }
+      }
+    }
+    return '';
   }
 
   void _changeMonth(int offset) {
@@ -222,10 +360,19 @@ class _CalenderScreenState extends State<CalenderScreen> {
       _focusedMonth =
           DateTime(_focusedMonth.year, _focusedMonth.month + offset, 1);
     });
+    _rebuildScheduleFromBookings();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingRole || _isLoadingBookings) {
+      return const SafeArea(
+        child: Center(
+          child: CircularProgressIndicator(color: AppConfig.primary),
+        ),
+      );
+    }
+
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -471,7 +618,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
   Widget _buildSelectedDayHeader() {
     final dayInt = _selectedDate.day;
     final data =
-        _scheduleData[dayInt]; // Simple logic: assumes mock data matches month
+        _scheduleData[dayInt]; // Schedule generated from live bookings
     List<Color> gradient = [Colors.grey.shade400, Colors.grey.shade300];
     String branchName = "No Schedule";
     if (data != null) {
@@ -480,7 +627,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
         gradient = [Colors.grey.shade400, Colors.grey.shade300];
       } else if (data.branch != null) {
         branchName = "${data.branch} Branch";
-        gradient = AppConfig.branches[data.branch]!.gradient;
+        final theme = _resolveBranchTheme(data.branch);
+        gradient = theme.gradient;
       }
     }
     return AnimatedContainer(
@@ -568,12 +716,11 @@ class _CalenderScreenState extends State<CalenderScreen> {
 
       // Branch admin: in branch view see all, otherwise personal
       if (_currentUserRole == 'salon_branch_admin' && _isBranchView) {
-        return true;
+        return true; 
       }
 
       // Staff / default: only "my" appointments
-      // In real app, compare appt.staffId == _currentUserId
-      return appt.staffId == 'me';
+      return _currentUserId != null && appt.staffId == _currentUserId;
     }).toList();
 
     if (filteredItems.isEmpty) {
@@ -583,7 +730,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
 
     return Column(
       children: filteredItems.map((appt) {
-        final theme = AppConfig.branches[data.branch]!;
+        final theme = _resolveBranchTheme(data.branch);
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
           decoration: BoxDecoration(
@@ -763,6 +910,18 @@ class _CalenderScreenState extends State<CalenderScreen> {
           offset: const Offset(0, 8),
         ),
       ],
+    );
+  }
+
+  BranchTheme _resolveBranchTheme(String? branchName) {
+    if (branchName != null && AppConfig.branches.containsKey(branchName)) {
+      return AppConfig.branches[branchName]!;
+    }
+    // Fallback theme if branch is unknown or represents multiple branches
+    return BranchTheme(
+      color: AppConfig.primary,
+      lightBg: AppConfig.background,
+      gradient: const [AppConfig.primary, AppConfig.accent],
     );
   }
 }
