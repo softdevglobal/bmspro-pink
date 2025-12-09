@@ -546,8 +546,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           TextField(
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
-            decoration: _inputDecoration("Email (optional)", "email@example.com"),
+            decoration: _inputDecoration("Email Address *", "john@example.com"),
             style: const TextStyle(color: AppColors.text),
+            onChanged: (_) => setState(() {}), // Trigger rebuild for validation
           ),
             const SizedBox(height: 12),
           TextField(
@@ -1189,8 +1190,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       }
     } else {
       primaryLabel = 'Confirm Booking';
-      // Require name and phone
+      // Require name, email, and phone
       final hasRequiredFields = _nameController.text.trim().isNotEmpty && 
+                                _emailController.text.trim().isNotEmpty &&
                                 _phoneController.text.trim().isNotEmpty;
       if (!_isProcessing && hasRequiredFields) {
         onPrimary = _confirmBooking;
@@ -1628,10 +1630,8 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             'Customer',
             _nameController.text.isNotEmpty ? _nameController.text : 'Not entered',
           ),
-          if (_phoneController.text.isNotEmpty)
-            _summaryRow('Phone', _phoneController.text),
-          if (_emailController.text.isNotEmpty)
-            _summaryRow('Email', _emailController.text),
+          _summaryRow('Email', _emailController.text.isNotEmpty ? _emailController.text : 'Not entered'),
+          _summaryRow('Phone', _phoneController.text.isNotEmpty ? _phoneController.text : 'Not entered'),
           if (_notesController.text.isNotEmpty) ...[
             const SizedBox(height: 8),
             const Text('Notes:', style: TextStyle(fontSize: 12, color: AppColors.muted)),
