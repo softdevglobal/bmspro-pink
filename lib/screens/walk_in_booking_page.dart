@@ -27,17 +27,16 @@ class WalkInBookingPage extends StatefulWidget {
 
 class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProviderStateMixin {
   // State Variables
-  int _bookingType = 0; // 0: Anonymous, 1: Profile
   int _currentStep = 0; // 0: Branch & Services, 1: Date & Staff, 2: Details
 
   // Step 1 – branch & services
   String? _selectedBranchLabel;
   Set<String> _selectedServiceIds = {}; // multiple services supported
 
-  // Step 2 – date & staff
+  // Step 2 – date & per-service time/staff
   DateTime? _selectedDate;
-  TimeOfDay? _selectedTime;
-  String _selectedStaffId = 'any'; // ID of selected staff
+  Map<String, TimeOfDay> _serviceTimeSelections = {}; // serviceId -> time
+  Map<String, String> _serviceStaffSelections = {}; // serviceId -> staffId ('any' or actual ID)
 
   bool _isProcessing = false;
 
@@ -49,10 +48,10 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   String? _selectedBranchId;
 
   // Controllers
-  final TextEditingController _guestIdController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _notesController = TextEditingController();
 
   // Animation Controllers
   late AnimationController _fadeController;
@@ -68,9 +67,6 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   @override
   void initState() {
     super.initState();
-    // Generate Guest ID
-    final now = DateTime.now();
-    _guestIdController.text = "Guest #${now.hour}${now.minute}${now.second}";
     // Fade Animation
     _fadeController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 600));
@@ -83,21 +79,21 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
   @override
   void dispose() {
-    _guestIdController.dispose();
     _nameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
+    _notesController.dispose();
     _fadeController.dispose();
     super.dispose();
   }
 
   // --- Logic Helpers ---
-  double get _totalPrice {
-    double total = 0.0;
+  int get _totalPrice {
+    int total = 0;
     for (final serviceId in _selectedServiceIds) {
       final service = _services.firstWhere((s) => s['id'] == serviceId, orElse: () => {});
       if (service.isNotEmpty) {
-        total += (service['price'] as num).toDouble();
+        total += (service['price'] as num).toInt();
       }
     }
     return total;
@@ -112,12 +108,6 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       }
     }
     return total;
-  }
-
-  void _toggleBookingType(int type) {
-    setState(() {
-      _bookingType = type;
-    });
   }
 
   void _selectService(String id) {
@@ -332,15 +322,24 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     }
   }
 
+  // Generate a booking code similar to admin panel
+  String _generateBookingCode() {
+    final now = DateTime.now();
+    final year = now.year;
+    final month = now.month.toString().padLeft(2, '0');
+    final day = now.day.toString().padLeft(2, '0');
+    final hour = now.hour.toString().padLeft(2, '0');
+    final dateTime = '$month$day$hour';
+    final random = (DateTime.now().millisecondsSinceEpoch % 10000).toString().padLeft(4, '0');
+    return 'BK-$year-$dateTime-$random';
+  }
+
   Future<void> _createFirestoreBooking() async {
     final now = DateTime.now();
     final DateTime date = _selectedDate ?? now;
-    final TimeOfDay time = _selectedTime ?? TimeOfDay.fromDateTime(now);
 
     final dateStr =
         '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    final timeStr =
-        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
     // Get all selected services
     final List<Map<String, dynamic>> selectedServices = _selectedServiceIds
@@ -352,61 +351,87 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     final serviceNames = selectedServices.map((s) => s['name'] ?? 'Service').join(', ');
     final serviceIds = selectedServices.map((s) => s['id']).join(',');
 
-    // Staff details
-    String? staffId;
-    String staffName = 'Any Available';
-    if (_selectedStaffId != 'any') {
-      staffId = _selectedStaffId;
-      final match = _staff.firstWhere(
-          (s) => s['id'] == _selectedStaffId,
-          orElse: () => {});
+    // Get first service time as main booking time
+    final firstServiceId = _selectedServiceIds.isNotEmpty ? _selectedServiceIds.first : '';
+    final firstTime = _serviceTimeSelections[firstServiceId] ?? TimeOfDay.fromDateTime(now);
+    final mainTimeStr = '${firstTime.hour.toString().padLeft(2, '0')}:${firstTime.minute.toString().padLeft(2, '0')}';
+
+    // Determine main staff (if all same, use that; otherwise "Multiple Staff")
+    final uniqueStaffIds = _serviceStaffSelections.values.where((s) => s != 'any').toSet();
+    String? mainStaffId;
+    String mainStaffName = 'Any Available';
+    if (uniqueStaffIds.length == 1) {
+      mainStaffId = uniqueStaffIds.first;
+      final match = _staff.firstWhere((s) => s['id'] == mainStaffId, orElse: () => {});
       if (match.isNotEmpty) {
-        staffName = (match['name'] ?? staffName).toString();
+        mainStaffName = (match['name'] ?? 'Staff').toString();
       }
+    } else if (uniqueStaffIds.length > 1) {
+      mainStaffName = 'Multiple Staff';
     }
 
-    final clientName =
-        _nameController.text.trim().isNotEmpty ? _nameController.text.trim() : 'Walk-in';
+    final clientName = _nameController.text.trim();
     final email = _emailController.text.trim();
     final phone = _phoneController.text.trim();
+    final notes = _notesController.text.trim();
 
-    // Build services array for detailed breakdown
+    // Build services array with per-service time and staff
     final servicesArray = selectedServices.map((service) {
+      final svcId = service['id'] as String;
+      final svcTime = _serviceTimeSelections[svcId] ?? firstTime;
+      final svcTimeStr = '${svcTime.hour.toString().padLeft(2, '0')}:${svcTime.minute.toString().padLeft(2, '0')}';
+      final svcStaffId = _serviceStaffSelections[svcId];
+      String? staffId;
+      String staffName = 'Any Available';
+      if (svcStaffId != null && svcStaffId != 'any') {
+        staffId = svcStaffId;
+        final match = _staff.firstWhere((s) => s['id'] == svcStaffId, orElse: () => {});
+        if (match.isNotEmpty) {
+          staffName = (match['name'] ?? 'Staff').toString();
+        }
+      }
       return {
+        'duration': (service['duration'] as num?)?.toInt() ?? 60,
         'id': service['id'],
         'name': service['name'],
-        'price': service['price'] ?? 0,
-        'duration': (service['duration'] as num?)?.toInt() ?? 60,
-        'time': timeStr,
+        'price': (service['price'] as num?)?.toInt() ?? 0,
         'staffId': staffId,
         'staffName': staffName,
+        'time': svcTimeStr,
       };
     }).toList();
 
+    final bookingCode = _generateBookingCode();
+    
     final bookingData = <String, dynamic>{
-      'ownerUid': _ownerUid,
+      'bookingCode': bookingCode,
+      'bookingSource': 'AdminBooking',
+      'branchId': _selectedBranchId,
+      'branchName': _selectedBranchLabel,
       'client': clientName,
       'clientEmail': email.isNotEmpty ? email : null,
       'clientPhone': phone.isNotEmpty ? phone : null,
-      'notes': null,
+      'createdAt': FieldValue.serverTimestamp(),
+      'customerUid': null, // Walk-in customers don't have UID
+      'date': dateStr,
+      'duration': _totalDuration,
+      'notes': notes.isNotEmpty ? notes : null,
+      'ownerUid': _ownerUid,
+      'price': _totalPrice,
       'serviceId': serviceIds,
       'serviceName': serviceNames,
-      'staffId': staffId,
-      'staffName': staffName,
-      'branchId': _userBranchId,
-      'branchName': _selectedBranchLabel,
-      'date': dateStr,
-      'time': timeStr,
-      'duration': _totalDuration,
-      'status': 'Pending',
-      'price': _totalPrice,
       'services': servicesArray,
-      'createdAt': FieldValue.serverTimestamp(),
+      'staffId': mainStaffId,
+      'staffName': mainStaffName,
+      'status': 'Pending',
+      'time': mainTimeStr,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
+    debugPrint('Creating booking with data: $bookingData');
+
     await FirebaseFirestore.instance
-        .collection('bookingRequests')
+        .collection('bookings')
         .add(bookingData);
   }
 
@@ -475,11 +500,12 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
                 _selectedBranchLabel = null;
                 _selectedServiceIds = {};
                 _selectedDate = null;
-                _selectedTime = null;
-                _selectedStaffId = 'any';
+                _serviceTimeSelections = {};
+                _serviceStaffSelections = {};
                 _nameController.clear();
                 _phoneController.clear();
                 _emailController.clear();
+                _notesController.clear();
               });
             },
             child: const Text('Reset',
@@ -492,57 +518,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     );
   }
 
-  Widget _buildToggle() {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 4))],
-      ),
-      child: Row(
-        children: [
-          _toggleBtn('Anonymous', FontAwesomeIcons.userSecret, 0),
-          _toggleBtn('Client Profile', FontAwesomeIcons.user, 1),
-        ],
-      ),
-    );
-  }
-
-  Widget _toggleBtn(String label, IconData icon, int index) {
-    final isSelected = _bookingType == index;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => _toggleBookingType(index),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            gradient: isSelected ? const LinearGradient(colors: [AppColors.primary, AppColors.accent]) : null,
-            color: isSelected ? null : Colors.transparent,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 14, color: isSelected ? Colors.white : AppColors.muted),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  color: isSelected ? Colors.white : AppColors.muted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildCustomerForm() {
-    if (_bookingType == 0) {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -551,38 +527,38 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.08), blurRadius: 25, offset: const Offset(0, 8))],
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Guest ID', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.muted)),
-            const SizedBox(height: 8),
             TextField(
-              controller: _guestIdController,
-              readOnly: true,
+            controller: _nameController,
+            decoration: _inputDecoration("Full Name *", "Enter customer name"),
               style: const TextStyle(color: AppColors.text),
-              decoration: _inputDecoration(null, null),
-            ),
+            onChanged: (_) => setState(() {}), // Trigger rebuild for validation
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _phoneController,
+            keyboardType: TextInputType.phone,
+            decoration: _inputDecoration("Phone *", "Enter phone number"),
+            style: const TextStyle(color: AppColors.text),
+            onChanged: (_) => setState(() {}), // Trigger rebuild for validation
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: _inputDecoration("Email (optional)", "email@example.com"),
+            style: const TextStyle(color: AppColors.text),
+          ),
+            const SizedBox(height: 12),
+          TextField(
+            controller: _notesController,
+            maxLines: 3,
+            decoration: _inputDecoration("Additional Notes (optional)", "Any special requests or notes..."),
+            style: const TextStyle(color: AppColors.text),
+          ),
           ],
         ),
       );
-    } else {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.08), blurRadius: 25, offset: const Offset(0, 8))],
-        ),
-        child: Column(
-          children: [
-            TextField(controller: _nameController, decoration: _inputDecoration("Full Name *", "Enter name")),
-            const SizedBox(height: 12),
-            TextField(controller: _phoneController, keyboardType: TextInputType.phone, decoration: _inputDecoration("Phone *", "04XX XXX XXX")),
-            const SizedBox(height: 12),
-            TextField(controller: _emailController, keyboardType: TextInputType.emailAddress, decoration: _inputDecoration("Email", "email@example.com")),
-          ],
-        ),
-      );
-    }
   }
 
   Widget _buildServiceGrid() {
@@ -709,10 +685,10 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                   child: AspectRatio(
                     aspectRatio: 1.2,
-                    child: imageUrl != null
+              child: imageUrl != null
                         ? Image.network(
-                            imageUrl,
-                            fit: BoxFit.cover,
+                        imageUrl,
+                        fit: BoxFit.cover,
                             width: double.infinity,
                             errorBuilder: (context, error, stackTrace) => Container(
                               color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
@@ -728,13 +704,13 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
                         : Container(
                             color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
                             child: Center(
-                              child: Icon(
-                                FontAwesomeIcons.scissors,
-                                color: isSelected ? Colors.white : color,
+                      child: Icon(
+                        FontAwesomeIcons.scissors,
+                        color: isSelected ? Colors.white : color,
                                 size: 32,
-                              ),
-                            ),
-                          ),
+                      ),
+                    ),
+            ),
                   ),
                 ),
                 // Checkmark badge for selected services
@@ -771,22 +747,22 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    service['name'],
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: isSelected ? Colors.white : AppColors.text,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  service['name'],
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? Colors.white : AppColors.text,
                       fontSize: 13,
-                    ),
+                  ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                  ),
+                ),
                   const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
@@ -794,25 +770,25 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          durationLabel,
+                      durationLabel,
                           style: TextStyle(
                             color: isSelected ? Colors.white : AppColors.muted,
                             fontSize: 11,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                      ),
-                      Text(
-                        '\$${service['price']}',
+                    ),
+                    Text(
+                      '\$${service['price']}',
                         style: TextStyle(
                           color: isSelected ? Colors.white : AppColors.primary,
                           fontWeight: FontWeight.bold,
                           fontSize: 15,
                         ),
-                      ),
-                    ],
-                  )
-                ],
+                    ),
+                  ],
+                )
+              ],
               ),
             )
           ],
@@ -821,56 +797,372 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     );
   }
 
-  Widget _buildStaffSelector() {
-    return SizedBox(
-      height: 90,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: _staff.length,
-        itemBuilder: (context, index) {
-          final staff = _staff[index];
-          final isSelected = _selectedStaffId == staff['id'];
-          return GestureDetector(
-            onTap: () => setState(() => _selectedStaffId = staff['id']),
-            child: Padding(
-              padding: const EdgeInsets.only(right: 16),
+  // Get staff who can perform a specific service and work at the selected branch
+  List<Map<String, dynamic>> _getAvailableStaffForService(String serviceId) {
+    final service = _services.firstWhere((s) => s['id'] == serviceId, orElse: () => {});
+    if (service.isEmpty) return [];
+
+    final List<String> serviceStaffIds = service['staffIds'] != null
+        ? (service['staffIds'] as List).map((e) => e.toString()).toList()
+        : [];
+
+    return _staff.where((staff) {
+      // Check if staff is active
+      if (staff['status'] != 'Active') return false;
+
+      // Check if staff works at selected branch
+      if (_selectedBranchId != null && staff['branchId'] != _selectedBranchId) {
+        return false;
+      }
+
+      // Check if staff can perform this service (if service has staffIds restriction)
+      if (serviceStaffIds.isNotEmpty && !serviceStaffIds.contains(staff['id'])) {
+        return false;
+      }
+
+      return true;
+    }).toList();
+  }
+
+  Widget _buildDatePicker() {
+    final dateText = _selectedDate != null
+        ? '${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}'
+        : 'Select date';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ListTile(
+        leading: const Icon(FontAwesomeIcons.calendarDay,
+            color: AppColors.primary, size: 18),
+        title: const Text(
+          'Date',
+          style: TextStyle(
+              fontWeight: FontWeight.w600, color: AppColors.text),
+        ),
+        subtitle: Text(
+          dateText,
+          style: const TextStyle(color: AppColors.muted),
+        ),
+        trailing: const Icon(Icons.chevron_right, color: AppColors.muted),
+        onTap: () async {
+          final now = DateTime.now();
+          final picked = await showDatePicker(
+            context: context,
+            initialDate: _selectedDate ?? now,
+            firstDate: now,
+            lastDate: now.add(const Duration(days: 365)),
+          );
+          if (picked != null) {
+            setState(() {
+              _selectedDate = picked;
+              // Clear time/staff selections when date changes
+              _serviceTimeSelections = {};
+              _serviceStaffSelections = {};
+            });
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _buildPerServiceTimeStaffSelector() {
+    if (_selectedDate == null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+        ),
               child: Column(
+          children: [
+            Icon(FontAwesomeIcons.calendarDay,
+                size: 40, color: AppColors.muted.withOpacity(0.5)),
+            const SizedBox(height: 12),
+            const Text(
+              'Select a date first',
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.muted),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final selectedServices = _selectedServiceIds
+        .map((id) => _services.firstWhere((s) => s['id'] == id, orElse: () => {}))
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    if (selectedServices.isEmpty) {
+      return const Text('No services selected', style: TextStyle(color: AppColors.muted));
+    }
+
+    return Column(
+      children: selectedServices.map((service) {
+        final serviceId = service['id'] as String;
+        final serviceName = service['name'] ?? 'Service';
+        final duration = (service['duration'] as num?)?.toInt() ?? 60;
+        final selectedTime = _serviceTimeSelections[serviceId];
+        final selectedStaffId = _serviceStaffSelections[serviceId] ?? 'any';
+        final availableStaff = _getAvailableStaffForService(serviceId);
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Service header
+              Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(2),
+                    width: 40,
+                    height: 40,
                     decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: isSelected ? const LinearGradient(colors: [AppColors.primary, AppColors.accent]) : null,
+                      gradient: const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Container(
-                      width: 56, height: 56,
-                      decoration: BoxDecoration(
-                        color: AppColors.card,
-                        shape: BoxShape.circle,
-                        image: staff['avatar'] != null
-                            ? DecorationImage(image: NetworkImage(staff['avatar']), fit: BoxFit.cover)
-                            : null,
-                      ),
-                      child: staff['avatar'] == null
-                          ? const Center(child: Icon(FontAwesomeIcons.users, color: AppColors.primary, size: 20))
-                          : null,
+                    child: const Center(
+                      child: Icon(FontAwesomeIcons.scissors, color: Colors.white, size: 16),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          serviceName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: AppColors.text,
+                          ),
+                        ),
+                        Text(
+                          '${duration}min • \$${service['price']}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (selectedTime != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.check, color: AppColors.green, size: 16),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Time selector
+              const Text(
+                'Select Time',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted),
+              ),
+              const SizedBox(height: 8),
+              _buildTimeSlots(serviceId, duration),
+
+              const SizedBox(height: 16),
+
+              // Staff selector
+              const Text(
+                'Select Staff',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted),
+              ),
+              const SizedBox(height: 8),
+              _buildStaffChips(serviceId, availableStaff, selectedStaffId),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildTimeSlots(String serviceId, int durationMinutes) {
+    // Generate time slots from 9 AM to 6 PM
+    final List<TimeOfDay> slots = [];
+    for (int hour = 9; hour < 18; hour++) {
+      slots.add(TimeOfDay(hour: hour, minute: 0));
+      slots.add(TimeOfDay(hour: hour, minute: 30));
+    }
+
+    final selectedTime = _serviceTimeSelections[serviceId];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: slots.map((time) {
+        final isSelected = selectedTime != null &&
+            selectedTime.hour == time.hour &&
+            selectedTime.minute == time.minute;
+        final timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              _serviceTimeSelections = Map.from(_serviceTimeSelections);
+              _serviceTimeSelections[serviceId] = time;
+            });
+          },
+                    child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+              color: isSelected ? AppColors.primary : AppColors.background,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isSelected ? AppColors.primary : AppColors.border,
+              ),
+            ),
+            child: Text(
+              timeStr,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? Colors.white : AppColors.text,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildStaffChips(String serviceId, List<Map<String, dynamic>> availableStaff, String selectedStaffId) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        // "Any Available" option
+        GestureDetector(
+          onTap: () {
+            setState(() {
+              _serviceStaffSelections = Map.from(_serviceStaffSelections);
+              _serviceStaffSelections[serviceId] = 'any';
+            });
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: selectedStaffId == 'any' ? AppColors.primary : AppColors.background,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: selectedStaffId == 'any' ? AppColors.primary : AppColors.border,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  FontAwesomeIcons.shuffle,
+                  size: 12,
+                  color: selectedStaffId == 'any' ? Colors.white : AppColors.muted,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Any',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: selectedStaffId == 'any' ? Colors.white : AppColors.text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Individual staff members
+        ...availableStaff.map((staff) {
+          final staffId = staff['id'] as String;
+          final staffName = staff['name'] ?? 'Staff';
+          final isSelected = selectedStaffId == staffId;
+
+          return GestureDetector(
+            onTap: () {
+              setState(() {
+                _serviceStaffSelections = Map.from(_serviceStaffSelections);
+                _serviceStaffSelections[serviceId] = staffId;
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? AppColors.primary : AppColors.background,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isSelected ? AppColors.primary : AppColors.border,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 10,
+                    backgroundColor: AppColors.muted.withOpacity(0.3),
+                    backgroundImage: staff['avatar'] != null
+                        ? NetworkImage(staff['avatar'])
+                        : null,
+                      child: staff['avatar'] == null
+                        ? Icon(Icons.person, size: 12, color: isSelected ? Colors.white : AppColors.muted)
+                          : null,
+                    ),
+                  const SizedBox(width: 6),
                   Text(
-                    staff['name'],
+                    staffName,
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      color: isSelected ? AppColors.primary : AppColors.text,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? Colors.white : AppColors.text,
                     ),
                   ),
                 ],
               ),
             ),
           );
-        },
-      ),
+        }),
+        if (availableStaff.isEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: const Text(
+              'No specific staff available',
+              style: TextStyle(fontSize: 12, color: AppColors.muted, fontStyle: FontStyle.italic),
+            ),
+          ),
+      ],
     );
   }
 
@@ -880,8 +1172,10 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
     final canStep0Next =
         _selectedBranchLabel != null && _selectedServiceIds.isNotEmpty;
+    // All services must have a time selected
+    final allServicesHaveTime = _selectedServiceIds.every((id) => _serviceTimeSelections.containsKey(id));
     final canStep1Next =
-        _selectedDate != null && _selectedTime != null;
+        _selectedDate != null && allServicesHaveTime;
 
     if (_currentStep == 0) {
       primaryLabel = 'Next';
@@ -895,7 +1189,10 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       }
     } else {
       primaryLabel = 'Confirm Booking';
-      if (!_isProcessing) {
+      // Require name and phone
+      final hasRequiredFields = _nameController.text.trim().isNotEmpty && 
+                                _phoneController.text.trim().isNotEmpty;
+      if (!_isProcessing && hasRequiredFields) {
         onPrimary = _confirmBooking;
       }
     }
@@ -1019,12 +1316,12 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             const SizedBox(height: 24),
             Row(
               children: [
-                const Text(
-                  "Select Services",
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.text),
+            const Text(
+              "Select Services",
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.text),
                 ),
                 if (_selectedServiceIds.isNotEmpty) ...[
                   const SizedBox(width: 8),
@@ -1057,24 +1354,24 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           children: [
             const SizedBox(height: 8),
             const Text(
-              "Choose Date & Time",
+              "Select Date",
               style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
                   color: AppColors.text),
             ),
             const SizedBox(height: 16),
-            _buildDateTimePicker(),
+            _buildDatePicker(),
             const SizedBox(height: 24),
-            const Text(
-              "Assign Staff",
+            Text(
+              "Select Time & Staff for Each Service",
               style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.text),
+                  color: _selectedDate == null ? AppColors.muted : AppColors.text),
             ),
             const SizedBox(height: 16),
-            _buildStaffSelector(),
+            _buildPerServiceTimeStaffSelector(),
             const SizedBox(height: 100),
           ],
         );
@@ -1083,8 +1380,14 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 8),
-            _buildToggle(),
-            const SizedBox(height: 24),
+            const Text(
+              "Customer Details",
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.text),
+            ),
+            const SizedBox(height: 16),
             _buildCustomerForm(),
             const SizedBox(height: 24),
             _buildSummaryCard(),
@@ -1202,87 +1505,6 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     );
   }
 
-  Widget _buildDateTimePicker() {
-    final dateText = _selectedDate != null
-        ? '${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}'
-        : 'Select date';
-    final timeText = _selectedTime != null
-        ? _selectedTime!.format(context)
-        : 'Select time';
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.08),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          ListTile(
-            leading: const Icon(FontAwesomeIcons.calendarDay,
-                color: AppColors.primary, size: 18),
-            title: const Text(
-              'Date',
-              style: TextStyle(
-                  fontWeight: FontWeight.w600, color: AppColors.text),
-            ),
-            subtitle: Text(
-              dateText,
-              style: const TextStyle(color: AppColors.muted),
-            ),
-            onTap: () async {
-              final now = DateTime.now();
-              final picked = await showDatePicker(
-                context: context,
-                initialDate: _selectedDate ?? now,
-                firstDate: now,
-                lastDate: now.add(const Duration(days: 365)),
-              );
-              if (picked != null) {
-                setState(() {
-                  _selectedDate = picked;
-                });
-              }
-            },
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(FontAwesomeIcons.clock,
-                color: AppColors.primary, size: 18),
-            title: const Text(
-              'Time',
-              style: TextStyle(
-                  fontWeight: FontWeight.w600, color: AppColors.text),
-            ),
-            subtitle: Text(
-              timeText,
-              style: const TextStyle(color: AppColors.muted),
-            ),
-            onTap: () async {
-              final picked = await showTimePicker(
-                context: context,
-                initialTime: _selectedTime ??
-                    TimeOfDay.fromDateTime(DateTime.now()),
-              );
-              if (picked != null) {
-                setState(() {
-                  _selectedTime = picked;
-                });
-              }
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSummaryCard() {
     final branch = _selectedBranchLabel ?? 'Not selected';
     
@@ -1294,9 +1516,6 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     
     final dateText = _selectedDate != null
         ? '${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}'
-        : 'Not selected';
-    final timeText = _selectedTime != null
-        ? _selectedTime!.format(context)
         : 'Not selected';
 
     return Container(
@@ -1324,43 +1543,112 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           ),
           const SizedBox(height: 12),
           _summaryRow('Branch', branch),
-          // Services section
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Services (${selectedServices.length})',
-                  style: const TextStyle(fontSize: 13, color: AppColors.muted),
-                ),
-                Flexible(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: selectedServices.isEmpty
-                        ? [const Text('Not selected', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text))]
-                        : selectedServices.map((s) => Text(
-                            '${s['name']} - \$${s['price']}',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text),
-                            textAlign: TextAlign.end,
-                          )).toList(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _summaryRow('Duration', '${_totalDuration}min'),
           _summaryRow('Date', dateText),
-          _summaryRow('Time', timeText),
+          const Divider(height: 20),
+          
+          // Services section with per-service time/staff
+          Text(
+            'Services (${selectedServices.length})',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text),
+          ),
+          const SizedBox(height: 8),
+          ...selectedServices.map((service) {
+            final svcId = service['id'] as String;
+            final svcTime = _serviceTimeSelections[svcId];
+            final svcStaffId = _serviceStaffSelections[svcId];
+            
+            String staffName = 'Any Available';
+            if (svcStaffId != null && svcStaffId != 'any') {
+              final match = _staff.firstWhere((s) => s['id'] == svcStaffId, orElse: () => {});
+              if (match.isNotEmpty) {
+                staffName = match['name'] ?? 'Staff';
+              }
+            }
+            
+            final timeStr = svcTime != null
+                ? '${svcTime.hour.toString().padLeft(2, '0')}:${svcTime.minute.toString().padLeft(2, '0')}'
+                : 'Not set';
+            
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          service['name'] ?? 'Service',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text),
+                        ),
+                      ),
+                      Text(
+                        '\$${service['price']}',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.primary),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(FontAwesomeIcons.clock, size: 10, color: AppColors.muted),
+                      const SizedBox(width: 4),
+                      Text(
+                        timeStr,
+                        style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                      ),
+                      const SizedBox(width: 12),
+                      const Icon(FontAwesomeIcons.user, size: 10, color: AppColors.muted),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          staffName,
+                          style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
+          
+          const Divider(height: 20),
+          _summaryRow('Total Duration', '${_totalDuration}min'),
+          _summaryRow('Total Price', '\$$_totalPrice'),
+          const Divider(height: 20),
           _summaryRow(
             'Customer',
-            _bookingType == 0
-                ? _guestIdController.text
-                : (_nameController.text.isNotEmpty
-                    ? _nameController.text
-                    : 'Walk-in'),
+            _nameController.text.isNotEmpty ? _nameController.text : 'Not entered',
           ),
+          if (_phoneController.text.isNotEmpty)
+            _summaryRow('Phone', _phoneController.text),
+          if (_emailController.text.isNotEmpty)
+            _summaryRow('Email', _emailController.text),
+          if (_notesController.text.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Text('Notes:', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+            const SizedBox(height: 4),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _notesController.text,
+                style: const TextStyle(fontSize: 12, color: AppColors.text),
+              ),
+            ),
+          ],
         ],
       ),
     );
