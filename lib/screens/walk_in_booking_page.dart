@@ -569,6 +569,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     // Require branch selection first
     if (_selectedBranchId == null) {
       return Container(
+        width: double.infinity,
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: AppColors.card,
@@ -638,7 +639,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         crossAxisCount: 2,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
-        childAspectRatio: 1.3,
+        childAspectRatio: 0.75,
       ),
       itemCount: visibleServices.length,
       itemBuilder: (context, index) {
@@ -665,66 +666,96 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       onTap: () => _selectService(service['id']),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: isSelected ? AppColors.primary : AppColors.card,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.08), blurRadius: 15, offset: const Offset(0, 4))],
-          border: isSelected ? null : Border.all(color: Colors.transparent),
+          border: isSelected ? null : Border.all(color: AppColors.border),
           gradient: isSelected ? const LinearGradient(colors: [AppColors.primary, AppColors.accent]) : null,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Container(
-              width: 40, height: 40,
-              decoration: BoxDecoration(
-                color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: imageUrl != null
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
+            // Large Image Section
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              child: AspectRatio(
+                aspectRatio: 1.2,
+                child: imageUrl != null
+                    ? Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
+                        width: double.infinity,
+                        errorBuilder: (context, error, stackTrace) => Container(
+                          color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
+                          child: Center(
+                            child: Icon(
+                              FontAwesomeIcons.scissors,
+                              color: isSelected ? Colors.white : color,
+                              size: 32,
+                            ),
+                          ),
+                        ),
+                      )
+                    : Container(
+                        color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
+                        child: Center(
+                          child: Icon(
+                            FontAwesomeIcons.scissors,
+                            color: isSelected ? Colors.white : color,
+                            size: 32,
+                          ),
+                        ),
                       ),
-                    )
-                  : Center(
-                      child: Icon(
-                        FontAwesomeIcons.scissors,
-                        color: isSelected ? Colors.white : color,
-                        size: 18,
-                      ),
-                    ),
+              ),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  service['name'],
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: isSelected ? Colors.white : AppColors.text,
-                    fontSize: 14,
+            // Service Info Section
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    service['name'],
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? Colors.white : AppColors.text,
+                      fontSize: 13,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      durationLabel,
-                      style: TextStyle(color: isSelected ? Colors.white70 : AppColors.muted, fontSize: 12),
-                    ),
-                    Text(
-                      '\$${service['price']}',
-                      style: TextStyle(color: isSelected ? Colors.white : AppColors.primary, fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                  ],
-                )
-              ],
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.white.withOpacity(0.2) : AppColors.background,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          durationLabel,
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : AppColors.muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '\$${service['price']}',
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : AppColors.primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  )
+                ],
+              ),
             )
           ],
         ),
