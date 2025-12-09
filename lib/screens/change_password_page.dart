@@ -1,7 +1,8 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../routes.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -139,12 +140,83 @@ class _ChangePasswordPageState extends State<ChangePasswordPage>
   }
 
   Future<void> _handleUpdate() async {
-    if (!_isFormValid) return;
+    if (!_isFormValid || _isUpdating) return;
+
+    final currentPassword = _currentPassController.text.trim();
+    final newPassword = _newPassController.text.trim();
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No authenticated user. Please log in again.')),
+        );
+      }
+      return;
+    }
+
+    // Basic guard: avoid updating to the same password
+    if (currentPassword == newPassword) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('New password must be different from current password.')),
+        );
+      }
+      return;
+    }
+
     setState(() => _isUpdating = true);
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-    setState(() => _isUpdating = false);
-    _showSuccessModal();
+
+    try {
+      // 1. Re-authenticate with current password
+      final email = user.email;
+      if (email == null || email.isEmpty) {
+        throw FirebaseAuthException(
+          code: 'missing-email',
+          message: 'Unable to verify user email for password change.',
+        );
+      }
+
+      final credential = EmailAuthProvider.credential(
+        email: email,
+        password: currentPassword,
+      );
+
+      await user.reauthenticateWithCredential(credential);
+
+      // 2. Update password
+      await user.updatePassword(newPassword);
+
+      if (!mounted) return;
+      setState(() => _isUpdating = false);
+      _showSuccessModal();
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _isUpdating = false);
+
+      String message = 'Failed to update password.';
+      if (e.code == 'wrong-password') {
+        message = 'The current password you entered is incorrect.';
+      } else if (e.code == 'weak-password') {
+        message = 'The new password is too weak. Please choose a stronger password.';
+      } else if (e.code == 'requires-recent-login') {
+        message = 'Please log in again and then try changing your password.';
+      } else if (e.code == 'missing-email') {
+        message = e.message ?? message;
+      } else if (e.message != null && e.message!.isNotEmpty) {
+        message = e.message!;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isUpdating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unexpected error: $e')),
+      );
+    }
   }
 
   void _showSuccessModal() {
@@ -633,8 +705,15 @@ class SuccessModal extends StatelessWidget {
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton(
-                      onPressed: () {
+                      onPressed: () async {
                         Navigator.of(context).pop();
+                        await FirebaseAuth.instance.signOut();
+                        if (context.mounted) {
+                          Navigator.of(context).pushNamedAndRemoveUntil(
+                            AppRoutes.login,
+                            (route) => false,
+                          );
+                        }
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.transparent,

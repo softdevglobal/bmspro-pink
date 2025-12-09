@@ -50,7 +50,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat(reverse: false);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
       final start = 0.2 + (i * 0.1);
       final end = start + 0.4;
       _menuSlideAnimations.add(
@@ -119,6 +119,16 @@ class _ProfileScreenState extends State<ProfileScreen>
               .toString();
           photoUrl = (data['photoURL'] ?? data['avatarUrl'] ?? photoUrl)
               .toString();
+
+          // Fallback for staff records created from the admin panel where
+          // avatar is stored in the 'avatar' field (and may be either a URL
+          // or just a name). Only use it if it looks like a real URL.
+          final avatarField = data['avatar'];
+          if (avatarField is String &&
+              (avatarField.startsWith('http://') ||
+                  avatarField.startsWith('https://'))) {
+            photoUrl = avatarField;
+          }
 
           final rating = data['rating'];
           if (rating is num) {
@@ -364,16 +374,13 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget _buildMenu() {
     return Column(
       children: [
-        _buildMenuItem(0, FontAwesomeIcons.calendarDays, 'My Schedule',
-            'View upcoming appointments'),
-        const SizedBox(height: 16),
-        _buildMenuItem(1, FontAwesomeIcons.userPen, 'Edit Profile',
+        _buildMenuItem(0, FontAwesomeIcons.userPen, 'Edit Profile',
             'Update personal information'),
         const SizedBox(height: 16),
-        _buildMenuItem(2, FontAwesomeIcons.gear, 'Settings',
+        _buildMenuItem(1, FontAwesomeIcons.gear, 'Settings',
             'App preferences and notifications'),
         const SizedBox(height: 16),
-        _buildMenuItem(3, FontAwesomeIcons.rightFromBracket, 'Logout',
+        _buildMenuItem(2, FontAwesomeIcons.rightFromBracket, 'Logout',
             'Sign out of your account',
             isLogout: true),
       ],
