@@ -32,7 +32,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
   // Step 1 – branch & services
   String? _selectedBranchLabel;
-  String _selectedServiceId = ''; // single service for now
+  Set<String> _selectedServiceIds = {}; // multiple services supported
 
   // Step 2 – date & staff
   DateTime? _selectedDate;
@@ -93,13 +93,25 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
   // --- Logic Helpers ---
   double get _totalPrice {
-    if (_selectedServiceId.isNotEmpty) {
-      final service = _services.firstWhere((s) => s['id'] == _selectedServiceId, orElse: () => {});
+    double total = 0.0;
+    for (final serviceId in _selectedServiceIds) {
+      final service = _services.firstWhere((s) => s['id'] == serviceId, orElse: () => {});
       if (service.isNotEmpty) {
-        return (service['price'] as num).toDouble();
+        total += (service['price'] as num).toDouble();
       }
     }
-    return 0.0;
+    return total;
+  }
+
+  int get _totalDuration {
+    int total = 0;
+    for (final serviceId in _selectedServiceIds) {
+      final service = _services.firstWhere((s) => s['id'] == serviceId, orElse: () => {});
+      if (service.isNotEmpty && service['duration'] != null) {
+        total += (service['duration'] as num).toInt();
+      }
+    }
+    return total;
   }
 
   void _toggleBookingType(int type) {
@@ -109,12 +121,20 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   }
 
   void _selectService(String id) {
+    debugPrint('[SelectService] Tapped service id: $id');
+    debugPrint('[SelectService] Before: $_selectedServiceIds');
     setState(() {
-      if (_selectedServiceId == id) {
-        _selectedServiceId = ''; // Deselect
+      // Create a new Set to ensure Flutter detects the change
+      final newSet = Set<String>.from(_selectedServiceIds);
+      if (newSet.contains(id)) {
+        newSet.remove(id); // Deselect
+        debugPrint('[SelectService] Removed $id');
       } else {
-        _selectedServiceId = id;
+        newSet.add(id); // Add to selection
+        debugPrint('[SelectService] Added $id');
       }
+      _selectedServiceIds = newSet;
+      debugPrint('[SelectService] After: $_selectedServiceIds');
     });
   }
 
@@ -127,7 +147,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       );
       return;
     }
-    if (_totalPrice == 0 || _selectedServiceId.isEmpty) {
+    if (_totalPrice == 0 || _selectedServiceIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text("Please select at least one service to continue.")));
       return;
@@ -322,18 +342,15 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     final timeStr =
         '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
-    // Resolve main service details from real services list
-    Map<String, dynamic> service = _services
-        .firstWhere((s) => s['id'] == _selectedServiceId, orElse: () => {});
-    if (service.isEmpty) {
-      // Fallback: use a generic service
-      service = {
-        'id': _selectedServiceId,
-        'name': 'Service',
-        'price': _totalPrice,
-        'duration': 60,
-      };
-    }
+    // Get all selected services
+    final List<Map<String, dynamic>> selectedServices = _selectedServiceIds
+        .map((id) => _services.firstWhere((s) => s['id'] == id, orElse: () => {}))
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    // Build service names and IDs as comma-separated strings
+    final serviceNames = selectedServices.map((s) => s['name'] ?? 'Service').join(', ');
+    final serviceIds = selectedServices.map((s) => s['id']).join(',');
 
     // Staff details
     String? staffId;
@@ -353,34 +370,37 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     final email = _emailController.text.trim();
     final phone = _phoneController.text.trim();
 
+    // Build services array for detailed breakdown
+    final servicesArray = selectedServices.map((service) {
+      return {
+        'id': service['id'],
+        'name': service['name'],
+        'price': service['price'] ?? 0,
+        'duration': (service['duration'] as num?)?.toInt() ?? 60,
+        'time': timeStr,
+        'staffId': staffId,
+        'staffName': staffName,
+      };
+    }).toList();
+
     final bookingData = <String, dynamic>{
       'ownerUid': _ownerUid,
       'client': clientName,
       'clientEmail': email.isNotEmpty ? email : null,
       'clientPhone': phone.isNotEmpty ? phone : null,
       'notes': null,
-      'serviceId': service['id'],
-      'serviceName': service['name'],
+      'serviceId': serviceIds,
+      'serviceName': serviceNames,
       'staffId': staffId,
       'staffName': staffName,
       'branchId': _userBranchId,
       'branchName': _selectedBranchLabel,
       'date': dateStr,
       'time': timeStr,
-      'duration': (service['duration'] as num?)?.toInt() ?? 60,
+      'duration': _totalDuration,
       'status': 'Pending',
       'price': _totalPrice,
-      'services': [
-        {
-          'id': service['id'],
-          'name': service['name'],
-          'price': service['price'] ?? _totalPrice,
-          'duration': (service['duration'] as num?)?.toInt() ?? 60,
-          'time': timeStr,
-          'staffId': staffId,
-          'staffName': staffName,
-        }
-      ],
+      'services': servicesArray,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -453,7 +473,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
               setState(() {
                 _currentStep = 0;
                 _selectedBranchLabel = null;
-                _selectedServiceId = '';
+                _selectedServiceIds = {};
                 _selectedDate = null;
                 _selectedTime = null;
                 _selectedStaffId = 'any';
@@ -649,7 +669,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   }
 
   Widget _buildServiceCard(Map<String, dynamic> service) {
-    final isSelected = _selectedServiceId == service['id'];
+    final serviceId = service['id'];
+    final isSelected = _selectedServiceIds.contains(serviceId);
+    debugPrint('[ServiceCard] Building card for ${service['name']} (id: $serviceId), isSelected: $isSelected, selectedIds: $_selectedServiceIds');
     final Color color = AppColors.primary;
     final int durationMinutes =
         (service['duration'] is num) ? (service['duration'] as num).toInt() : 0;
@@ -663,7 +685,11 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             : null;
 
     return GestureDetector(
-      onTap: () => _selectService(service['id']),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        debugPrint('[ServiceCard] Tapped: ${service['name']} (id: $serviceId)');
+        _selectService(serviceId);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         decoration: BoxDecoration(
@@ -676,38 +702,70 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Large Image Section
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-              child: AspectRatio(
-                aspectRatio: 1.2,
-                child: imageUrl != null
-                    ? Image.network(
-                        imageUrl,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
-                          child: Center(
-                            child: Icon(
-                              FontAwesomeIcons.scissors,
-                              color: isSelected ? Colors.white : color,
-                              size: 32,
+            // Large Image Section with checkmark
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                  child: AspectRatio(
+                    aspectRatio: 1.2,
+                    child: imageUrl != null
+                        ? Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
+                              child: Center(
+                                child: Icon(
+                                  FontAwesomeIcons.scissors,
+                                  color: isSelected ? Colors.white : color,
+                                  size: 32,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Container(
+                            color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
+                            child: Center(
+                              child: Icon(
+                                FontAwesomeIcons.scissors,
+                                color: isSelected ? Colors.white : color,
+                                size: 32,
+                              ),
                             ),
                           ),
-                        ),
-                      )
-                    : Container(
-                        color: isSelected ? Colors.white.withOpacity(0.2) : color.withOpacity(0.1),
-                        child: Center(
-                          child: Icon(
-                            FontAwesomeIcons.scissors,
-                            color: isSelected ? Colors.white : color,
-                            size: 32,
+                  ),
+                ),
+                // Checkmark badge for selected services
+                if (isSelected)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
                           ),
+                        ],
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.check,
+                          color: AppColors.primary,
+                          size: 16,
                         ),
                       ),
-              ),
+                    ),
+                  ),
+              ],
             ),
             // Service Info Section
             Padding(
@@ -821,7 +879,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     VoidCallback? onPrimary;
 
     final canStep0Next =
-        _selectedBranchLabel != null && _selectedServiceId.isNotEmpty;
+        _selectedBranchLabel != null && _selectedServiceIds.isNotEmpty;
     final canStep1Next =
         _selectedDate != null && _selectedTime != null;
 
@@ -959,12 +1017,34 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             const SizedBox(height: 12),
             _buildBranchSelector(),
             const SizedBox(height: 24),
-            const Text(
-              "Select Services",
-              style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.text),
+            Row(
+              children: [
+                const Text(
+                  "Select Services",
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text),
+                ),
+                if (_selectedServiceIds.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_selectedServiceIds.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 16),
             _buildServiceGrid(),
@@ -1035,7 +1115,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
                 _selectedBranchId = branch['id'] as String;
                 _selectedBranchLabel = name;
                 // Clear service selection when branch changes
-                _selectedServiceId = '';
+                _selectedServiceIds = {};
               });
             },
             child: Container(
@@ -1205,11 +1285,13 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
   Widget _buildSummaryCard() {
     final branch = _selectedBranchLabel ?? 'Not selected';
-    final service = _services.firstWhere(
-        (s) => s['id'] == _selectedServiceId,
-        orElse: () => {});
-    final serviceName =
-        service.isNotEmpty ? service['name'] as String : 'Not selected';
+    
+    // Get selected services
+    final selectedServices = _selectedServiceIds
+        .map((id) => _services.firstWhere((s) => s['id'] == id, orElse: () => {}))
+        .where((s) => s.isNotEmpty)
+        .toList();
+    
     final dateText = _selectedDate != null
         ? '${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}'
         : 'Not selected';
@@ -1242,7 +1324,33 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           ),
           const SizedBox(height: 12),
           _summaryRow('Branch', branch),
-          _summaryRow('Service', serviceName),
+          // Services section
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Services (${selectedServices.length})',
+                  style: const TextStyle(fontSize: 13, color: AppColors.muted),
+                ),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: selectedServices.isEmpty
+                        ? [const Text('Not selected', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text))]
+                        : selectedServices.map((s) => Text(
+                            '${s['name']} - \$${s['price']}',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text),
+                            textAlign: TextAlign.end,
+                          )).toList(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _summaryRow('Duration', '${_totalDuration}min'),
           _summaryRow('Date', dateText),
           _summaryRow('Time', timeText),
           _summaryRow(
