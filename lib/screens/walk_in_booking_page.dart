@@ -289,17 +289,24 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       }).toList();
 
       if (!mounted) return;
+      
+      // For branch admins, only show their own branch
+      List<Map<String, dynamic>> filteredBranches = branches;
+      if (_userRole == 'salon_branch_admin' && _userBranchId != null) {
+        filteredBranches = branches.where((b) => b['id'] == _userBranchId).toList();
+      }
+      
       setState(() {
-        _branches = branches;
+        _branches = filteredBranches;
         _services = services;
         _staff = [
           {'id': 'any', 'name': 'Any Staff', 'avatar': null},
           ...staff,
         ];
 
-        // Default branch for branch admins
+        // Auto-select branch for branch admins (they only have one option)
         if (_userRole == 'salon_branch_admin' && _userBranchId != null) {
-          final br = branches.firstWhere(
+          final br = filteredBranches.firstWhere(
               (b) => b['id'] == _userBranchId,
               orElse: () => {});
           if (br.isNotEmpty) {

@@ -221,8 +221,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
     }
 
-    final bool isOwner = _userRole == 'salon_owner';
-    final List<IconData> icons = isOwner ? kOwnerNavIcons : kDefaultNavIcons;
+    final bool isOwnerOrBranchAdmin = _userRole == 'salon_owner' || _userRole == 'salon_branch_admin';
+    final List<IconData> icons = isOwnerOrBranchAdmin ? kOwnerNavIcons : kDefaultNavIcons;
 
     return Scaffold(
       body: _navIndex == 0
@@ -273,10 +273,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildTabBody() {
-    final bool isOwner = _userRole == 'salon_owner';
+    final bool isOwnerOrBranchAdmin = _userRole == 'salon_owner' || _userRole == 'salon_branch_admin';
 
-    if (isOwner) {
-      // For salon owners: 3rd tab is Bookings, no Profile tab
+    if (isOwnerOrBranchAdmin) {
+      // For salon owners and branch admins: 3rd tab is Bookings, no Profile tab (profile in dashboard)
       switch (_navIndex) {
         case 1:
           return const CalenderScreen();
@@ -290,7 +290,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           return const SizedBox.shrink();
       }
     } else {
-      // Default mapping for staff / branch admins (includes Profile tab)
+      // Default mapping for staff (includes Profile tab)
       switch (_navIndex) {
         case 1:
           return const CalenderScreen();
