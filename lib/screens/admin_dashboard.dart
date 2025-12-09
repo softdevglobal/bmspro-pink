@@ -72,31 +72,43 @@ class AdminDashboard extends StatelessWidget {
     if (role == 'salon_owner') {
       leading = Row(
         children: [
-          GestureDetector(
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => Scaffold(
-                    backgroundColor: AppColors.background,
-                    body: const profile_screen.ProfileScreen(
-                      showBackButton: true,
+          Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => Scaffold(
+                      backgroundColor: AppColors.background,
+                      body: const profile_screen.ProfileScreen(
+                        showBackButton: true,
+                      ),
                     ),
                   ),
+                );
+              },
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.primary.withOpacity(0.08),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withOpacity(0.18),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-              );
-            },
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Center(
-                child: Icon(
-                  FontAwesomeIcons.user,
-                  size: 18,
-                  color: AppColors.primary,
+                child: const Center(
+                  child: Icon(
+                    FontAwesomeIcons.user,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
                 ),
               ),
             ),
