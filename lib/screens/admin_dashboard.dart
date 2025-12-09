@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'profile_screen.dart' as profile_screen;
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -36,7 +37,7 @@ class AdminDashboard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildHeader(),
+            _buildHeader(context),
             const SizedBox(height: 24),
             _buildKpiSection(),
             const SizedBox(height: 24),
@@ -51,7 +52,7 @@ class AdminDashboard extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
     String adminLabel = 'Admin';
     if (role == 'salon_owner') {
       adminLabel = 'Salon Owner';
@@ -63,6 +64,113 @@ class AdminDashboard extends StatelessWidget {
       }
     }
 
+    // Leading widget:
+    // - For salon owners: profile icon button on the far left, then the
+    //   "Dashboard" title/subtitle beside it.
+    // - For others: just the title/ subtitle column.
+    Widget leading;
+    if (role == 'salon_owner') {
+      leading = Row(
+        children: [
+          GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => Scaffold(
+                    backgroundColor: AppColors.background,
+                    body: const profile_screen.ProfileScreen(
+                      showBackButton: true,
+                    ),
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Center(
+                child: Icon(
+                  FontAwesomeIcons.user,
+                  size: 18,
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text(
+                'Dashboard',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text,
+                ),
+              ),
+              Text(
+                'Analytics & insights',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppColors.muted,
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    } else {
+      leading = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          Text(
+            'Dashboard',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: AppColors.text,
+            ),
+          ),
+          Text(
+            'Analytics & insights',
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.muted,
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Trailing widget: role pill ("Salon Owner", "Branch Admin", etc.)
+    final Widget trailing = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          const Icon(FontAwesomeIcons.userTie,
+              size: 14, color: AppColors.primary),
+          const SizedBox(width: 8),
+          Text(
+            adminLabel,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.primary,
+            ),
+          ),
+        ],
+      ),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -70,48 +178,8 @@ class AdminDashboard extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Dashboard',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.text,
-                  ),
-                ),
-                Text(
-                  'Analytics & insights',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.muted,
-                  ),
-                ),
-              ],
-            ),
-            // Logged in admin name on the right
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  const Icon(FontAwesomeIcons.userTie, size: 14, color: AppColors.primary),
-                  const SizedBox(width: 8),
-                  Text(
-                    adminLabel,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            leading,
+            trailing,
           ],
         ),
       ],

@@ -18,7 +18,9 @@ class AppColors {
 }
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({super.key, this.showBackButton = false});
+
+  final bool showBackButton;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -187,18 +189,37 @@ class _ProfileScreenState extends State<ProfileScreen>
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: Center(
-                      child: Text(
-                        'Profile',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.text,
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        if (widget.showBackButton)
+                          IconButton(
+                            icon: const Icon(
+                              FontAwesomeIcons.chevronLeft,
+                              size: 18,
+                              color: AppColors.text,
+                            ),
+                            onPressed: () => Navigator.of(context).pop(),
+                          )
+                        else
+                          const SizedBox(width: 40),
+                        const Expanded(
+                          child: Center(
+                            child: Text(
+                              'Profile',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.text,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 40),
+                      ],
                     ),
                   ),
                   _buildProfileHeader(),
