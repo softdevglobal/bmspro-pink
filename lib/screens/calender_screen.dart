@@ -245,6 +245,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
 
   Widget _buildHeader() {
     final bool isBranchAdmin = _currentUserRole == 'salon_branch_admin';
+    final bool isOwner = _currentUserRole == 'salon_owner';
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -255,7 +256,9 @@ class _CalenderScreenState extends State<CalenderScreen> {
             child: Column(
               children: [
                 Text(
-                  _isBranchView ? 'Branch Schedule' : 'My Schedule',
+                  isOwner
+                      ? 'Salon Schedule'
+                      : (_isBranchView ? 'Branch Schedule' : 'My Schedule'),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 24,
@@ -263,7 +266,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
                     color: AppConfig.text,
                   ),
                 ),
-                if (isBranchAdmin) ...[
+                if (isBranchAdmin && !isOwner) ...[
                   const SizedBox(height: 12),
                   _buildViewToggle(),
                 ],
@@ -556,13 +559,19 @@ class _CalenderScreenState extends State<CalenderScreen> {
       return _emptyState(FontAwesomeIcons.mugHot, "Enjoy your day off!");
     }
 
-    // Filter items based on view mode
+    // Filter items based on role & view mode
     final filteredItems = data.items.where((appt) {
-      if (_currentUserRole == 'salon_branch_admin' && _isBranchView) {
-        // Branch admin can see everything in branch view
-        return true; 
+      // Salon owner: always see full salon schedule
+      if (_currentUserRole == 'salon_owner') {
+        return true;
       }
-      // Otherwise (staff view or admin toggled to 'My Schedule'), only show 'me'
+
+      // Branch admin: in branch view see all, otherwise personal
+      if (_currentUserRole == 'salon_branch_admin' && _isBranchView) {
+        return true;
+      }
+
+      // Staff / default: only "my" appointments
       // In real app, compare appt.staffId == _currentUserId
       return appt.staffId == 'me';
     }).toList();
