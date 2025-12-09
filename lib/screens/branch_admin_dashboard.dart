@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'profile_screen.dart' as profile_screen;
 
 class AppColors {
@@ -19,31 +21,240 @@ class AppColors {
   static const orange = Color(0xFFF97316);
 }
 
-class BranchAdminDashboard extends StatelessWidget {
+class BranchAdminDashboard extends StatefulWidget {
   final String branchName;
 
   const BranchAdminDashboard({super.key, required this.branchName});
 
   @override
+  State<BranchAdminDashboard> createState() => _BranchAdminDashboardState();
+}
+
+class _BranchAdminDashboardState extends State<BranchAdminDashboard> {
+  bool _loading = true;
+  String? _branchId;
+  String? _ownerUid;
+
+  // KPI Data
+  double _totalRevenue = 0;
+  double _lastMonthRevenue = 0;
+  int _totalBookings = 0;
+  int _completedBookings = 0;
+  int _totalClients = 0;
+  int _returningClients = 0;
+  
+  // Staff data
+  List<Map<String, dynamic>> _staffPerformance = [];
+  
+  // Service breakdown
+  Map<String, double> _serviceRevenue = {};
+  
+  // Revenue by day (last 30 days)
+  List<double> _dailyRevenue = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      // Get user's branch and owner info
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        setState(() => _loading = false);
+        return;
+      }
+
+      final userData = userDoc.data()!;
+      _branchId = userData['branchId']?.toString();
+      _ownerUid = userData['ownerUid']?.toString() ?? user.uid;
+
+      if (_branchId == null || _branchId!.isEmpty) {
+        setState(() => _loading = false);
+        return;
+      }
+
+      // Fetch all bookings for this branch
+      final now = DateTime.now();
+      final thirtyDaysAgo = now.subtract(const Duration(days: 30));
+      final sixtyDaysAgo = now.subtract(const Duration(days: 60));
+
+      final bookingsSnap = await FirebaseFirestore.instance
+          .collection('bookings')
+          .where('ownerUid', isEqualTo: _ownerUid)
+          .where('branchId', isEqualTo: _branchId)
+          .get();
+
+      // Process bookings
+      double totalRevenue = 0;
+      double lastMonthRevenue = 0;
+      int completedBookings = 0;
+      Set<String> uniqueClients = {};
+      Map<String, int> clientBookingCount = {};
+      Map<String, double> serviceRevenue = {};
+      Map<String, double> staffRevenue = {};
+      Map<String, int> staffBookingCount = {};
+      List<double> dailyRevenue = List.filled(30, 0);
+
+      for (var doc in bookingsSnap.docs) {
+        final data = doc.data();
+        final price = (data['price'] as num?)?.toDouble() ?? 0;
+        final status = (data['status'] ?? '').toString().toLowerCase();
+        final dateStr = (data['date'] ?? '').toString();
+        final client = (data['client'] ?? '').toString();
+        final serviceName = (data['serviceName'] ?? '').toString();
+        final staffName = (data['staffName'] ?? 'Unassigned').toString();
+
+        // Parse date
+        DateTime? bookingDate;
+        try {
+          if (dateStr.isNotEmpty) {
+            bookingDate = DateTime.parse(dateStr);
+          }
+        } catch (_) {}
+
+        // Count completed bookings
+        if (status == 'completed' || status == 'confirmed') {
+          completedBookings++;
+          totalRevenue += price;
+
+          // Track client
+          if (client.isNotEmpty) {
+            uniqueClients.add(client.toLowerCase());
+            clientBookingCount[client.toLowerCase()] = 
+                (clientBookingCount[client.toLowerCase()] ?? 0) + 1;
+          }
+
+          // Service revenue
+          if (serviceName.isNotEmpty) {
+            // Split if multiple services
+            for (var svc in serviceName.split(',')) {
+              final svcName = svc.trim();
+              if (svcName.isNotEmpty) {
+                serviceRevenue[svcName] = (serviceRevenue[svcName] ?? 0) + (price / serviceName.split(',').length);
+              }
+            }
+          }
+
+          // Staff performance
+          if (staffName.isNotEmpty && staffName != 'Any Available' && staffName != 'Multiple Staff') {
+            staffRevenue[staffName] = (staffRevenue[staffName] ?? 0) + price;
+            staffBookingCount[staffName] = (staffBookingCount[staffName] ?? 0) + 1;
+          }
+
+          // Daily revenue (last 30 days)
+          if (bookingDate != null && bookingDate.isAfter(thirtyDaysAgo)) {
+            final dayIndex = now.difference(bookingDate).inDays;
+            if (dayIndex >= 0 && dayIndex < 30) {
+              dailyRevenue[29 - dayIndex] += price;
+            }
+          }
+
+          // Last month revenue (30-60 days ago)
+          if (bookingDate != null && 
+              bookingDate.isAfter(sixtyDaysAgo) && 
+              bookingDate.isBefore(thirtyDaysAgo)) {
+            lastMonthRevenue += price;
+          }
+        }
+      }
+
+      // Calculate returning clients
+      int returningClients = clientBookingCount.values.where((c) => c > 1).length;
+
+      // Build staff performance list
+      List<Map<String, dynamic>> staffPerformance = [];
+      staffRevenue.forEach((name, revenue) {
+        staffPerformance.add({
+          'name': name,
+          'revenue': revenue,
+          'bookings': staffBookingCount[name] ?? 0,
+        });
+      });
+      staffPerformance.sort((a, b) => (b['revenue'] as double).compareTo(a['revenue'] as double));
+
+      if (mounted) {
+        setState(() {
+          _totalRevenue = totalRevenue;
+          _lastMonthRevenue = lastMonthRevenue;
+          _totalBookings = bookingsSnap.docs.length;
+          _completedBookings = completedBookings;
+          _totalClients = uniqueClients.length;
+          _returningClients = returningClients;
+          _serviceRevenue = serviceRevenue;
+          _staffPerformance = staffPerformance.take(5).toList();
+          _dailyRevenue = dailyRevenue;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading dashboard data: $e');
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  double get _revenueGrowth {
+    if (_lastMonthRevenue == 0) return 0;
+    return ((_totalRevenue - _lastMonthRevenue) / _lastMonthRevenue) * 100;
+  }
+
+  double get _clientRetention {
+    if (_totalClients == 0) return 0;
+    return (_returningClients / _totalClients) * 100;
+  }
+
+  double get _avgTicketValue {
+    if (_completedBookings == 0) return 0;
+    return _totalRevenue / _completedBookings;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const SafeArea(
+        child: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
+    }
+
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(context),
-            const SizedBox(height: 24),
-            _buildKpiSection(),
-            const SizedBox(height: 24),
-            _buildRevenueChartSection(),
-            const SizedBox(height: 24),
-            _buildServiceBreakdownSection(),
-            const SizedBox(height: 24),
-            _buildStaffPerformanceSection(),
-            const SizedBox(height: 24),
-            _buildInsightsSection(),
-          ],
+      child: RefreshIndicator(
+        onRefresh: _loadData,
+        color: AppColors.primary,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildHeader(context),
+              const SizedBox(height: 24),
+              _buildKpiSection(),
+              const SizedBox(height: 24),
+              _buildRevenueChartSection(),
+              const SizedBox(height: 24),
+              _buildServiceBreakdownSection(),
+              const SizedBox(height: 24),
+              _buildStaffPerformanceSection(),
+              const SizedBox(height: 24),
+              _buildInsightsSection(),
+            ],
+          ),
         ),
       ),
     );
@@ -58,13 +269,10 @@ class BranchAdminDashboard extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             // Profile button + Dashboard title
-            Row(
-              children: [
-                Material(
-                  color: Colors.transparent,
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
+            Expanded(
+              child: Row(
+                children: [
+                  GestureDetector(
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
@@ -78,15 +286,19 @@ class BranchAdminDashboard extends StatelessWidget {
                       );
                     },
                     child: Container(
-                      width: 40,
-                      height: 40,
+                      width: 44,
+                      height: 44,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: AppColors.primary.withOpacity(0.08),
+                        color: AppColors.primary.withOpacity(0.15),
+                        border: Border.all(
+                          color: AppColors.primary.withOpacity(0.3),
+                          width: 2,
+                        ),
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.primary.withOpacity(0.18),
-                            blurRadius: 10,
+                            color: AppColors.primary.withOpacity(0.2),
+                            blurRadius: 12,
                             offset: const Offset(0, 4),
                           ),
                         ],
@@ -100,45 +312,48 @@ class BranchAdminDashboard extends StatelessWidget {
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
-                      'Dashboard',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.text,
-                      ),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text(
+                          'Dashboard',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.text,
+                          ),
+                        ),
+                        Text(
+                          'Analytics & insights',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ],
                     ),
-                    Text(
-                      'Analytics & insights',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.muted,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
             // Logged in admin name on the right
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: AppColors.primary.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(FontAwesomeIcons.userTie, size: 14, color: AppColors.primary),
-                  const SizedBox(width: 8),
+                  const Icon(FontAwesomeIcons.userTie, size: 12, color: AppColors.primary),
+                  const SizedBox(width: 6),
                   Text(
-                    '$branchName Admin',
+                    '${widget.branchName} Admin',
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: AppColors.primary,
                     ),
@@ -153,6 +368,9 @@ class BranchAdminDashboard extends StatelessWidget {
   }
 
   Widget _buildKpiSection() {
+    final growthPercent = _revenueGrowth;
+    final isPositiveGrowth = growthPercent >= 0;
+
     return Column(
       children: [
         Row(
@@ -160,25 +378,24 @@ class BranchAdminDashboard extends StatelessWidget {
             Expanded(
               child: _buildKpiCard(
                 title: 'Total Revenue',
-                value: '\$12,450',
+                value: '\$${_totalRevenue.toStringAsFixed(0)}',
                 icon: FontAwesomeIcons.dollarSign,
                 iconColor: AppColors.green,
                 iconBg: AppColors.green.withOpacity(0.1),
-                trend: '+12%',
-                trendUp: true,
-                trendColor: AppColors.green,
+                trend: '${isPositiveGrowth ? '+' : ''}${growthPercent.toStringAsFixed(0)}%',
+                trendUp: isPositiveGrowth,
+                trendColor: isPositiveGrowth ? AppColors.green : Colors.red,
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: _buildKpiCard(
-                title: 'Staff Utilization',
-                value: '85%',
-                icon: FontAwesomeIcons.clock,
+                title: 'Bookings',
+                value: '$_completedBookings',
+                icon: FontAwesomeIcons.calendarCheck,
                 iconColor: AppColors.purple,
                 iconBg: AppColors.purple.withOpacity(0.1),
-                progressBarValue: 0.85,
-                progressBarColor: AppColors.purple,
+                subtitle: 'of $_totalBookings total',
               ),
             ),
           ],
@@ -189,17 +406,18 @@ class BranchAdminDashboard extends StatelessWidget {
             Expanded(
               child: _buildKpiCard(
                 title: 'Client Retention',
-                value: '68%',
+                value: '${_clientRetention.toStringAsFixed(0)}%',
                 icon: FontAwesomeIcons.heart,
                 iconColor: AppColors.blue,
                 iconBg: AppColors.blue.withOpacity(0.1),
+                subtitle: '$_returningClients returning',
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: _buildKpiCard(
                 title: 'Avg Ticket Value',
-                value: '\$95',
+                value: '\$${_avgTicketValue.toStringAsFixed(0)}',
                 icon: FontAwesomeIcons.ticket,
                 iconColor: AppColors.orange,
                 iconBg: AppColors.orange.withOpacity(0.1),
@@ -220,8 +438,7 @@ class BranchAdminDashboard extends StatelessWidget {
     String? trend,
     bool? trendUp,
     Color? trendColor,
-    double? progressBarValue,
-    Color? progressBarColor,
+    String? subtitle,
   }) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -291,15 +508,13 @@ class BranchAdminDashboard extends StatelessWidget {
               color: AppColors.text,
             ),
           ),
-          if (progressBarValue != null) ...[
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(99),
-              child: LinearProgressIndicator(
-                value: progressBarValue,
-                backgroundColor: Colors.grey.shade200,
-                color: progressBarColor,
-                minHeight: 6,
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.muted,
               ),
             ),
           ],
@@ -309,6 +524,24 @@ class BranchAdminDashboard extends StatelessWidget {
   }
 
   Widget _buildRevenueChartSection() {
+    // Convert daily revenue to chart spots (sample every 5 days for cleaner chart)
+    List<FlSpot> spots = [];
+    for (int i = 0; i < 7; i++) {
+      final dayIndex = i * 4; // 0, 4, 8, 12, 16, 20, 24
+      if (dayIndex < _dailyRevenue.length) {
+        // Sum revenue for a few days around this point
+        double sum = 0;
+        for (int j = dayIndex; j < dayIndex + 4 && j < _dailyRevenue.length; j++) {
+          sum += _dailyRevenue[j];
+        }
+        spots.add(FlSpot(i.toDouble(), sum / 100)); // Scale down for chart
+      }
+    }
+
+    if (spots.isEmpty) {
+      spots = [const FlSpot(0, 0), const FlSpot(1, 0)];
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -342,7 +575,7 @@ class BranchAdminDashboard extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           SizedBox(
-            height: 250,
+            height: 200,
             child: LineChart(
               LineChartData(
                 gridData: const FlGridData(show: false),
@@ -370,15 +603,7 @@ class BranchAdminDashboard extends StatelessWidget {
                 borderData: FlBorderData(show: false),
                 lineBarsData: [
                   LineChartBarData(
-                    spots: const [
-                      FlSpot(0, 3.2),
-                      FlSpot(1, 4.5),
-                      FlSpot(2, 3.8),
-                      FlSpot(3, 5.2),
-                      FlSpot(4, 4.8),
-                      FlSpot(5, 6.5),
-                      FlSpot(6, 7.2),
-                    ],
+                    spots: spots,
                     isCurved: true,
                     color: AppColors.green,
                     barWidth: 3,
@@ -398,6 +623,62 @@ class BranchAdminDashboard extends StatelessWidget {
   }
 
   Widget _buildServiceBreakdownSection() {
+    if (_serviceRevenue.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade100),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Icon(FontAwesomeIcons.chartPie, color: AppColors.primary, size: 16),
+                const SizedBox(width: 8),
+                const Text(
+                  'Revenue by Service Type',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.text),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const Text('No service data available', style: TextStyle(color: AppColors.muted)),
+          ],
+        ),
+      );
+    }
+
+    // Calculate percentages
+    final total = _serviceRevenue.values.fold(0.0, (a, b) => a + b);
+    final sortedServices = _serviceRevenue.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final topServices = sortedServices.take(4).toList();
+
+    final colors = [
+      const Color(0xFFEC4899),
+      const Color(0xFF8B5CF6),
+      const Color(0xFF10B981),
+      const Color(0xFFF59E0B),
+    ];
+
+    List<PieChartSectionData> sections = [];
+    List<Widget> legends = [];
+
+    for (int i = 0; i < topServices.length; i++) {
+      final entry = topServices[i];
+      final percent = (entry.value / total) * 100;
+      sections.add(PieChartSectionData(
+        color: colors[i % colors.length],
+        value: percent,
+        title: '${percent.toStringAsFixed(0)}%',
+        radius: 50,
+        titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+      ));
+      legends.add(_buildLegendItem(colors[i % colors.length], entry.key));
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -436,36 +717,7 @@ class BranchAdminDashboard extends StatelessWidget {
               PieChartData(
                 sectionsSpace: 0,
                 centerSpaceRadius: 40,
-                sections: [
-                  PieChartSectionData(
-                    color: const Color(0xFFEC4899), // Hair
-                    value: 45,
-                    title: '45%',
-                    radius: 50,
-                    titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                  PieChartSectionData(
-                    color: const Color(0xFF8B5CF6), // Nail
-                    value: 30,
-                    title: '30%',
-                    radius: 50,
-                    titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                  PieChartSectionData(
-                    color: const Color(0xFF10B981), // Massage
-                    value: 15,
-                    title: '15%',
-                    radius: 50,
-                    titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                  PieChartSectionData(
-                    color: const Color(0xFFF59E0B), // Retail
-                    value: 10,
-                    title: '10%',
-                    radius: 50,
-                    titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                ],
+                sections: sections,
               ),
             ),
           ),
@@ -474,12 +726,7 @@ class BranchAdminDashboard extends StatelessWidget {
             spacing: 16,
             runSpacing: 8,
             alignment: WrapAlignment.center,
-            children: [
-              _buildLegendItem(const Color(0xFFEC4899), 'Hair Services'),
-              _buildLegendItem(const Color(0xFF8B5CF6), 'Nail Services'),
-              _buildLegendItem(const Color(0xFF10B981), 'Massage'),
-              _buildLegendItem(const Color(0xFFF59E0B), 'Retail'),
-            ],
+            children: legends,
           ),
         ],
       ),
@@ -497,7 +744,7 @@ class BranchAdminDashboard extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Text(
-          text,
+          text.length > 15 ? '${text.substring(0, 15)}...' : text,
           style: const TextStyle(fontSize: 10, color: AppColors.muted),
         ),
       ],
@@ -537,23 +784,24 @@ class BranchAdminDashboard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          _buildStaffItem(
-            'Sarah Johnson',
-            '\$4,250 • 28 services • 4.9★',
-            1,
-            Colors.yellow.shade50,
-            Colors.yellow.shade100,
-            AppColors.yellow,
-          ),
-          const SizedBox(height: 12),
-          _buildStaffItem(
-            'Mike Chen',
-            '\$3,180 • 22 services • 4.7★',
-            2,
-            Colors.grey.shade50,
-            Colors.transparent,
-            Colors.grey.shade400,
-          ),
+          if (_staffPerformance.isEmpty)
+            const Text('No staff performance data', style: TextStyle(color: AppColors.muted))
+          else
+            ...List.generate(_staffPerformance.length, (index) {
+              final staff = _staffPerformance[index];
+              final isFirst = index == 0;
+              return Padding(
+                padding: EdgeInsets.only(bottom: index < _staffPerformance.length - 1 ? 12 : 0),
+                child: _buildStaffItem(
+                  staff['name'],
+                  '\$${(staff['revenue'] as double).toStringAsFixed(0)} • ${staff['bookings']} services',
+                  index + 1,
+                  isFirst ? Colors.yellow.shade50 : Colors.grey.shade50,
+                  isFirst ? Colors.yellow.shade100 : Colors.transparent,
+                  isFirst ? AppColors.yellow : Colors.grey.shade400,
+                ),
+              );
+            }),
         ],
       ),
     );
@@ -576,14 +824,14 @@ class BranchAdminDashboard extends StatelessWidget {
               CircleAvatar(
                 radius: 20,
                 backgroundColor: Colors.grey.shade200,
-                child: Text(name[0], style: const TextStyle(color: AppColors.text)),
+                child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?', style: const TextStyle(color: AppColors.text)),
               ),
               const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    name,
+                    name.length > 20 ? '${name.substring(0, 20)}...' : name,
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -625,6 +873,69 @@ class BranchAdminDashboard extends StatelessWidget {
   }
 
   Widget _buildInsightsSection() {
+    // Generate dynamic insights based on data
+    List<Map<String, dynamic>> insights = [];
+
+    // Revenue insight
+    if (_revenueGrowth > 0) {
+      insights.add({
+        'title': 'Revenue Growth',
+        'description': '${_revenueGrowth.toStringAsFixed(0)}% increase compared to last month',
+        'icon': FontAwesomeIcons.arrowUp,
+        'iconColor': Colors.green.shade500,
+        'bgColor': Colors.green.shade50,
+      });
+    } else if (_revenueGrowth < 0) {
+      insights.add({
+        'title': 'Revenue Decline',
+        'description': '${_revenueGrowth.abs().toStringAsFixed(0)}% decrease compared to last month',
+        'icon': FontAwesomeIcons.arrowDown,
+        'iconColor': Colors.red.shade500,
+        'bgColor': Colors.red.shade50,
+      });
+    }
+
+    // Top service insight
+    if (_serviceRevenue.isNotEmpty) {
+      final topService = _serviceRevenue.entries.reduce((a, b) => a.value > b.value ? a : b);
+      insights.add({
+        'title': 'Top Service',
+        'description': '${topService.key} generates most revenue',
+        'icon': FontAwesomeIcons.star,
+        'iconColor': Colors.blue.shade500,
+        'bgColor': Colors.blue.shade50,
+      });
+    }
+
+    // Client retention insight
+    if (_clientRetention > 50) {
+      insights.add({
+        'title': 'Great Retention',
+        'description': '${_clientRetention.toStringAsFixed(0)}% of clients are returning customers',
+        'icon': FontAwesomeIcons.heart,
+        'iconColor': Colors.pink.shade500,
+        'bgColor': Colors.pink.shade50,
+      });
+    } else if (_totalClients > 0) {
+      insights.add({
+        'title': 'Retention Opportunity',
+        'description': 'Consider loyalty programs to increase repeat visits',
+        'icon': FontAwesomeIcons.circleExclamation,
+        'iconColor': Colors.orange.shade500,
+        'bgColor': Colors.orange.shade50,
+      });
+    }
+
+    if (insights.isEmpty) {
+      insights.add({
+        'title': 'Getting Started',
+        'description': 'Complete more bookings to see insights',
+        'icon': FontAwesomeIcons.lightbulb,
+        'iconColor': Colors.blue.shade500,
+        'bgColor': Colors.blue.shade50,
+      });
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -657,29 +968,20 @@ class BranchAdminDashboard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          _buildInsightItem(
-            'Revenue Growth',
-            '12% increase compared to last month',
-            FontAwesomeIcons.arrowUp,
-            Colors.green.shade500,
-            Colors.green.shade50,
-          ),
-          const SizedBox(height: 12),
-          _buildInsightItem(
-            'Peak Hours',
-            '2:00 PM - 5:00 PM shows highest bookings',
-            FontAwesomeIcons.star,
-            Colors.blue.shade500,
-            Colors.blue.shade50,
-          ),
-          const SizedBox(height: 12),
-          _buildInsightItem(
-            'Service Gap',
-            'Consider adding nail services to increase revenue',
-            FontAwesomeIcons.circleExclamation,
-            Colors.orange.shade500,
-            Colors.orange.shade50,
-          ),
+          ...insights.asMap().entries.map((entry) {
+            final index = entry.key;
+            final insight = entry.value;
+            return Padding(
+              padding: EdgeInsets.only(bottom: index < insights.length - 1 ? 12 : 0),
+              child: _buildInsightItem(
+                insight['title'],
+                insight['description'],
+                insight['icon'],
+                insight['iconColor'],
+                insight['bgColor'],
+              ),
+            );
+          }),
         ],
       ),
     );
@@ -734,4 +1036,3 @@ class BranchAdminDashboard extends StatelessWidget {
     );
   }
 }
-

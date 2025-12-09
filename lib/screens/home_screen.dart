@@ -100,7 +100,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (mounted && doc.exists) {
           final data = doc.data();
           setState(() {
-            _userRole = data?['role'];
+            // Trim and normalize the role to ensure proper comparison
+            final rawRole = data?['role'];
+            _userRole = rawRole != null ? rawRole.toString().trim() : null;
             // Try to find a branch name or branch field
             // Assuming 'branch' or 'branchName' exists in the user document
             _branchName = data?['branchName'] ?? data?['branch'];
