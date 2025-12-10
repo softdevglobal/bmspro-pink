@@ -110,11 +110,11 @@ class MorePage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // My Summary Section
+            // Summary Section
             _buildMenuCard(
               context,
               icon: FontAwesomeIcons.chartPie,
-              title: 'My Summary',
+              title: 'Summary',
               subtitle: 'View your performance & reports',
               gradientColors: [const Color(0xFFF59E0B), const Color(0xFFFBBF24)],
               onTap: () {
@@ -662,7 +662,7 @@ class _MySummaryPageState extends State<MySummaryPage> {
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
-          'My Summary',
+          'Summary',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
