@@ -351,7 +351,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> {
                   const Icon(FontAwesomeIcons.userTie, size: 12, color: AppColors.primary),
                   const SizedBox(width: 6),
                   Text(
-                    '${widget.branchName} Admin',
+                    widget.branchName.isNotEmpty ? '${widget.branchName} Admin' : 'Branch Admin',
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
