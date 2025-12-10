@@ -16,6 +16,7 @@ import 'walk_in_booking_page.dart';
 import 'admin_dashboard.dart';
 import 'branch_admin_dashboard.dart';
 import 'owner_bookings_page.dart';
+import 'more_page.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -38,13 +39,13 @@ const List<IconData> kDefaultNavIcons = <IconData>[
   Icons.person_rounded,
 ];
 
-// Salon owner navigation: replace profile with a dedicated booking tab in 3rd position
+// Salon owner navigation: Home, Calendar, Bookings, Clients, More
 const List<IconData> kOwnerNavIcons = <IconData>[
   Icons.home_rounded,
   Icons.calendar_month_rounded,
   Icons.calendar_today_rounded, // Bookings (3rd)
   Icons.groups_rounded,
-  Icons.bar_chart_rounded,
+  Icons.more_horiz_rounded, // More (5th)
 ];
 
 class HomeScreen extends StatefulWidget {
@@ -278,7 +279,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final bool isOwnerOrBranchAdmin = _userRole == 'salon_owner' || _userRole == 'salon_branch_admin';
 
     if (isOwnerOrBranchAdmin) {
-      // For salon owners and branch admins: 3rd tab is Bookings, no Profile tab (profile in dashboard)
+      // For salon owners and branch admins: 3rd tab is Bookings, 5th is More
       switch (_navIndex) {
         case 1:
           return const CalenderScreen();
@@ -287,7 +288,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         case 3:
           return const ClientsScreen();
         case 4:
-          return const ReportScreen();
+          return const MorePage(); // More page (5th)
         default:
           return const SizedBox.shrink();
       }
