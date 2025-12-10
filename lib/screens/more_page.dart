@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'services_page.dart';
 import 'staff_management_page.dart';
 import 'attendance_page.dart';
+import 'branches_page.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -355,39 +356,8 @@ class MorePage extends StatelessWidget {
 }
 
 // ============================================================================
-// OTHER SUB-PAGES (Placeholder)
+// OTHER SUB-PAGES
 // ============================================================================
-
-class BranchesPage extends StatelessWidget {
-  const BranchesPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text('Branches', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.text)),
-        centerTitle: true,
-      ),
-      body: const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(FontAwesomeIcons.building, size: 60, color: AppColors.muted),
-            SizedBox(height: 16),
-            Text('Coming soon...', style: TextStyle(color: AppColors.muted)),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class MySummaryPage extends StatefulWidget {
   const MySummaryPage({super.key});

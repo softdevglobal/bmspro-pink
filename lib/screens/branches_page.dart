@@ -1,0 +1,1825 @@
+import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class AppColors {
+  static const primary = Color(0xFFFF2D8F);
+  static const primaryDark = Color(0xFFD81F75);
+  static const accent = Color(0xFFFF6FB5);
+  static const background = Color(0xFFFFF5FA);
+  static const card = Colors.white;
+  static const text = Color(0xFF1A1A1A);
+  static const muted = Color(0xFF9E9E9E);
+  static const border = Color(0xFFF2D2E9);
+}
+
+// ============================================================================
+// MODELS
+// ============================================================================
+
+class BranchModel {
+  final String id;
+  final String name;
+  final String address;
+  final String? phone;
+  final String? email;
+  final String status;
+  final int? capacity;
+  final Map<String, dynamic>? hours;
+  final List<String> serviceIds;
+  final List<String> staffIds;
+  final String? adminStaffId;
+
+  BranchModel({
+    required this.id,
+    required this.name,
+    required this.address,
+    this.phone,
+    this.email,
+    required this.status,
+    this.capacity,
+    this.hours,
+    this.serviceIds = const [],
+    this.staffIds = const [],
+    this.adminStaffId,
+  });
+
+  factory BranchModel.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return BranchModel(
+      id: doc.id,
+      name: data['name'] ?? '',
+      address: data['address'] ?? '',
+      phone: data['phone'],
+      email: data['email'],
+      status: data['status'] ?? 'Active',
+      capacity: data['capacity'],
+      hours: data['hours'] as Map<String, dynamic>?,
+      serviceIds: List<String>.from(data['serviceIds'] ?? []),
+      staffIds: List<String>.from(data['staffIds'] ?? []),
+      adminStaffId: data['adminStaffId'],
+    );
+  }
+}
+
+class ServiceOption {
+  final String id;
+  final String name;
+
+  ServiceOption({required this.id, required this.name});
+}
+
+class StaffOption {
+  final String id;
+  final String name;
+  final String? role;
+  final String? status;
+  final String? avatar;
+  final Map<String, dynamic>? weeklySchedule;
+
+  StaffOption({
+    required this.id,
+    required this.name,
+    this.role,
+    this.status,
+    this.avatar,
+    this.weeklySchedule,
+  });
+}
+
+// ============================================================================
+// BRANCHES PAGE
+// ============================================================================
+
+class BranchesPage extends StatefulWidget {
+  const BranchesPage({super.key});
+
+  @override
+  State<BranchesPage> createState() => _BranchesPageState();
+}
+
+class _BranchesPageState extends State<BranchesPage> {
+  String? _ownerUid;
+  List<BranchModel> _branches = [];
+  List<ServiceOption> _services = [];
+  List<StaffOption> _staff = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _loading = true);
+
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      final role = userDoc.data()?['role'] ?? '';
+      String ownerUid = user.uid;
+
+      if (role == 'salon_branch_admin') {
+        ownerUid = userDoc.data()?['ownerUid'] ?? user.uid;
+      }
+
+      _ownerUid = ownerUid;
+
+      // Subscribe to branches
+      FirebaseFirestore.instance
+          .collection('branches')
+          .where('ownerUid', isEqualTo: ownerUid)
+          .snapshots()
+          .listen((snapshot) {
+        if (mounted) {
+          setState(() {
+            _branches = snapshot.docs
+                .map((doc) => BranchModel.fromFirestore(doc))
+                .toList();
+          });
+        }
+      });
+
+      // Subscribe to services
+      FirebaseFirestore.instance
+          .collection('services')
+          .where('ownerUid', isEqualTo: ownerUid)
+          .snapshots()
+          .listen((snapshot) {
+        if (mounted) {
+          setState(() {
+            _services = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return ServiceOption(
+                id: doc.id,
+                name: data['name'] ?? '',
+              );
+            }).toList();
+          });
+        }
+      });
+
+      // Subscribe to staff
+      FirebaseFirestore.instance
+          .collection('users')
+          .where('ownerUid', isEqualTo: ownerUid)
+          .snapshots()
+          .listen((snapshot) {
+        if (mounted) {
+          setState(() {
+            _staff = snapshot.docs
+                .where((doc) {
+                  final role = doc.data()['role'] ?? '';
+                  return role == 'salon_staff' || role == 'salon_branch_admin';
+                })
+                .map((doc) {
+                  final data = doc.data();
+                  return StaffOption(
+                    id: doc.id,
+                    name: data['displayName'] ?? data['name'] ?? '',
+                    role: data['staffRole'],
+                    status: data['status'],
+                    avatar: data['avatar'],
+                    weeklySchedule: data['weeklySchedule'] as Map<String, dynamic>?,
+                  );
+                })
+                .toList();
+          });
+        }
+      });
+
+      setState(() => _loading = false);
+    } catch (e) {
+      debugPrint('Error loading data: $e');
+      setState(() => _loading = false);
+    }
+  }
+
+  void _showAddBranchSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _BranchFormSheet(
+        ownerUid: _ownerUid!,
+        services: _services,
+        staff: _staff,
+        onSuccess: () {
+          Navigator.pop(context);
+          _showToast('Branch added successfully!');
+        },
+        onError: (msg) => _showToast(msg),
+      ),
+    );
+  }
+
+  void _showEditBranchSheet(BranchModel branch) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _BranchFormSheet(
+        ownerUid: _ownerUid!,
+        branch: branch,
+        services: _services,
+        staff: _staff,
+        onSuccess: () {
+          Navigator.pop(context);
+          _showToast('Branch updated successfully!');
+        },
+        onError: (msg) => _showToast(msg),
+      ),
+    );
+  }
+
+  void _showBranchPreview(BranchModel branch) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _BranchPreviewSheet(
+        branch: branch,
+        services: _services,
+        staff: _staff,
+        onEdit: () {
+          Navigator.pop(context);
+          _showEditBranchSheet(branch);
+        },
+      ),
+    );
+  }
+
+  void _confirmDelete(BranchModel branch) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.red.shade100,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(FontAwesomeIcons.triangleExclamation,
+                  color: Colors.red.shade600, size: 18),
+            ),
+            const SizedBox(width: 12),
+            const Text('Delete Branch?', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to delete "${branch.name}"? This action cannot be undone.',
+          style: const TextStyle(color: AppColors.muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.muted)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _deleteBranch(branch);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteBranch(BranchModel branch) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('branches')
+          .doc(branch.id)
+          .delete();
+      _showToast('Branch deleted');
+    } catch (e) {
+      _showToast('Failed to delete branch');
+    }
+  }
+
+  void _showToast(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(FontAwesomeIcons.circleCheck, color: Colors.white, size: 16),
+            const SizedBox(width: 10),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'Branches',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: AppColors.text,
+          ),
+        ),
+        centerTitle: true,
+        actions: [
+          if (_ownerUid != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: GestureDetector(
+                onTap: _showAddBranchSheet,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF10B981), Color(0xFF34D399)],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF10B981).withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(FontAwesomeIcons.plus, color: Colors.white, size: 12),
+                      SizedBox(width: 6),
+                      Text(
+                        'Add',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          : _branches.isEmpty
+              ? _buildEmptyState()
+              : _buildBranchesList(),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF10B981), Color(0xFF34D399)],
+              ),
+              borderRadius: BorderRadius.circular(25),
+            ),
+            child: const Icon(FontAwesomeIcons.building, color: Colors.white, size: 40),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'No Branches Yet',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Add your first branch location',
+            style: TextStyle(fontSize: 14, color: AppColors.muted),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _showAddBranchSheet,
+            icon: const Icon(FontAwesomeIcons.plus, size: 14),
+            label: const Text('Add Branch'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF10B981),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBranchesList() {
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      color: AppColors.primary,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _branches.length,
+        itemBuilder: (context, index) {
+          final branch = _branches[index];
+          return _buildBranchCard(branch);
+        },
+      ),
+    );
+  }
+
+  Widget _buildBranchCard(BranchModel branch) {
+    final isOpen = _isBranchOpen(branch.hours);
+    final statusColor = _getStatusColor(branch.status);
+    
+    // Calculate staff count based on weeklySchedule
+    final staffCount = _staff.where((s) {
+      final schedule = s.weeklySchedule;
+      if (schedule == null) return false;
+      return schedule.values.any((day) {
+        if (day is Map) {
+          return day['branchId'] == branch.id;
+        }
+        return false;
+      });
+    }).length;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Header with gradient
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  const Color(0xFF10B981).withOpacity(0.1),
+                  const Color(0xFF34D399).withOpacity(0.05),
+                ],
+              ),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF10B981), Color(0xFF34D399)],
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(FontAwesomeIcons.building, color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              branch.name,
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.text,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: statusColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  branch.status,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: statusColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(FontAwesomeIcons.locationDot, size: 11, color: Colors.grey.shade500),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              branch.address,
+                              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Info Section
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                // Stats Row
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatItem(
+                        FontAwesomeIcons.clock,
+                        isOpen ? 'Open Now' : 'Closed',
+                        isOpen ? Colors.green : Colors.red,
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildStatItem(
+                        FontAwesomeIcons.scissors,
+                        '${branch.serviceIds.length} Services',
+                        const Color(0xFF8B5CF6),
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildStatItem(
+                        FontAwesomeIcons.users,
+                        '$staffCount Staff',
+                        const Color(0xFF3B82F6),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                // Action Buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showBranchPreview(branch),
+                        icon: const Icon(FontAwesomeIcons.eye, size: 12),
+                        label: const Text('View'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF10B981),
+                          side: BorderSide(color: const Color(0xFF10B981).withOpacity(0.3)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showEditBranchSheet(branch),
+                        icon: const Icon(FontAwesomeIcons.penToSquare, size: 12),
+                        label: const Text('Edit'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF3B82F6),
+                          side: BorderSide(color: const Color(0xFF3B82F6).withOpacity(0.3)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 44,
+                      child: OutlinedButton(
+                        onPressed: () => _confirmDelete(branch),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red.shade400,
+                          side: BorderSide(color: Colors.red.shade200),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: Icon(FontAwesomeIcons.trash, size: 12, color: Colors.red.shade400),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatItem(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isBranchOpen(Map<String, dynamic>? hours) {
+    if (hours == null) return false;
+    final now = DateTime.now();
+    final dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    final today = dayNames[now.weekday - 1];
+    final todayHours = hours[today];
+    if (todayHours == null || todayHours['closed'] == true) return false;
+    
+    final openTime = todayHours['open'] as String?;
+    final closeTime = todayHours['close'] as String?;
+    if (openTime == null || closeTime == null) return false;
+
+    final openParts = openTime.split(':');
+    final closeParts = closeTime.split(':');
+    final openMinutes = int.parse(openParts[0]) * 60 + int.parse(openParts[1]);
+    final closeMinutes = int.parse(closeParts[0]) * 60 + int.parse(closeParts[1]);
+    final nowMinutes = now.hour * 60 + now.minute;
+
+    return nowMinutes >= openMinutes && nowMinutes <= closeMinutes;
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Active':
+        return Colors.green;
+      case 'Pending':
+        return Colors.orange;
+      case 'Closed':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+}
+
+// ============================================================================
+// BRANCH FORM SHEET (ADD/EDIT)
+// ============================================================================
+
+class _BranchFormSheet extends StatefulWidget {
+  final String ownerUid;
+  final BranchModel? branch;
+  final List<ServiceOption> services;
+  final List<StaffOption> staff;
+  final VoidCallback onSuccess;
+  final Function(String) onError;
+
+  const _BranchFormSheet({
+    required this.ownerUid,
+    this.branch,
+    required this.services,
+    required this.staff,
+    required this.onSuccess,
+    required this.onError,
+  });
+
+  @override
+  State<_BranchFormSheet> createState() => _BranchFormSheetState();
+}
+
+class _BranchFormSheetState extends State<_BranchFormSheet> {
+  final _formKey = GlobalKey<FormState>();
+  late TextEditingController _nameController;
+  late TextEditingController _addressController;
+  late TextEditingController _phoneController;
+  late TextEditingController _emailController;
+  late TextEditingController _capacityController;
+
+  bool _saving = false;
+  late String _status;
+  late Map<String, Map<String, dynamic>> _hours;
+  late Set<String> _selectedServices;
+
+  @override
+  void initState() {
+    super.initState();
+    final branch = widget.branch;
+    _nameController = TextEditingController(text: branch?.name ?? '');
+    _addressController = TextEditingController(text: branch?.address ?? '');
+    _phoneController = TextEditingController(text: branch?.phone ?? '');
+    _emailController = TextEditingController(text: branch?.email ?? '');
+    _capacityController = TextEditingController(text: branch?.capacity?.toString() ?? '');
+    _status = branch?.status ?? 'Active';
+    _selectedServices = Set.from(branch?.serviceIds ?? []);
+
+    // Initialize hours
+    _hours = {
+      'Monday': {'open': '09:00', 'close': '17:00', 'closed': false},
+      'Tuesday': {'open': '09:00', 'close': '17:00', 'closed': false},
+      'Wednesday': {'open': '09:00', 'close': '17:00', 'closed': false},
+      'Thursday': {'open': '09:00', 'close': '17:00', 'closed': false},
+      'Friday': {'open': '09:00', 'close': '17:00', 'closed': false},
+      'Saturday': {'open': '10:00', 'close': '16:00', 'closed': false},
+      'Sunday': {'open': '10:00', 'close': '16:00', 'closed': true},
+    };
+
+    if (branch?.hours != null) {
+      branch!.hours!.forEach((day, value) {
+        if (value is Map) {
+          _hours[day] = Map<String, dynamic>.from(value);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _addressController.dispose();
+    _phoneController.dispose();
+    _emailController.dispose();
+    _capacityController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveBranch() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _saving = true);
+
+    try {
+      final data = {
+        'name': _nameController.text.trim(),
+        'address': _addressController.text.trim(),
+        'phone': _phoneController.text.trim(),
+        'email': _emailController.text.trim(),
+        'capacity': int.tryParse(_capacityController.text) ?? 0,
+        'status': _status,
+        'hours': _hours,
+        'serviceIds': _selectedServices.toList(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (widget.branch == null) {
+        // Create new branch
+        data['ownerUid'] = widget.ownerUid;
+        data['createdAt'] = FieldValue.serverTimestamp();
+        data['staffIds'] = [];
+
+        await FirebaseFirestore.instance.collection('branches').add(data);
+      } else {
+        // Update existing branch
+        await FirebaseFirestore.instance
+            .collection('branches')
+            .doc(widget.branch!.id)
+            .update(data);
+      }
+
+      widget.onSuccess();
+    } catch (e) {
+      debugPrint('Error saving branch: $e');
+      widget.onError('Failed to save branch');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEditing = widget.branch != null;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.9,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF10B981), Color(0xFF34D399)],
+              ),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    isEditing ? FontAwesomeIcons.penToSquare : FontAwesomeIcons.building,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    isEditing ? 'Edit Branch' : 'Add Branch',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+          // Form
+          Expanded(
+            child: Form(
+              key: _formKey,
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  // Basic Info
+                  _buildSectionCard(
+                    title: 'Basic Information',
+                    icon: FontAwesomeIcons.building,
+                    iconColor: const Color(0xFF10B981),
+                    children: [
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: _inputDecoration('Branch Name', 'e.g. Melbourne Branch'),
+                        validator: (v) => v!.isEmpty ? 'Required' : null,
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _addressController,
+                        decoration: _inputDecoration('Address', 'Full address'),
+                        validator: (v) => v!.isEmpty ? 'Required' : null,
+                        maxLines: 2,
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _phoneController,
+                              decoration: _inputDecoration('Phone', '(03) 1234 5678'),
+                              keyboardType: TextInputType.phone,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _capacityController,
+                              decoration: _inputDecoration('Capacity', '10'),
+                              keyboardType: TextInputType.number,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _emailController,
+                        decoration: _inputDecoration('Email', 'branch@example.com'),
+                        keyboardType: TextInputType.emailAddress,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Status
+                  _buildSectionCard(
+                    title: 'Status',
+                    icon: FontAwesomeIcons.toggleOn,
+                    iconColor: _getStatusColor(_status),
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: ['Active', 'Pending', 'Closed'].map((status) {
+                          final isSelected = _status == status;
+                          final color = _getStatusColor(status);
+                          return GestureDetector(
+                            onTap: () => setState(() => _status = status),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isSelected ? color.withOpacity(0.1) : Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: isSelected ? color : Colors.grey.shade300,
+                                  width: isSelected ? 2 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: isSelected ? color : Colors.grey.shade300,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    status,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: isSelected ? color : Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Operating Hours
+                  _buildSectionCard(
+                    title: 'Operating Hours',
+                    icon: FontAwesomeIcons.clock,
+                    iconColor: const Color(0xFF8B5CF6),
+                    children: [
+                      ..._hours.keys.map((day) => _buildHoursRow(day)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Services
+                  _buildSectionCard(
+                    title: 'Available Services',
+                    icon: FontAwesomeIcons.scissors,
+                    iconColor: const Color(0xFFEC4899),
+                    children: [
+                      if (widget.services.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text('No services available', style: TextStyle(color: AppColors.muted)),
+                        )
+                      else
+                        ...widget.services.map((service) => CheckboxListTile(
+                          value: _selectedServices.contains(service.id),
+                          onChanged: (v) {
+                            setState(() {
+                              if (v == true) {
+                                _selectedServices.add(service.id);
+                              } else {
+                                _selectedServices.remove(service.id);
+                              }
+                            });
+                          },
+                          title: Text(service.name, style: const TextStyle(fontSize: 14)),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          dense: true,
+                          activeColor: const Color(0xFFEC4899),
+                          contentPadding: EdgeInsets.zero,
+                        )),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+          // Save Button
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _saving ? null : _saveBranch,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                child: _saving
+                    ? const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          ),
+                          SizedBox(width: 12),
+                          Text('Saving...', style: TextStyle(color: Colors.white, fontSize: 16)),
+                        ],
+                      )
+                    : Text(
+                        isEditing ? 'Save Changes' : 'Add Branch',
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required String title,
+    required IconData icon,
+    required Color iconColor,
+    required List<Widget> children,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: iconColor),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHoursRow(String day) {
+    final dayHours = _hours[day]!;
+    final isClosed = dayHours['closed'] == true;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 60,
+            child: Text(
+              day.substring(0, 3),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isClosed ? Colors.grey.shade400 : AppColors.text,
+              ),
+            ),
+          ),
+          Expanded(
+            child: isClosed
+                ? Text('Closed', style: TextStyle(fontSize: 13, color: Colors.grey.shade400))
+                : Row(
+                    children: [
+                      _buildTimeDropdown(day, 'open'),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Text('-', style: TextStyle(color: AppColors.muted)),
+                      ),
+                      _buildTimeDropdown(day, 'close'),
+                    ],
+                  ),
+          ),
+          Switch(
+            value: !isClosed,
+            onChanged: (v) {
+              setState(() {
+                _hours[day]!['closed'] = !v;
+              });
+            },
+            activeColor: const Color(0xFF10B981),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeDropdown(String day, String type) {
+    final times = List.generate(24, (i) {
+      final h = i.toString().padLeft(2, '0');
+      return ['$h:00', '$h:30'];
+    }).expand((e) => e).toList();
+
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: _hours[day]![type] as String,
+        icon: const Icon(FontAwesomeIcons.chevronDown, size: 10),
+        style: const TextStyle(fontSize: 13, color: AppColors.text),
+        items: times.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+        onChanged: (v) {
+          if (v != null) {
+            setState(() {
+              _hours[day]![type] = v;
+            });
+          }
+        },
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Active':
+        return Colors.green;
+      case 'Pending':
+        return Colors.orange;
+      case 'Closed':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  InputDecoration _inputDecoration(String label, String hint) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF10B981), width: 2),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    );
+  }
+}
+
+// ============================================================================
+// BRANCH PREVIEW SHEET
+// ============================================================================
+
+class _BranchPreviewSheet extends StatelessWidget {
+  final BranchModel branch;
+  final List<ServiceOption> services;
+  final List<StaffOption> staff;
+  final VoidCallback onEdit;
+
+  const _BranchPreviewSheet({
+    required this.branch,
+    required this.services,
+    required this.staff,
+    required this.onEdit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final branchServices = services.where((s) => branch.serviceIds.contains(s.id)).toList();
+    
+    // Filter staff who work at this branch based on their weeklySchedule
+    final branchStaff = staff.where((s) {
+      final schedule = s.weeklySchedule;
+      if (schedule == null) return false;
+      // Check if any day in their schedule is for this branch
+      return schedule.values.any((day) {
+        if (day is Map) {
+          return day['branchId'] == branch.id;
+        }
+        return false;
+      });
+    }).toList();
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.9,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF10B981), Color(0xFF34D399)],
+              ),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(FontAwesomeIcons.building, color: Colors.white, size: 16),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Branch Details',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+          // Content
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                // Basic Info
+                _buildSectionCard(
+                  title: 'Basic Information',
+                  icon: FontAwesomeIcons.building,
+                  iconColor: const Color(0xFF10B981),
+                  child: Column(
+                    children: [
+                      _buildDetailRow('Name', branch.name),
+                      const Divider(height: 20),
+                      _buildDetailRow('Address', branch.address),
+                      if (branch.phone != null && branch.phone!.isNotEmpty) ...[
+                        const Divider(height: 20),
+                        _buildDetailRow('Phone', branch.phone!),
+                      ],
+                      if (branch.email != null && branch.email!.isNotEmpty) ...[
+                        const Divider(height: 20),
+                        _buildDetailRow('Email', branch.email!),
+                      ],
+                      if (branch.capacity != null) ...[
+                        const Divider(height: 20),
+                        _buildDetailRow('Capacity', '${branch.capacity} seats'),
+                      ],
+                      const Divider(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Status', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: _getStatusColor(branch.status).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              branch.status,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: _getStatusColor(branch.status),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Operating Hours
+                _buildSectionCard(
+                  title: 'Operating Hours',
+                  icon: FontAwesomeIcons.clock,
+                  iconColor: const Color(0xFF8B5CF6),
+                  child: _buildHoursDisplay(),
+                ),
+                const SizedBox(height: 16),
+
+                // Services
+                _buildSectionCard(
+                  title: 'Services (${branchServices.length})',
+                  icon: FontAwesomeIcons.scissors,
+                  iconColor: const Color(0xFFEC4899),
+                  child: branchServices.isEmpty
+                      ? const Text('No services assigned', style: TextStyle(color: AppColors.muted))
+                      : Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: branchServices.map((s) => Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEC4899).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              s.name,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFFEC4899),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          )).toList(),
+                        ),
+                ),
+                const SizedBox(height: 16),
+
+                // Staff
+                _buildSectionCard(
+                  title: 'Staff (${branchStaff.length})',
+                  icon: FontAwesomeIcons.users,
+                  iconColor: const Color(0xFF3B82F6),
+                  child: branchStaff.isEmpty
+                      ? const Text('No staff assigned', style: TextStyle(color: AppColors.muted))
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Legend
+                            Row(
+                              children: [
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFF10B981),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text('Working Day', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                  ],
+                                ),
+                                const SizedBox(width: 16),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade300,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text('Off Day', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // Staff list
+                            ...branchStaff.map((s) => _buildStaffWithDays(s, branch.id)).toList(),
+                          ],
+                        ),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+          // Bottom Button
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: onEdit,
+                icon: const Icon(FontAwesomeIcons.penToSquare, size: 14),
+                label: const Text('Edit Branch', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required String title,
+    required IconData icon,
+    required Color iconColor,
+    required Widget child,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: iconColor),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.text),
+            textAlign: TextAlign.end,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHoursDisplay() {
+    if (branch.hours == null) {
+      return const Text('No hours configured', style: TextStyle(color: AppColors.muted));
+    }
+
+    final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    final shortDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    return Column(
+      children: List.generate(days.length, (index) {
+        final day = days[index];
+        final dayHours = branch.hours![day];
+        final isClosed = dayHours == null || dayHours['closed'] == true;
+        final open = dayHours?['open'] ?? '';
+        final close = dayHours?['close'] ?? '';
+
+        return Container(
+          margin: EdgeInsets.only(bottom: index < 6 ? 8 : 0),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: isClosed ? Colors.grey.shade100 : const Color(0xFF8B5CF6).withOpacity(0.05),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 50,
+                child: Text(
+                  shortDays[index],
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isClosed ? Colors.grey.shade400 : const Color(0xFF8B5CF6),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  isClosed ? 'Closed' : '$open - $close',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isClosed ? Colors.grey.shade400 : AppColors.text,
+                  ),
+                ),
+              ),
+              Icon(
+                isClosed ? FontAwesomeIcons.circleMinus : FontAwesomeIcons.circleCheck,
+                size: 14,
+                color: isClosed ? Colors.grey.shade300 : Colors.green,
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Active':
+        return Colors.green;
+      case 'Pending':
+        return Colors.orange;
+      case 'Closed':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _getInitials(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
+
+  Widget _buildStaffWithDays(StaffOption staff, String branchId) {
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const shortDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    final schedule = staff.weeklySchedule ?? {};
+    
+    // Get days this staff works at THIS branch
+    final workingDays = days.where((day) {
+      final daySchedule = schedule[day];
+      if (daySchedule is Map) {
+        return daySchedule['branchId'] == branchId;
+      }
+      return false;
+    }).toList();
+
+    final statusColor = staff.status == 'Active'
+        ? const Color(0xFF10B981)
+        : staff.status == 'Suspended'
+            ? Colors.red
+            : Colors.grey;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Staff info row
+          Row(
+            children: [
+              // Avatar
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFCE7F3), Color(0xFFE9D5FF)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: staff.avatar != null && staff.avatar!.startsWith('http')
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          staff.avatar!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Center(
+                            child: Text(
+                              _getInitials(staff.name),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFFEC4899),
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : Center(
+                        child: Text(
+                          _getInitials(staff.name),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFEC4899),
+                          ),
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 12),
+              // Name & role
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      staff.name,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    if (staff.role != null)
+                      Text(
+                        staff.role!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // Status & days count
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (staff.status != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        staff.status!,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: statusColor,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${workingDays.length} day${workingDays.length != 1 ? 's' : ''}/week',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Day pills
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: List.generate(days.length, (index) {
+              final day = days[index];
+              final isWorking = workingDays.contains(day);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isWorking
+                      ? const Color(0xFF10B981).withOpacity(0.1)
+                      : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isWorking
+                        ? const Color(0xFF10B981).withOpacity(0.3)
+                        : Colors.grey.shade200,
+                  ),
+                ),
+                child: Text(
+                  shortDays[index],
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isWorking
+                        ? const Color(0xFF10B981)
+                        : Colors.grey.shade400,
+                  ),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
