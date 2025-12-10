@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'services_page.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -352,90 +353,13 @@ class MorePage extends StatelessWidget {
 }
 
 // ============================================================================
-// SUB-PAGES
+// OTHER SUB-PAGES (Placeholder)
 // ============================================================================
 
-// Services Page
-class ServicesPage extends StatefulWidget {
-  const ServicesPage({super.key});
-
-  @override
-  State<ServicesPage> createState() => _ServicesPageState();
-}
-
-class _ServicesPageState extends State<ServicesPage> {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Services',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.text,
-          ),
-        ),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFEC4899), Color(0xFFF472B6)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Icon(FontAwesomeIcons.scissors, color: Colors.white, size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Services Management',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.text,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Coming soon...',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppColors.muted,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Staff Management Page
-class StaffManagementPage extends StatefulWidget {
+class StaffManagementPage extends StatelessWidget {
   const StaffManagementPage({super.key});
 
   @override
-  State<StaffManagementPage> createState() => _StaffManagementPageState();
-}
-
-class _StaffManagementPageState extends State<StaffManagementPage> {
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -446,67 +370,27 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
           icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Staff Management',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.text,
-          ),
-        ),
+        title: const Text('Staff Management', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.text)),
         centerTitle: true,
       ),
-      body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF8B5CF6), Color(0xFFA78BFA)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Icon(FontAwesomeIcons.userGear, color: Colors.white, size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Staff Management',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.text,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Coming soon...',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppColors.muted,
-                ),
-              ),
-            ],
-          ),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(FontAwesomeIcons.userGear, size: 60, color: AppColors.muted),
+            SizedBox(height: 16),
+            Text('Coming soon...', style: TextStyle(color: AppColors.muted)),
+          ],
         ),
       ),
     );
   }
 }
 
-// Attendance Page
-class AttendancePage extends StatefulWidget {
+class AttendancePage extends StatelessWidget {
   const AttendancePage({super.key});
 
   @override
-  State<AttendancePage> createState() => _AttendancePageState();
-}
-
-class _AttendancePageState extends State<AttendancePage> {
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -517,67 +401,27 @@ class _AttendancePageState extends State<AttendancePage> {
           icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Attendance',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.text,
-          ),
-        ),
+        title: const Text('Attendance', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.text)),
         centerTitle: true,
       ),
-      body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF8B5CF6), Color(0xFFA78BFA)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Icon(FontAwesomeIcons.clipboardUser, color: Colors.white, size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Attendance Tracking',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.text,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Coming soon...',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppColors.muted,
-                ),
-              ),
-            ],
-          ),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(FontAwesomeIcons.clipboardUser, size: 60, color: AppColors.muted),
+            SizedBox(height: 16),
+            Text('Coming soon...', style: TextStyle(color: AppColors.muted)),
+          ],
         ),
       ),
     );
   }
 }
 
-// Branches Page
-class BranchesPage extends StatefulWidget {
+class BranchesPage extends StatelessWidget {
   const BranchesPage({super.key});
 
   @override
-  State<BranchesPage> createState() => _BranchesPageState();
-}
-
-class _BranchesPageState extends State<BranchesPage> {
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -588,58 +432,23 @@ class _BranchesPageState extends State<BranchesPage> {
           icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Branches',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.text,
-          ),
-        ),
+        title: const Text('Branches', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.text)),
         centerTitle: true,
       ),
-      body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF10B981), Color(0xFF34D399)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Icon(FontAwesomeIcons.building, color: Colors.white, size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Branches Management',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.text,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Coming soon...',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppColors.muted,
-                ),
-              ),
-            ],
-          ),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(FontAwesomeIcons.building, size: 60, color: AppColors.muted),
+            SizedBox(height: 16),
+            Text('Coming soon...', style: TextStyle(color: AppColors.muted)),
+          ],
         ),
       ),
     );
   }
 }
 
-// My Summary Page
 class MySummaryPage extends StatefulWidget {
   const MySummaryPage({super.key});
 
@@ -648,7 +457,7 @@ class MySummaryPage extends StatefulWidget {
 }
 
 class _MySummaryPageState extends State<MySummaryPage> {
-  int _selectedTab = 0; // 0 = Day, 1 = Week, 2 = Month
+  int _selectedTab = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -661,14 +470,7 @@ class _MySummaryPageState extends State<MySummaryPage> {
           icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Summary',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.text,
-          ),
-        ),
+        title: const Text('Summary', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.text)),
         centerTitle: true,
       ),
       body: SafeArea(
@@ -682,12 +484,7 @@ class _MySummaryPageState extends State<MySummaryPage> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                    ),
-                  ],
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
                 ),
                 child: Row(
                   children: [
@@ -698,178 +495,58 @@ class _MySummaryPageState extends State<MySummaryPage> {
                 ),
               ),
               const SizedBox(height: 24),
-
               // Daily Summary Header
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFFF2D8F), Color(0xFFFF6FB5)],
-                  ),
+                  gradient: const LinearGradient(colors: [Color(0xFFFF2D8F), Color(0xFFFF6FB5)]),
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFFF2D8F).withOpacity(0.3),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+                  boxShadow: [BoxShadow(color: const Color(0xFFFF2D8F).withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 8))],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Daily Summary',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
+                    const Text('Daily Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
                     const SizedBox(height: 4),
-                    Text(
-                      _getDateString(),
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.white.withOpacity(0.8),
-                      ),
-                    ),
+                    Text(_getDateString(), style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.8))),
                   ],
                 ),
               ),
               const SizedBox(height: 20),
-
               // Stats Grid
               Row(
                 children: [
-                  Expanded(
-                    child: _buildStatCard(
-                      icon: FontAwesomeIcons.clock,
-                      value: '7h 45m',
-                      label: 'Hours Worked',
-                      iconBgColor: const Color(0xFFFF2D8F).withOpacity(0.1),
-                      iconColor: const Color(0xFFFF2D8F),
-                    ),
-                  ),
+                  Expanded(child: _buildStatCard(FontAwesomeIcons.clock, '7h 45m', 'Hours Worked')),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildStatCard(
-                      icon: FontAwesomeIcons.circleCheck,
-                      value: '6',
-                      label: 'Tasks Completed',
-                      iconBgColor: const Color(0xFFFF2D8F).withOpacity(0.1),
-                      iconColor: const Color(0xFFFF2D8F),
-                    ),
-                  ),
+                  Expanded(child: _buildStatCard(FontAwesomeIcons.circleCheck, '6', 'Tasks Completed')),
                 ],
               ),
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Expanded(
-                    child: _buildStatCard(
-                      icon: FontAwesomeIcons.dollarSign,
-                      value: '\$85',
-                      label: 'Total Tips',
-                      iconBgColor: const Color(0xFFFF2D8F).withOpacity(0.1),
-                      iconColor: const Color(0xFFFF2D8F),
-                    ),
-                  ),
+                  Expanded(child: _buildStatCard(FontAwesomeIcons.dollarSign, '\$85', 'Total Tips')),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildStatCard(
-                      icon: FontAwesomeIcons.star,
-                      value: '4.8',
-                      label: 'Rating',
-                      iconBgColor: const Color(0xFFFF2D8F).withOpacity(0.1),
-                      iconColor: const Color(0xFFFF2D8F),
-                    ),
-                  ),
+                  Expanded(child: _buildStatCard(FontAwesomeIcons.star, '4.8', 'Rating')),
                 ],
               ),
               const SizedBox(height: 20),
-
-              // Notes Section
+              // Notes
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                    ),
-                  ],
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
                 ),
                 child: const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Notes',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.text,
-                      ),
-                    ),
+                    Text('Notes', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.text)),
                     SizedBox(height: 8),
-                    Text(
-                      'Great work today! 🌸',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.muted,
-                      ),
-                    ),
+                    Text('Great work today! 🌸', style: TextStyle(fontSize: 14, color: AppColors.muted)),
                   ],
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Download Button
-              Container(
-                width: double.infinity,
-                height: 56,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFF2D8F), Color(0xFFFF6FB5)],
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFFF2D8F).withOpacity(0.3),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () {
-                      // TODO: Implement PDF download
-                    },
-                    borderRadius: BorderRadius.circular(16),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(FontAwesomeIcons.download, color: Colors.white, size: 18),
-                        SizedBox(width: 10),
-                        Text(
-                          'Download Day PDF',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ),
               ),
             ],
@@ -891,38 +568,20 @@ class _MySummaryPageState extends State<MySummaryPage> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : AppColors.muted,
-              ),
-            ),
+            child: Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: isSelected ? Colors.white : AppColors.muted)),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildStatCard({
-    required IconData icon,
-    required String value,
-    required String label,
-    required Color iconBgColor,
-    required Color iconColor,
-  }) {
+  Widget _buildStatCard(IconData icon, String value, String label) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -930,31 +589,13 @@ class _MySummaryPageState extends State<MySummaryPage> {
           Container(
             width: 44,
             height: 44,
-            decoration: BoxDecoration(
-              color: iconBgColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Center(
-              child: Icon(icon, color: iconColor, size: 20),
-            ),
+            decoration: BoxDecoration(color: const Color(0xFFFF2D8F).withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+            child: Center(child: Icon(icon, color: const Color(0xFFFF2D8F), size: 20)),
           ),
           const SizedBox(height: 16),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppColors.text,
-            ),
-          ),
+          Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.text)),
           const SizedBox(height: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 13,
-              color: AppColors.muted,
-            ),
-          ),
+          Text(label, style: const TextStyle(fontSize: 13, color: AppColors.muted)),
         ],
       ),
     );
@@ -963,8 +604,7 @@ class _MySummaryPageState extends State<MySummaryPage> {
   String _getDateString() {
     final now = DateTime.now();
     final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    final months = ['January', 'February', 'March', 'April', 'May', 'June', 
-                    'July', 'August', 'September', 'October', 'November', 'December'];
+    final months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return '${weekdays[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
   }
 }
