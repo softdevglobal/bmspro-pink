@@ -46,15 +46,24 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
   bool _savingProfile = false;
   bool _savingTerms = false;
   bool _uploadingLogo = false;
+  String _termsPreview = '';
 
   @override
   void initState() {
     super.initState();
+    _termsController.addListener(_onTermsChanged);
     _loadUserData();
+  }
+
+  void _onTermsChanged() {
+    setState(() {
+      _termsPreview = _termsController.text;
+    });
   }
 
   @override
   void dispose() {
+    _termsController.removeListener(_onTermsChanged);
     _salonNameController.dispose();
     _abnController.dispose();
     _phoneController.dispose();
@@ -92,6 +101,7 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
           _phoneController.text = data['contactPhone'] ?? data['phone'] ?? '';
           _addressController.text = data['locationText'] ?? data['address'] ?? '';
           _termsController.text = data['termsAndConditions'] ?? '';
+          _termsPreview = data['termsAndConditions'] ?? '';
           _email = user.email ?? data['email'] ?? '';
           _logoUrl = data['logoUrl'] ?? '';
           _businessStructure = data['businessStructure'] ?? '';
@@ -291,6 +301,165 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showTermsPreview() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.75,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Center(
+                      child: Icon(
+                        FontAwesomeIcons.fileContract,
+                        color: Colors.indigo.shade600,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Terms & Conditions Preview',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.text,
+                          ),
+                        ),
+                        Text(
+                          'How customers will see your terms',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: AppColors.muted),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // Terms Content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Text(
+                    _termsPreview.isEmpty 
+                        ? 'No terms and conditions set yet.' 
+                        : _termsPreview,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.6,
+                      color: _termsPreview.isEmpty 
+                          ? AppColors.muted 
+                          : AppColors.text,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Footer
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, -5),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.text,
+                        side: const BorderSide(color: AppColors.border),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Close'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _saveTerms();
+                      },
+                      icon: const Icon(FontAwesomeIcons.floppyDisk, size: 14),
+                      label: const Text('Save Terms'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -728,82 +897,53 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
               ),
             ),
           ),
-          if (_termsController.text.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.indigo.shade50,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.indigo.shade100),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(FontAwesomeIcons.eye, size: 12, color: Colors.indigo.shade600),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Preview',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.indigo.shade600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _termsController.text,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.indigo.shade900,
-                    ),
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-          ],
           const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _savingTerms ? null : _saveTerms,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: _savingTerms
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(FontAwesomeIcons.floppyDisk, size: 16),
-                        SizedBox(width: 8),
-                        Text(
-                          'Save Terms',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ],
+          Row(
+            children: [
+              // Preview Button
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _termsPreview.isEmpty ? null : _showTermsPreview,
+                  icon: const Icon(FontAwesomeIcons.eye, size: 14),
+                  label: const Text('Preview'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.indigo,
+                    side: BorderSide(color: _termsPreview.isEmpty ? Colors.grey.shade300 : Colors.indigo.shade300),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-            ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Save Button
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _savingTerms ? null : _saveTerms,
+                  icon: _savingTerms
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(FontAwesomeIcons.floppyDisk, size: 14),
+                  label: Text(_savingTerms ? 'Saving...' : 'Save'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.indigo,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
