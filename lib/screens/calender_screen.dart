@@ -6,13 +6,36 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/animated_toggle.dart';
 
+class ServiceDetail {
+  final String name;
+  final double price;
+  final String staffName;
+  final String staffId;
+  final int duration;
+  
+  ServiceDetail({
+    required this.name,
+    this.price = 0,
+    this.staffName = '',
+    this.staffId = '',
+    this.duration = 0,
+  });
+}
+
 class Appointment {
   final String time;
   final String client;
   final String service;
   final String room;
   final IconData icon;
-  final String staffId; // Added to support filtering
+  final String staffId;
+  final String status;
+  final double price;
+  final String staffName;
+  final String phone;
+  final String email;
+  final String bookingId;
+  final List<ServiceDetail> services;
   
   Appointment({
     required this.time,
@@ -21,6 +44,13 @@ class Appointment {
     required this.room,
     required this.icon,
     required this.staffId,
+    this.status = 'Confirmed',
+    this.price = 0,
+    this.staffName = '',
+    this.phone = '',
+    this.email = '',
+    this.bookingId = '',
+    this.services = const [],
   });
 }
 
@@ -178,11 +208,15 @@ class _CalenderScreenState extends State<CalenderScreen> {
 
   void _rebuildScheduleFromBookings() {
     final Map<int, DaySchedule> byDay = {};
+    final bool isOwner = _currentUserRole == 'salon_owner';
 
     for (final data in _allBookings) {
-      // Status filter: confirmed only
+      // Status filter: salon owners see all, others see confirmed only
       final statusRaw = (data['status'] ?? '').toString().toLowerCase();
-      if (statusRaw != 'confirmed') continue;
+      if (!isOwner && statusRaw != 'confirmed') continue;
+      
+      // Skip cancelled bookings for everyone
+      if (statusRaw == 'cancelled' || statusRaw == 'canceled') continue;
 
       final dateStr = (data['date'] ?? '').toString();
       if (dateStr.isEmpty) continue;
@@ -207,18 +241,76 @@ class _CalenderScreenState extends State<CalenderScreen> {
       final int dayKey = date.day;
 
       final branchName = (data['branchName'] ?? '').toString();
-      final clientName = (data['client'] ?? 'Walk-in').toString();
+      final clientName = (data['client'] ?? data['customerName'] ?? 'Walk-in').toString();
+      final clientPhone = (data['phone'] ?? data['customerPhone'] ?? '').toString();
+      final clientEmail = (data['email'] ?? data['customerEmail'] ?? '').toString();
+      final bookingId = (data['id'] ?? '').toString();
 
-      // Derive service name similar to owner bookings page
+      // Derive service name, price, and individual service details
       String serviceName = (data['serviceName'] ?? '').toString();
-      if (serviceName.isEmpty && data['services'] is List) {
+      double totalPrice = 0;
+      List<ServiceDetail> serviceDetails = [];
+      
+      // Try to get price from top level first
+      if (data['price'] != null) {
+        totalPrice = double.tryParse(data['price'].toString()) ?? 0;
+      } else if (data['totalPrice'] != null) {
+        totalPrice = double.tryParse(data['totalPrice'].toString()) ?? 0;
+      }
+      
+      // Parse individual services
+      if (data['services'] is List) {
         final list = data['services'] as List;
-        if (list.isNotEmpty && list.first is Map) {
-          final first = list.first as Map;
-          serviceName = (first['name'] ?? 'Service').toString();
+        for (final svc in list) {
+          if (svc is Map) {
+            final svcName = (svc['name'] ?? 'Service').toString();
+            final svcPrice = double.tryParse((svc['price'] ?? '0').toString()) ?? 0;
+            final svcStaffName = (svc['staffName'] ?? '').toString();
+            final svcStaffId = (svc['staffId'] ?? '').toString();
+            final svcDuration = int.tryParse((svc['duration'] ?? '0').toString()) ?? 0;
+            
+            serviceDetails.add(ServiceDetail(
+              name: svcName,
+              price: svcPrice,
+              staffName: svcStaffName,
+              staffId: svcStaffId,
+              duration: svcDuration,
+            ));
+            
+            // Sum prices if not set at top level
+            if (totalPrice == 0) {
+              totalPrice += svcPrice;
+            }
+          }
+        }
+        
+        // Set service name from first service or combine names
+        if (serviceDetails.isNotEmpty) {
+          if (serviceDetails.length == 1) {
+            serviceName = serviceDetails.first.name;
+          } else {
+            serviceName = serviceDetails.map((s) => s.name).join(', ');
+          }
         }
       }
       if (serviceName.isEmpty) serviceName = 'Service';
+
+      // Get staff name summary
+      String staffName = (data['staffName'] ?? '').toString();
+      if (staffName.isEmpty && serviceDetails.isNotEmpty) {
+        final Set<String> staffNames = {};
+        for (final svc in serviceDetails) {
+          if (svc.staffName.isNotEmpty) staffNames.add(svc.staffName);
+        }
+        if (staffNames.length == 1) {
+          staffName = staffNames.first;
+        } else if (staffNames.length > 1) {
+          staffName = '${staffNames.length} staff';
+        }
+      }
+
+      // Format status properly
+      String status = statusRaw.isEmpty ? 'Pending' : statusRaw[0].toUpperCase() + statusRaw.substring(1);
 
       final timeStr = (data['time'] ?? '').toString();
       String timeLabel = timeStr;
@@ -243,6 +335,12 @@ class _CalenderScreenState extends State<CalenderScreen> {
         icon = FontAwesomeIcons.spa;
       } else if (lower.contains('extension')) {
         icon = FontAwesomeIcons.wandMagicSparkles;
+      } else if (lower.contains('color') || lower.contains('colour')) {
+        icon = FontAwesomeIcons.paintbrush;
+      } else if (lower.contains('cut') || lower.contains('trim')) {
+        icon = FontAwesomeIcons.scissors;
+      } else if (lower.contains('wax')) {
+        icon = FontAwesomeIcons.star;
       }
 
       final appt = Appointment(
@@ -252,6 +350,13 @@ class _CalenderScreenState extends State<CalenderScreen> {
         room: roomLabel,
         icon: icon,
         staffId: _extractStaffId(data),
+        status: status,
+        price: totalPrice,
+        staffName: staffName,
+        phone: clientPhone,
+        email: clientEmail,
+        bookingId: bookingId,
+        services: serviceDetails,
       );
 
       final existing = byDay[dayKey];
@@ -534,7 +639,9 @@ class _CalenderScreenState extends State<CalenderScreen> {
               final dayData = _scheduleData[day];
               Color? branchColor;
               if (dayData != null && dayData.branch != null) {
-                branchColor = AppConfig.branches[dayData.branch]!.color;
+                // Safe access - only use color if branch exists in config
+                final branchTheme = AppConfig.branches[dayData.branch];
+                branchColor = branchTheme?.color ?? AppConfig.primary;
               }
               return GestureDetector(
                 onTap: () {
@@ -588,6 +695,27 @@ class _CalenderScreenState extends State<CalenderScreen> {
                                   fontWeight: FontWeight.bold,
                                   color: AppConfig.muted)),
                         ),
+                      // Show booking count badge for days with multiple bookings
+                      if (dayData != null && dayData.items.length > 1)
+                        Positioned(
+                          top: 2,
+                          right: 2,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: branchColor ?? AppConfig.primary,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              '${dayData.items.length}',
+                              style: const TextStyle(
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
                       if (branchColor != null)
                         Positioned(
                           bottom: 6,
@@ -619,8 +747,13 @@ class _CalenderScreenState extends State<CalenderScreen> {
     final dayInt = _selectedDate.day;
     final data =
         _scheduleData[dayInt]; // Schedule generated from live bookings
+    final bool isOwner = _currentUserRole == 'salon_owner';
+    
     List<Color> gradient = [Colors.grey.shade400, Colors.grey.shade300];
     String branchName = "No Schedule";
+    int bookingCount = 0;
+    double dayRevenue = 0;
+    
     if (data != null) {
       if (data.isOffDay) {
         branchName = "Day Off";
@@ -630,7 +763,13 @@ class _CalenderScreenState extends State<CalenderScreen> {
         final theme = _resolveBranchTheme(data.branch);
         gradient = theme.gradient;
       }
+      bookingCount = data.items.length;
+      // Calculate day's total revenue
+      for (final appt in data.items) {
+        dayRevenue += appt.price;
+      }
     }
+    
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.all(20),
@@ -652,32 +791,92 @@ class _CalenderScreenState extends State<CalenderScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                DateFormat('EEEE, MMMM d').format(_selectedDate),
-                style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  const Icon(FontAwesomeIcons.locationDot,
-                      size: 14, color: Colors.white70),
-                  const SizedBox(width: 8),
-                  Text(
-                    branchName,
-                    style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.white),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  DateFormat('EEEE, MMMM d').format(_selectedDate),
+                  style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(FontAwesomeIcons.locationDot,
+                        size: 12, color: Colors.white70),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        branchName,
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                // Show booking count and revenue for owners
+                if (isOwner && bookingCount > 0) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(FontAwesomeIcons.calendarCheck,
+                                size: 10, color: Colors.white),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$bookingCount booking${bookingCount > 1 ? 's' : ''}',
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (dayRevenue > 0) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(FontAwesomeIcons.dollarSign,
+                                  size: 10, color: Colors.white),
+                              const SizedBox(width: 2),
+                              Text(
+                                'AU\$${dayRevenue.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
-              ),
-            ],
+              ],
+            ),
           ),
           Container(
             width: 56,
@@ -686,9 +885,18 @@ class _CalenderScreenState extends State<CalenderScreen> {
               color: Colors.white.withOpacity(0.2),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Center(
-              child: Icon(FontAwesomeIcons.calendarDay,
-                  color: Colors.white, size: 24),
+            child: Center(
+              child: bookingCount > 0
+                  ? Text(
+                      '$bookingCount',
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(FontAwesomeIcons.calendarDay,
+                      color: Colors.white, size: 24),
             ),
           )
         ],
@@ -728,9 +936,42 @@ class _CalenderScreenState extends State<CalenderScreen> {
           FontAwesomeIcons.calendarXmark, "No appointments for you today.");
     }
 
+    final bool isOwner = _currentUserRole == 'salon_owner';
+    
+    // Sort by time
+    filteredItems.sort((a, b) => a.time.compareTo(b.time));
+
     return Column(
       children: filteredItems.map((appt) {
         final theme = _resolveBranchTheme(data.branch);
+        
+        // Dynamic status colors
+        Color statusBgColor;
+        Color statusTextColor;
+        Color statusBorderColor;
+        
+        switch (appt.status.toLowerCase()) {
+          case 'pending':
+            statusBgColor = Colors.amber.shade50;
+            statusTextColor = Colors.amber.shade700;
+            statusBorderColor = Colors.amber.shade200;
+            break;
+          case 'confirmed':
+            statusBgColor = Colors.green.shade50;
+            statusTextColor = Colors.green.shade700;
+            statusBorderColor = Colors.green.shade100;
+            break;
+          case 'completed':
+            statusBgColor = Colors.blue.shade50;
+            statusTextColor = Colors.blue.shade700;
+            statusBorderColor = Colors.blue.shade100;
+            break;
+          default:
+            statusBgColor = Colors.grey.shade50;
+            statusTextColor = Colors.grey.shade700;
+            statusBorderColor = Colors.grey.shade200;
+        }
+        
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
           decoration: BoxDecoration(
@@ -750,81 +991,356 @@ class _CalenderScreenState extends State<CalenderScreen> {
             borderRadius: BorderRadius.circular(20),
             child: Column(
               children: [
+                // Main content
                 Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
                     children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(colors: theme.gradient),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                                color: theme.color.withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 4))
-                          ],
-                        ),
-                        child: Center(
-                            child:
-                                Icon(appt.icon, color: Colors.white, size: 20)),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              appt.service,
-                              style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppConfig.text),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(colors: theme.gradient),
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: theme.color.withOpacity(0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4))
+                              ],
                             ),
-                            const SizedBox(height: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: theme.lightBg,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                data.branch!.toUpperCase(),
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: theme.color),
-                              ),
+                            child: Center(
+                                child:
+                                    Icon(appt.icon, color: Colors.white, size: 20)),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  appt.service,
+                                  style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppConfig.text),
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    if (data.branch != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        margin: const EdgeInsets.only(right: 8),
+                                        decoration: BoxDecoration(
+                                          color: theme.lightBg,
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          data.branch!.toUpperCase(),
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: theme.color),
+                                        ),
+                                      ),
+                                    if (appt.price > 0)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.shade50,
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          'AU\$${appt.price.toStringAsFixed(0)}',
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.green.shade700),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: statusBgColor,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: statusBorderColor),
+                            ),
+                            child: Text(
+                              appt.status,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: statusTextColor),
+                            ),
+                          )
+                        ],
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.green.shade100),
+                      
+                      // Client info section (expanded for owner)
+                      if (isOwner) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: AppConfig.primary.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        appt.client.isNotEmpty 
+                                            ? appt.client[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppConfig.primary,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          appt.client,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppConfig.text,
+                                          ),
+                                        ),
+                                        if (appt.phone.isNotEmpty || appt.email.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 2),
+                                            child: Text(
+                                              appt.phone.isNotEmpty 
+                                                  ? appt.phone 
+                                                  : appt.email,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: AppConfig.muted,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (appt.phone.isNotEmpty)
+                                    Container(
+                                      width: 32,
+                                      height: 32,
+                                      margin: const EdgeInsets.only(left: 8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.shade50,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Icon(
+                                        FontAwesomeIcons.phone,
+                                        size: 12,
+                                        color: Colors.green.shade600,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              // Service-wise breakdown for all bookings with services
+                              if (appt.services.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: Colors.grey.shade200),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(FontAwesomeIcons.listCheck, 
+                                              size: 12, color: theme.color),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            appt.services.length == 1 
+                                                ? 'Service Details' 
+                                                : 'Services (${appt.services.length})',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: theme.color,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      ...appt.services.map((svc) => Container(
+                                        margin: const EdgeInsets.only(bottom: 8),
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade50,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 32,
+                                              height: 32,
+                                              decoration: BoxDecoration(
+                                                gradient: LinearGradient(colors: theme.gradient),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: const Center(
+                                                child: Icon(FontAwesomeIcons.scissors, 
+                                                    color: Colors.white, size: 12),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    svc.name,
+                                                    style: const TextStyle(
+                                                      fontSize: 13,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: AppConfig.text,
+                                                    ),
+                                                  ),
+                                                  if (svc.staffName.isNotEmpty)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 2),
+                                                      child: Row(
+                                                        children: [
+                                                          Icon(FontAwesomeIcons.user, 
+                                                              size: 10, color: AppConfig.muted),
+                                                          const SizedBox(width: 4),
+                                                          Text(
+                                                            svc.staffName,
+                                                            style: TextStyle(
+                                                              fontSize: 11,
+                                                              color: AppConfig.muted,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  if (svc.staffName.isEmpty)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 2),
+                                                      child: Row(
+                                                        children: [
+                                                          Icon(FontAwesomeIcons.userSlash, 
+                                                              size: 10, color: Colors.orange),
+                                                          const SizedBox(width: 4),
+                                                          Text(
+                                                            'Unassigned',
+                                                            style: TextStyle(
+                                                              fontSize: 11,
+                                                              color: Colors.orange.shade700,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                            Column(
+                                              crossAxisAlignment: CrossAxisAlignment.end,
+                                              children: [
+                                                Text(
+                                                  'AU\$${svc.price.toStringAsFixed(0)}',
+                                                  style: TextStyle(
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.green.shade700,
+                                                  ),
+                                                ),
+                                                if (svc.duration > 0)
+                                                  Text(
+                                                    '${svc.duration} min',
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: AppConfig.muted,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      )),
+                                    ],
+                                  ),
+                                ),
+                              ] else if (appt.staffName.isNotEmpty) ...[
+                                // Fallback for bookings without services array - just show staff
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.grey.shade200),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        FontAwesomeIcons.userCheck,
+                                        size: 11,
+                                        color: theme.color,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        appt.staffName,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          color: AppConfig.text,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
-                        child: Text(
-                          'Confirmed',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green.shade700),
-                        ),
-                      )
+                      ],
                     ],
                   ),
                 ),
+                
+                // Bottom info bar
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: const BoxDecoration(
                     border: Border(top: BorderSide(color: AppConfig.border)),
                   ),
@@ -832,10 +1348,11 @@ class _CalenderScreenState extends State<CalenderScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       _infoItem(FontAwesomeIcons.clock, appt.time, theme.color),
-                      _infoItem(
-                          FontAwesomeIcons.user, appt.client, theme.color),
-                      _infoItem(
-                          FontAwesomeIcons.doorOpen, appt.room, theme.color),
+                      if (!isOwner)
+                        _infoItem(FontAwesomeIcons.user, appt.client, theme.color),
+                      if (isOwner && appt.staffName.isEmpty)
+                        _infoItem(FontAwesomeIcons.userSlash, 'Unassigned', Colors.orange),
+                      _infoItem(FontAwesomeIcons.locationDot, appt.room, theme.color),
                     ],
                   ),
                 )
