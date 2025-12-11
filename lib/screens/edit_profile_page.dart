@@ -35,6 +35,8 @@ class _EditProfilePageState extends State<EditProfilePage>
   final TextEditingController _phoneController = TextEditingController();
 
   String _avatarUrl = '';
+  String _logoUrl = '';
+  String _userRole = '';
   bool _hasChanges = false;
   bool _isSaving = false;
   late Map<String, String> _originalValues;
@@ -138,6 +140,9 @@ class _EditProfilePageState extends State<EditProfilePage>
       String phone = '';
       String avatarUrl = user.photoURL ?? '';
 
+      String logoUrl = '';
+      String userRole = '';
+      
       try {
         final snap = await FirebaseFirestore.instance
             .collection('users')
@@ -155,6 +160,8 @@ class _EditProfilePageState extends State<EditProfilePage>
           phone = (data['phone'] ?? data['clientPhone'] ?? '').toString();
           avatarUrl =
               (data['photoURL'] ?? data['avatarUrl'] ?? avatarUrl).toString();
+          logoUrl = (data['logoUrl'] ?? '').toString();
+          userRole = (data['role'] ?? '').toString();
         }
       } catch (e) {
         debugPrint('Error loading profile in edit page: $e');
@@ -166,6 +173,8 @@ class _EditProfilePageState extends State<EditProfilePage>
         _emailController.text = email;
         _phoneController.text = phone;
         _avatarUrl = avatarUrl;
+        _logoUrl = logoUrl;
+        _userRole = userRole;
         _originalValues = {
           'name': name,
           'email': email,
@@ -377,12 +386,31 @@ class _EditProfilePageState extends State<EditProfilePage>
   }
 
   Widget _buildProfilePictureSection() {
+    // For salon owner, show logo if available
+    final bool isSalonOwner = _userRole.toLowerCase() == 'salon_owner';
+    final String displayImageUrl = isSalonOwner && _logoUrl.isNotEmpty 
+        ? _logoUrl 
+        : _avatarUrl;
+    final bool hasImage = displayImageUrl.isNotEmpty;
+    
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: _cardDecoration(),
       child: Column(
         children: [
+          // Show "Salon Logo" label for salon owner
+          if (isSalonOwner) ...[
+            const Text(
+              'Salon Logo',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: AppColors.muted,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           Stack(
             alignment: Alignment.center,
             children: [
@@ -401,6 +429,7 @@ class _EditProfilePageState extends State<EditProfilePage>
                       height: 96,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
+                        color: hasImage ? null : AppColors.background,
                         boxShadow: [
                           BoxShadow(
                             color: AppColors.primary.withOpacity(0.4),
@@ -408,11 +437,24 @@ class _EditProfilePageState extends State<EditProfilePage>
                             spreadRadius: 0,
                           ),
                         ],
-                        image: DecorationImage(
-                          image: NetworkImage(_avatarUrl),
-                          fit: BoxFit.cover,
-                        ),
+                        image: hasImage
+                            ? DecorationImage(
+                                image: NetworkImage(displayImageUrl),
+                                fit: BoxFit.cover,
+                              )
+                            : null,
                       ),
+                      child: !hasImage
+                          ? Center(
+                              child: Icon(
+                                isSalonOwner 
+                                    ? FontAwesomeIcons.store 
+                                    : FontAwesomeIcons.user,
+                                color: AppColors.primary.withOpacity(0.5),
+                                size: 36,
+                              ),
+                            )
+                          : null,
                     ),
                   );
                 },
@@ -429,16 +471,27 @@ class _EditProfilePageState extends State<EditProfilePage>
             ],
           ),
           const SizedBox(height: 16),
-          GestureDetector(
-            onTap: _showPictureModal,
-            child: const Text(
-              'Change Picture',
+          if (isSalonOwner && _logoUrl.isNotEmpty) ...[
+            const Text(
+              'Update logo from Admin Panel',
               style: TextStyle(
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 14),
+                color: AppColors.muted,
+                fontWeight: FontWeight.w400,
+                fontSize: 12,
+              ),
             ),
-          ),
+          ] else ...[
+            GestureDetector(
+              onTap: _showPictureModal,
+              child: const Text(
+                'Change Picture',
+                style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 14),
+              ),
+            ),
+          ],
         ],
       ),
     );

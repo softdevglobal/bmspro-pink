@@ -37,6 +37,8 @@ class _ProfileScreenState extends State<ProfileScreen>
   String _name = '';
   String _role = '';
   String _photoUrl = '';
+  String _logoUrl = '';
+  String _systemRole = '';
   String? _ratingLabel;
   String? _experienceLabel;
   bool _loadingProfile = true;
@@ -99,6 +101,8 @@ class _ProfileScreenState extends State<ProfileScreen>
       String name = user.displayName ?? '';
       String role = '';
       String photoUrl = user.photoURL ?? '';
+      String logoUrl = '';
+      String systemRole = '';
       String? ratingLabel;
       String? experienceLabel;
 
@@ -118,7 +122,10 @@ class _ProfileScreenState extends State<ProfileScreen>
           // - For salon owners: prefer the business/name field first.
           // - For others: prefer displayName, then name.
           final rawRoleValue = (data['role'] ?? '').toString().trim();
-          final systemRole = rawRoleValue.toLowerCase();
+          systemRole = rawRoleValue.toLowerCase();
+          
+          // Get logo URL for salon owners
+          logoUrl = (data['logoUrl'] ?? '').toString();
 
           if (systemRole == 'salon_owner' && businessName.isNotEmpty) {
             name = businessName;
@@ -199,6 +206,8 @@ class _ProfileScreenState extends State<ProfileScreen>
         _name = name.isNotEmpty ? name : (user.email ?? 'Team Member');
         _role = role.isNotEmpty ? role : 'Team Member';
         _photoUrl = photoUrl;
+        _logoUrl = logoUrl;
+        _systemRole = systemRole;
         _ratingLabel = ratingLabel;
         _experienceLabel = experienceLabel;
         _loadingProfile = false;
@@ -316,6 +325,14 @@ class _ProfileScreenState extends State<ProfileScreen>
                       final scale = 1.0 + (math.sin(value * math.pi) * 0.02);
                       final shadowBlur =
                           30.0 + (math.sin(value * math.pi) * 20.0);
+                      
+                      // For salon owner, show logo if available
+                      final bool isSalonOwner = _systemRole == 'salon_owner';
+                      final String displayImageUrl = isSalonOwner && _logoUrl.isNotEmpty 
+                          ? _logoUrl 
+                          : _photoUrl;
+                      final bool hasImage = displayImageUrl.isNotEmpty;
+                      
                       return Transform.scale(
                         scale: scale,
                         child: Container(
@@ -330,29 +347,33 @@ class _ProfileScreenState extends State<ProfileScreen>
                                 spreadRadius: 0,
                               ),
                             ],
-                            color: _photoUrl.isEmpty
-                                ? Colors.white
-                                : null,
-                            image: _photoUrl.isNotEmpty
+                            color: !hasImage ? Colors.white : null,
+                            image: hasImage
                                 ? DecorationImage(
-                                    image: NetworkImage(_photoUrl),
+                                    image: NetworkImage(displayImageUrl),
                                     fit: BoxFit.cover,
                                   )
                                 : null,
                           ),
-                          child: _photoUrl.isEmpty
+                          child: !hasImage
                               ? Center(
-                                  child: Text(
-                                    (_name.isNotEmpty
-                                            ? _name.trim()[0]
-                                            : 'S')
-                                        .toUpperCase(),
-                                    style: const TextStyle(
-                                      fontSize: 32,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primary,
-                                    ),
-                                  ),
+                                  child: isSalonOwner
+                                      ? const Icon(
+                                          FontAwesomeIcons.store,
+                                          size: 32,
+                                          color: AppColors.primary,
+                                        )
+                                      : Text(
+                                          (_name.isNotEmpty
+                                                  ? _name.trim()[0]
+                                                  : 'S')
+                                              .toUpperCase(),
+                                          style: const TextStyle(
+                                            fontSize: 32,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.primary,
+                                          ),
+                                        ),
                                 )
                               : null,
                         ),
