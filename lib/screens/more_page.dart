@@ -6,6 +6,7 @@ import 'services_page.dart';
 import 'staff_management_page.dart';
 import 'attendance_page.dart';
 import 'branches_page.dart';
+import 'salon_settings_page.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -181,6 +182,20 @@ class _MorePageState extends State<MorePage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const MySummaryPage()),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              _buildMenuCard(
+                context,
+                icon: FontAwesomeIcons.gear,
+                title: 'Salon Settings',
+                subtitle: 'Business profile, logo & terms',
+                gradientColors: [const Color(0xFF6366F1), const Color(0xFF818CF8)],
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SalonSettingsPage()),
                   );
                 },
               ),
