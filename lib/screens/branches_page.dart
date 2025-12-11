@@ -101,10 +101,15 @@ class BranchesPage extends StatefulWidget {
 
 class _BranchesPageState extends State<BranchesPage> {
   String? _ownerUid;
+  String? _userRole;
+  String? _userBranchId; // For branch admins - their assigned branch
   List<BranchModel> _branches = [];
   List<ServiceOption> _services = [];
   List<StaffOption> _staff = [];
   bool _loading = true;
+
+  bool get _isBranchAdmin => _userRole == 'salon_branch_admin';
+  bool get _canEdit => _userRole == 'salon_owner';
 
   @override
   void initState() {
@@ -125,13 +130,17 @@ class _BranchesPageState extends State<BranchesPage> {
           .get();
 
       final role = userDoc.data()?['role'] ?? '';
+      _userRole = role;
       String ownerUid = user.uid;
+      String? userBranchId;
 
       if (role == 'salon_branch_admin') {
         ownerUid = userDoc.data()?['ownerUid'] ?? user.uid;
+        userBranchId = userDoc.data()?['branchId'];
       }
 
       _ownerUid = ownerUid;
+      _userBranchId = userBranchId;
 
       // Subscribe to branches
       FirebaseFirestore.instance
@@ -140,10 +149,17 @@ class _BranchesPageState extends State<BranchesPage> {
           .snapshots()
           .listen((snapshot) {
         if (mounted) {
+          List<BranchModel> allBranches = snapshot.docs
+              .map((doc) => BranchModel.fromFirestore(doc))
+              .toList();
+          
+          // For branch admins, only show their assigned branch
+          if (_isBranchAdmin && _userBranchId != null) {
+            allBranches = allBranches.where((b) => b.id == _userBranchId).toList();
+          }
+          
           setState(() {
-            _branches = snapshot.docs
-                .map((doc) => BranchModel.fromFirestore(doc))
-                .toList();
+            _branches = allBranches;
           });
         }
       });
@@ -249,6 +265,7 @@ class _BranchesPageState extends State<BranchesPage> {
         branch: branch,
         services: _services,
         staff: _staff,
+        canEdit: _canEdit,
         onEdit: () {
           Navigator.pop(context);
           _showEditBranchSheet(branch);
@@ -343,9 +360,9 @@ class _BranchesPageState extends State<BranchesPage> {
           icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Branches',
-          style: TextStyle(
+        title: Text(
+          _isBranchAdmin ? 'My Branch' : 'Branches',
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
             color: AppColors.text,
@@ -353,7 +370,8 @@ class _BranchesPageState extends State<BranchesPage> {
         ),
         centerTitle: true,
         actions: [
-          if (_ownerUid != null)
+          // Only show Add button for salon owners
+          if (_canEdit && _ownerUid != null)
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: GestureDetector(
@@ -418,31 +436,35 @@ class _BranchesPageState extends State<BranchesPage> {
             child: const Icon(FontAwesomeIcons.building, color: Colors.white, size: 40),
           ),
           const SizedBox(height: 24),
-          const Text(
-            'No Branches Yet',
-            style: TextStyle(
+          Text(
+            _isBranchAdmin ? 'No Branch Assigned' : 'No Branches Yet',
+            style: const TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.bold,
               color: AppColors.text,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Add your first branch location',
-            style: TextStyle(fontSize: 14, color: AppColors.muted),
+          Text(
+            _isBranchAdmin 
+                ? 'Contact your salon owner for branch assignment'
+                : 'Add your first branch location',
+            style: const TextStyle(fontSize: 14, color: AppColors.muted),
           ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _showAddBranchSheet,
-            icon: const Icon(FontAwesomeIcons.plus, size: 14),
-            label: const Text('Add Branch'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF10B981),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          if (_canEdit) ...[
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _showAddBranchSheet,
+              icon: const Icon(FontAwesomeIcons.plus, size: 14),
+              label: const Text('Add Branch'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -636,34 +658,37 @@ class _BranchesPageState extends State<BranchesPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _showEditBranchSheet(branch),
-                        icon: const Icon(FontAwesomeIcons.penToSquare, size: 12),
-                        label: const Text('Edit'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF3B82F6),
-                          side: BorderSide(color: const Color(0xFF3B82F6).withOpacity(0.3)),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    // Only show Edit and Delete for salon owners
+                    if (_canEdit) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _showEditBranchSheet(branch),
+                          icon: const Icon(FontAwesomeIcons.penToSquare, size: 12),
+                          label: const Text('Edit'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF3B82F6),
+                            side: BorderSide(color: const Color(0xFF3B82F6).withOpacity(0.3)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    SizedBox(
-                      width: 44,
-                      child: OutlinedButton(
-                        onPressed: () => _confirmDelete(branch),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.red.shade400,
-                          side: BorderSide(color: Colors.red.shade200),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      const SizedBox(width: 10),
+                      SizedBox(
+                        width: 44,
+                        child: OutlinedButton(
+                          onPressed: () => _confirmDelete(branch),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade400,
+                            side: BorderSide(color: Colors.red.shade200),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: Icon(FontAwesomeIcons.trash, size: 12, color: Colors.red.shade400),
                         ),
-                        child: Icon(FontAwesomeIcons.trash, size: 12, color: Colors.red.shade400),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ],
@@ -1258,12 +1283,14 @@ class _BranchPreviewSheet extends StatelessWidget {
   final BranchModel branch;
   final List<ServiceOption> services;
   final List<StaffOption> staff;
+  final bool canEdit;
   final VoidCallback onEdit;
 
   const _BranchPreviewSheet({
     required this.branch,
     required this.services,
     required this.staff,
+    required this.canEdit,
     required this.onEdit,
   });
 
@@ -1469,8 +1496,15 @@ class _BranchPreviewSheet extends StatelessWidget {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            // Staff list
-                            ...branchStaff.map((s) => _buildStaffWithDays(s, branch.id)).toList(),
+                            // Staff list - show admin first
+                            ...branchStaff
+                                .where((s) => s.id == branch.adminStaffId)
+                                .map((s) => _buildStaffWithDays(s, branch.id, isAdmin: true))
+                                .toList(),
+                            ...branchStaff
+                                .where((s) => s.id != branch.adminStaffId)
+                                .map((s) => _buildStaffWithDays(s, branch.id, isAdmin: false))
+                                .toList(),
                           ],
                         ),
                 ),
@@ -1494,17 +1528,28 @@ class _BranchPreviewSheet extends StatelessWidget {
             child: SizedBox(
               width: double.infinity,
               height: 52,
-              child: ElevatedButton.icon(
-                onPressed: onEdit,
-                icon: const Icon(FontAwesomeIcons.penToSquare, size: 14),
-                label: const Text('Edit Branch', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF10B981),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-              ),
+              child: canEdit
+                  ? ElevatedButton.icon(
+                      onPressed: onEdit,
+                      icon: const Icon(FontAwesomeIcons.penToSquare, size: 14),
+                      label: const Text('Edit Branch', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF10B981),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                    )
+                  : ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey.shade200,
+                        foregroundColor: AppColors.text,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      child: const Text('Close', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
             ),
           ),
         ],
@@ -1646,7 +1691,7 @@ class _BranchPreviewSheet extends StatelessWidget {
     return name[0].toUpperCase();
   }
 
-  Widget _buildStaffWithDays(StaffOption staff, String branchId) {
+  Widget _buildStaffWithDays(StaffOption staff, String branchId, {bool isAdmin = false}) {
     const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     const shortDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -1667,64 +1712,107 @@ class _BranchPreviewSheet extends StatelessWidget {
             ? Colors.red
             : Colors.grey;
 
+    // Admin highlight colors
+    const adminGradient = [Color(0xFF8B5CF6), Color(0xFFA855F7)];
+    final adminBorderColor = const Color(0xFF8B5CF6).withOpacity(0.4);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isAdmin ? const Color(0xFF8B5CF6).withOpacity(0.05) : Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(
+          color: isAdmin ? adminBorderColor : Colors.grey.shade200,
+          width: isAdmin ? 2 : 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 8,
+            color: isAdmin 
+                ? const Color(0xFF8B5CF6).withOpacity(0.1)
+                : Colors.black.withOpacity(0.03),
+            blurRadius: isAdmin ? 12 : 8,
             offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
         children: [
+          // Admin badge
+          if (isAdmin)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: adminGradient),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(FontAwesomeIcons.crown, size: 12, color: Colors.white),
+                  SizedBox(width: 6),
+                  Text(
+                    'Branch Admin',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Staff info row
           Row(
             children: [
-              // Avatar
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFCE7F3), Color(0xFFE9D5FF)],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: staff.avatar != null && staff.avatar!.startsWith('http')
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          staff.avatar!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Center(
+              // Avatar with crown for admin
+              Stack(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: isAdmin 
+                            ? adminGradient 
+                            : const [Color(0xFFFCE7F3), Color(0xFFE9D5FF)],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: staff.avatar != null && staff.avatar!.startsWith('http')
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.network(
+                              staff.avatar!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Center(
+                                child: Text(
+                                  _getInitials(staff.name),
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: isAdmin ? Colors.white : const Color(0xFFEC4899),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                        : Center(
                             child: Text(
                               _getInitials(staff.name),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
-                                color: Color(0xFFEC4899),
+                                color: isAdmin ? Colors.white : const Color(0xFFEC4899),
                               ),
                             ),
                           ),
-                        ),
-                      )
-                    : Center(
-                        child: Text(
-                          _getInitials(staff.name),
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFFEC4899),
-                          ),
-                        ),
-                      ),
+                  ),
+                ],
               ),
               const SizedBox(width: 12),
               // Name & role
@@ -1734,10 +1822,10 @@ class _BranchPreviewSheet extends StatelessWidget {
                   children: [
                     Text(
                       staff.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.text,
+                        fontWeight: isAdmin ? FontWeight.w700 : FontWeight.w600,
+                        color: isAdmin ? const Color(0xFF8B5CF6) : AppColors.text,
                       ),
                     ),
                     if (staff.role != null)

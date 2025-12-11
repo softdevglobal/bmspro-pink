@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'services_page.dart';
 import 'staff_management_page.dart';
 import 'attendance_page.dart';
@@ -16,11 +18,62 @@ class AppColors {
   static const border = Color(0xFFF2D2E9);
 }
 
-class MorePage extends StatelessWidget {
+class MorePage extends StatefulWidget {
   const MorePage({super.key});
 
   @override
+  State<MorePage> createState() => _MorePageState();
+}
+
+class _MorePageState extends State<MorePage> {
+  String? _userRole;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserRole();
+  }
+
+  Future<void> _fetchUserRole() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        if (mounted && doc.exists) {
+          setState(() {
+            _userRole = doc.data()?['role'] as String?;
+            _isLoading = false;
+          });
+        } else {
+          if (mounted) setState(() => _isLoading = false);
+        }
+      } else {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching role: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  bool get _isBranchAdmin => _userRole == 'salon_branch_admin';
+  bool get _isSalonOwner => _userRole == 'salon_owner';
+
+  @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const SafeArea(
+        child: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
+    }
+
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 24, 16, 100),
@@ -38,9 +91,9 @@ class MorePage extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Manage your salon settings',
-              style: TextStyle(
+            Text(
+              _isBranchAdmin ? 'Manage your branch' : 'Manage your salon settings',
+              style: const TextStyle(
                 fontSize: 14,
                 color: AppColors.muted,
               ),
@@ -48,12 +101,12 @@ class MorePage extends StatelessWidget {
             ),
             const SizedBox(height: 32),
 
-            // Services Section
+            // Services Section - Available for all roles
             _buildMenuCard(
               context,
               icon: FontAwesomeIcons.scissors,
               title: 'Services',
-              subtitle: 'Manage your salon services',
+              subtitle: _isBranchAdmin ? 'View available services' : 'Manage your salon services',
               gradientColors: [const Color(0xFFEC4899), const Color(0xFFF472B6)],
               onTap: () {
                 Navigator.push(
@@ -64,46 +117,48 @@ class MorePage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // Staff Section (Expandable)
-            _buildExpandableMenuCard(
-              context,
-              icon: FontAwesomeIcons.users,
-              title: 'Staff',
-              subtitle: 'Manage staff and attendance',
-              gradientColors: [const Color(0xFF8B5CF6), const Color(0xFFA78BFA)],
-              children: [
-                _buildSubMenuItem(
-                  context,
-                  icon: FontAwesomeIcons.userGear,
-                  title: 'Staff Management',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const StaffManagementPage()),
-                    );
-                  },
-                ),
-                _buildSubMenuItem(
-                  context,
-                  icon: FontAwesomeIcons.clipboardUser,
-                  title: 'Attendance',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const AttendancePage()),
-                    );
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
+            // Staff Section (Expandable) - Only for salon owners
+            if (_isSalonOwner) ...[
+              _buildExpandableMenuCard(
+                context,
+                icon: FontAwesomeIcons.users,
+                title: 'Staff',
+                subtitle: 'Manage staff and attendance',
+                gradientColors: [const Color(0xFF8B5CF6), const Color(0xFFA78BFA)],
+                children: [
+                  _buildSubMenuItem(
+                    context,
+                    icon: FontAwesomeIcons.userGear,
+                    title: 'Staff Management',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const StaffManagementPage()),
+                      );
+                    },
+                  ),
+                  _buildSubMenuItem(
+                    context,
+                    icon: FontAwesomeIcons.clipboardUser,
+                    title: 'Attendance',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const AttendancePage()),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
 
-            // Branches Section
+            // Branches Section - Available for all roles (branch admins see their branch)
             _buildMenuCard(
               context,
               icon: FontAwesomeIcons.building,
-              title: 'Branches',
-              subtitle: 'Manage your salon locations',
+              title: _isBranchAdmin ? 'My Branch' : 'Branches',
+              subtitle: _isBranchAdmin ? 'View your branch details' : 'Manage your salon locations',
               gradientColors: [const Color(0xFF10B981), const Color(0xFF34D399)],
               onTap: () {
                 Navigator.push(
@@ -112,22 +167,24 @@ class MorePage extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: 16),
 
-            // Summary Section
-            _buildMenuCard(
-              context,
-              icon: FontAwesomeIcons.chartPie,
-              title: 'Summary',
-              subtitle: 'View your performance & reports',
-              gradientColors: [const Color(0xFFF59E0B), const Color(0xFFFBBF24)],
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const MySummaryPage()),
-                );
-              },
-            ),
+            // Summary Section - Only for salon owners
+            if (_isSalonOwner) ...[
+              const SizedBox(height: 16),
+              _buildMenuCard(
+                context,
+                icon: FontAwesomeIcons.chartPie,
+                title: 'Summary',
+                subtitle: 'View your performance & reports',
+                gradientColors: [const Color(0xFFF59E0B), const Color(0xFFFBBF24)],
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MySummaryPage()),
+                  );
+                },
+              ),
+            ],
           ],
         ),
       ),

@@ -91,10 +91,13 @@ class ServicesPage extends StatefulWidget {
 
 class _ServicesPageState extends State<ServicesPage> {
   String? _ownerUid;
+  String? _userRole;
   List<ServiceModel> _services = [];
   List<StaffModel> _staff = [];
   List<BranchModel> _branches = [];
   bool _loading = true;
+
+  bool get _canEdit => _userRole == 'salon_owner';
 
   @override
   void initState() {
@@ -109,13 +112,14 @@ class _ServicesPageState extends State<ServicesPage> {
     setState(() => _loading = true);
 
     try {
-      // Get user's ownerUid
+      // Get user's ownerUid and role
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .get();
       
       final role = userDoc.data()?['role'] ?? '';
+      _userRole = role;
       String ownerUid = user.uid;
       
       if (role == 'salon_branch_admin') {
@@ -318,43 +322,45 @@ class _ServicesPageState extends State<ServicesPage> {
         ),
         centerTitle: true,
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: GestureDetector(
-              onTap: () => _showAddEditServiceSheet(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFEC4899), Color(0xFFF472B6)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFEC4899).withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
+          // Only show Add button for salon owners
+          if (_canEdit)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: GestureDetector(
+                onTap: () => _showAddEditServiceSheet(),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFEC4899), Color(0xFFF472B6)],
                     ),
-                  ],
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(FontAwesomeIcons.plus, color: Colors.white, size: 12),
-                    SizedBox(width: 6),
-                    Text(
-                      'Add',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFEC4899).withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(FontAwesomeIcons.plus, color: Colors.white, size: 12),
+                      SizedBox(width: 6),
+                      Text(
+                        'Add',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
       body: _loading
@@ -391,22 +397,24 @@ class _ServicesPageState extends State<ServicesPage> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Add your first service to get started',
-            style: TextStyle(fontSize: 14, color: AppColors.muted),
+          Text(
+            _canEdit ? 'Add your first service to get started' : 'No services available',
+            style: const TextStyle(fontSize: 14, color: AppColors.muted),
           ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: () => _showAddEditServiceSheet(),
-            icon: const Icon(FontAwesomeIcons.plus, size: 14),
-            label: const Text('Add Service'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          if (_canEdit) ...[
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => _showAddEditServiceSheet(),
+              icon: const Icon(FontAwesomeIcons.plus, size: 14),
+              label: const Text('Add Service'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -581,21 +589,24 @@ class _ServicesPageState extends State<ServicesPage> {
                         onTap: () => _showPreviewDialog(service),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _buildCardButton(
-                        icon: FontAwesomeIcons.penToSquare,
-                        label: 'Edit',
-                        color: const Color(0xFF3B82F6),
-                        onTap: () => _showAddEditServiceSheet(service: service),
+                    // Only show Edit and Delete for salon owners
+                    if (_canEdit) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _buildCardButton(
+                          icon: FontAwesomeIcons.penToSquare,
+                          label: 'Edit',
+                          color: const Color(0xFF3B82F6),
+                          onTap: () => _showAddEditServiceSheet(service: service),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    _buildIconButton(
-                      icon: FontAwesomeIcons.trash,
-                      color: Colors.red.shade400,
-                      onTap: () => _confirmDelete(service),
-                    ),
+                      const SizedBox(width: 10),
+                      _buildIconButton(
+                        icon: FontAwesomeIcons.trash,
+                        color: Colors.red.shade400,
+                        onTap: () => _confirmDelete(service),
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -919,38 +930,68 @@ class _ServicesPageState extends State<ServicesPage> {
                 ],
               ),
             ),
-            // Bottom Button - Same as Edit
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, -5),
+            // Bottom Button - Only show Edit for salon owners
+            if (_canEdit)
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, -5),
+                    ),
+                  ],
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showAddEditServiceSheet(service: service);
+                    },
+                    icon: const Icon(FontAwesomeIcons.penToSquare, size: 14),
+                    label: const Text('Edit Service', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      elevation: 0,
+                    ),
                   ),
-                ],
-              ),
-              child: SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _showAddEditServiceSheet(service: service);
-                  },
-                  icon: const Icon(FontAwesomeIcons.penToSquare, size: 14),
-                  label: const Text('Edit Service', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    elevation: 0,
+                ),
+              )
+            else
+              // Simple close button for branch admins
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, -5),
+                    ),
+                  ],
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey.shade200,
+                      foregroundColor: AppColors.text,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      elevation: 0,
+                    ),
+                    child: const Text('Close', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),
