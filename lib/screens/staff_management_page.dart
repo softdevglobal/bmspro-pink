@@ -213,6 +213,161 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
     );
   }
 
+  void _showSuspendConfirmation(StaffMember staff) {
+    final isSuspended = staff.status == 'Suspended';
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: isSuspended ? Colors.green.shade50 : Colors.red.shade50,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                isSuspended ? FontAwesomeIcons.userCheck : FontAwesomeIcons.userSlash,
+                size: 18,
+                color: isSuspended ? Colors.green.shade600 : Colors.red.shade600,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                isSuspended ? 'Reactivate Account?' : 'Suspend Account?',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isSuspended
+                  ? 'Are you sure you want to reactivate ${staff.name}\'s account? They will be able to log in again.'
+                  : 'Are you sure you want to suspend ${staff.name}\'s account? They will not be able to log in until reactivated.',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isSuspended ? Colors.green.shade50 : Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSuspended ? Colors.green.shade200 : Colors.amber.shade200,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    FontAwesomeIcons.circleInfo,
+                    size: 14,
+                    color: isSuspended ? Colors.green.shade600 : Colors.amber.shade700,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      isSuspended
+                          ? 'This will enable their login access immediately.'
+                          : 'This action will disable their login access.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isSuspended ? Colors.green.shade700 : Colors.amber.shade800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _suspendStaff(staff);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isSuspended ? Colors.green : Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+            child: Text(
+              isSuspended ? 'Reactivate' : 'Suspend',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _suspendStaff(StaffMember staff) async {
+    final isSuspended = staff.status == 'Suspended';
+    final newStatus = isSuspended ? 'Active' : 'Suspended';
+
+    try {
+      // Update status in Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(staff.id)
+          .update({
+        'status': newStatus,
+        'suspended': !isSuspended,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Call the API to disable/enable Firebase Auth account
+      try {
+        final response = await http.post(
+          Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/suspend'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({
+            'uid': staff.id,
+            'disabled': !isSuspended,
+          }),
+        );
+        
+        if (response.statusCode != 200) {
+          debugPrint('Auth suspend API returned: ${response.statusCode}');
+        }
+      } catch (e) {
+        debugPrint('Failed to update auth status: $e');
+      }
+
+      _showToast(isSuspended 
+          ? '${staff.name} has been reactivated' 
+          : '${staff.name} has been suspended');
+    } catch (e) {
+      debugPrint('Error suspending staff: $e');
+      _showToast('Failed to update staff status');
+    }
+  }
+
   void _showToast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -320,7 +475,7 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
         ],
       ),
       child: Row(
-        children: ['All', 'Active', 'Inactive'].map((status) {
+        children: ['All', 'Active', 'Suspended'].map((status) {
           final isSelected = _filterStatus == status;
           final count = status == 'All' 
               ? _staff.length 
@@ -400,7 +555,7 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
           Text(
             _filterStatus == 'All' 
                 ? 'Add staff from the admin panel'
-                : 'No $_filterStatus staff members',
+                : 'No ${_filterStatus.toLowerCase()} staff members',
             style: const TextStyle(fontSize: 14, color: AppColors.muted),
           ),
         ],
@@ -514,7 +669,9 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
                             decoration: BoxDecoration(
                               color: staff.status == 'Active' 
                                   ? Colors.green.shade50 
-                                  : Colors.grey.shade100,
+                                  : staff.status == 'Suspended'
+                                      ? Colors.red.shade50
+                                      : Colors.grey.shade100,
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Row(
@@ -526,7 +683,9 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
                                   decoration: BoxDecoration(
                                     color: staff.status == 'Active' 
                                         ? Colors.green 
-                                        : Colors.grey,
+                                        : staff.status == 'Suspended'
+                                            ? Colors.red
+                                            : Colors.grey,
                                     shape: BoxShape.circle,
                                   ),
                                 ),
@@ -538,7 +697,9 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
                                     fontWeight: FontWeight.w600,
                                     color: staff.status == 'Active' 
                                         ? Colors.green.shade700 
-                                        : Colors.grey.shade600,
+                                        : staff.status == 'Suspended'
+                                            ? Colors.red.shade700
+                                            : Colors.grey.shade600,
                                   ),
                                 ),
                               ],
@@ -606,7 +767,7 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => _showEditStaffSheet(staff),
@@ -615,6 +776,31 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFF3B82F6),
                       side: BorderSide(color: const Color(0xFF3B82F6).withOpacity(0.3)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showSuspendConfirmation(staff),
+                    icon: Icon(
+                      staff.status == 'Suspended' 
+                          ? FontAwesomeIcons.userCheck 
+                          : FontAwesomeIcons.userSlash,
+                      size: 12,
+                    ),
+                    label: Text(staff.status == 'Suspended' ? 'Activate' : 'Suspend'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: staff.status == 'Suspended' 
+                          ? const Color(0xFF10B981) 
+                          : const Color(0xFFEF4444),
+                      side: BorderSide(
+                        color: staff.status == 'Suspended' 
+                            ? const Color(0xFF10B981).withOpacity(0.3) 
+                            : const Color(0xFFEF4444).withOpacity(0.3),
+                      ),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
@@ -821,7 +1007,11 @@ class _StaffPreviewSheet extends StatelessWidget {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                             decoration: BoxDecoration(
-                              color: staff.status == 'Active' ? Colors.green.shade50 : Colors.grey.shade100,
+                              color: staff.status == 'Active' 
+                                  ? Colors.green.shade50 
+                                  : staff.status == 'Suspended'
+                                      ? Colors.red.shade50
+                                      : Colors.grey.shade100,
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
@@ -829,7 +1019,11 @@ class _StaffPreviewSheet extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
-                                color: staff.status == 'Active' ? Colors.green.shade700 : Colors.grey.shade600,
+                                color: staff.status == 'Active' 
+                                    ? Colors.green.shade700 
+                                    : staff.status == 'Suspended'
+                                        ? Colors.red.shade700
+                                        : Colors.grey.shade600,
                               ),
                             ),
                           ),
@@ -1704,16 +1898,37 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
         }
       });
 
+      // Check if status changed to/from Suspended
+      final statusChanged = widget.staff.status != _status;
+      final isSuspending = _status == 'Suspended';
+
       // Update user document
       await FirebaseFirestore.instance.collection('users').doc(widget.staff.id).update({
         'displayName': _nameController.text.trim(),
         'name': _nameController.text.trim(),
         'staffRole': _roleController.text.trim(),
         'status': _status,
+        'suspended': isSuspending,
         'weeklySchedule': finalSchedule,
         'training': _training,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // If status changed, update Firebase Auth disabled status
+      if (statusChanged && (widget.staff.status == 'Suspended' || _status == 'Suspended')) {
+        try {
+          await http.post(
+            Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/suspend'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'uid': widget.staff.id,
+              'disabled': isSuspending,
+            }),
+          );
+        } catch (e) {
+          debugPrint('Failed to update auth status: $e');
+        }
+      }
 
       widget.onSuccess();
     } catch (e) {
@@ -1814,7 +2029,11 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                   _buildSectionCard(
                     title: 'Status',
                     icon: FontAwesomeIcons.toggleOn,
-                    iconColor: _status == 'Active' ? Colors.green : Colors.grey,
+                    iconColor: _status == 'Active' 
+                        ? Colors.green 
+                        : _status == 'Suspended' 
+                            ? Colors.red 
+                            : Colors.grey,
                     children: [
                       Row(
                         children: [
@@ -1823,7 +2042,7 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: _buildStatusOption('Inactive', Colors.grey),
+                            child: _buildStatusOption('Suspended', Colors.red),
                           ),
                         ],
                       ),
