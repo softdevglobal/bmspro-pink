@@ -25,7 +25,7 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
   List<Map<String, dynamic>> _appointments = [];
   bool _isLoading = true;
   String? _ownerUid;
-  String _selectedFilter = 'upcoming'; // 'upcoming', 'today', 'all'
+  String _selectedFilter = 'today'; // 'today', 'upcoming', 'all'
 
   @override
   void initState() {
@@ -323,9 +323,9 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          _buildFilterChip('Upcoming', 'upcoming'),
-          const SizedBox(width: 8),
           _buildFilterChip('Today', 'today'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Upcoming', 'upcoming'),
           const SizedBox(width: 8),
           _buildFilterChip('All', 'all'),
         ],

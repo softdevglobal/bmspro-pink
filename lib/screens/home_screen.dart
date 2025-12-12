@@ -80,6 +80,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Today's appointments
   List<Map<String, dynamic>> _todayAppointments = [];
   bool _isLoadingAppointments = true;
+  
+  // Unread notifications count
+  int _unreadNotificationCount = 0;
+  StreamSubscription<QuerySnapshot>? _notificationsSub;
 
   @override
   void initState() {
@@ -95,6 +99,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
 
     _fetchUserRole();
+    _listenToUnreadNotifications();
+  }
+
+  /// Listen to unread notifications for the current staff
+  void _listenToUnreadNotifications() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    _notificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('staffUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _unreadNotificationCount = snapshot.docs.length;
+        });
+      }
+    }, onError: (e) {
+      debugPrint('Error listening to notifications: $e');
+    });
   }
 
   Future<void> _fetchUserRole() async {
@@ -312,6 +338,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     _pulseController.dispose();
     _workTimer?.cancel();
+    _notificationsSub?.cancel();
     super.dispose();
   }
 
@@ -605,18 +632,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 child: Icon(FontAwesomeIcons.bell,
                     color: AppColors.muted, size: 24),
               ),
-              Positioned(
-                top: -2,
-                right: -2,
-                child: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primary,
-                    shape: BoxShape.circle,
+              // Only show the notification dot when there are unread notifications
+              if (_unreadNotificationCount > 0)
+                Positioned(
+                  top: -2,
+                  right: -2,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
-              )
             ],
           ),
         )

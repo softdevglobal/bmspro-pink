@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class _NotifTheme {
   static const Color primary = Color(0xFFFF2D8F);
@@ -17,8 +20,10 @@ class NotificationItem {
   final String description;
   final String time;
   final IconData icon;
-  final String type; // 'task', 'system'
+  final String type; // 'task', 'system', 'booking_assigned'
   bool isRead;
+  final Map<String, dynamic>? rawData;
+  
   NotificationItem({
     required this.id,
     required this.title,
@@ -27,7 +32,75 @@ class NotificationItem {
     required this.icon,
     required this.type,
     this.isRead = false,
+    this.rawData,
   });
+
+  /// Create NotificationItem from Firestore document
+  factory NotificationItem.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    final type = (data['type'] ?? 'system').toString();
+    final title = (data['title'] ?? 'Notification').toString();
+    final message = (data['message'] ?? '').toString();
+    final isRead = data['read'] == true;
+    
+    // Parse timestamp to relative time string
+    String timeStr = 'Just now';
+    if (data['createdAt'] != null) {
+      try {
+        final timestamp = data['createdAt'] as Timestamp;
+        final dt = timestamp.toDate();
+        timeStr = _formatRelativeTime(dt);
+      } catch (_) {}
+    }
+    
+    // Determine icon based on notification type
+    IconData icon = FontAwesomeIcons.bell;
+    String displayType = 'system';
+    
+    if (type == 'booking_assigned' || type == 'booking_confirmed') {
+      icon = FontAwesomeIcons.calendarCheck;
+      displayType = 'task';
+    } else if (type == 'booking_completed') {
+      icon = FontAwesomeIcons.circleCheck;
+      displayType = 'task';
+    } else if (type == 'booking_canceled') {
+      icon = FontAwesomeIcons.ban;
+      displayType = 'task';
+    } else if (type == 'booking_status_changed') {
+      icon = FontAwesomeIcons.calendarDay;
+      displayType = 'task';
+    }
+    
+    return NotificationItem(
+      id: doc.id,
+      title: title,
+      description: message,
+      time: timeStr,
+      icon: icon,
+      type: displayType,
+      isRead: isRead,
+      rawData: data,
+    );
+  }
+  
+  static String _formatRelativeTime(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    
+    if (diff.inMinutes < 1) {
+      return 'Just now';
+    } else if (diff.inMinutes < 60) {
+      return '${diff.inMinutes} ${diff.inMinutes == 1 ? 'minute' : 'minutes'} ago';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours} ${diff.inHours == 1 ? 'hour' : 'hours'} ago';
+    } else if (diff.inDays == 1) {
+      return 'Yesterday';
+    } else if (diff.inDays < 7) {
+      return '${diff.inDays} days ago';
+    } else {
+      return '${dt.day}/${dt.month}/${dt.year}';
+    }
+  }
 }
 
 class NotificationsPage extends StatefulWidget {
@@ -41,78 +114,65 @@ class _NotificationsPageState extends State<NotificationsPage>
     with TickerProviderStateMixin {
   String _currentFilter = 'all'; // 'all', 'task', 'system'
 
-  late List<NotificationItem> _notifications;
+  List<NotificationItem> _notifications = [];
   late AnimationController _bellBadgeController;
+  StreamSubscription<QuerySnapshot>? _notificationsSub;
+  bool _loading = true;
+  String? _currentUserId;
 
   @override
   void initState() {
     super.initState();
-    _notifications = [
-      NotificationItem(
-        id: '1',
-        title: 'New Task Assigned',
-        description: 'Massage (60min) for Sarah at 10AM',
-        time: '12 minutes ago',
-        icon: FontAwesomeIcons.listCheck,
-        type: 'task',
-        isRead: false,
-      ),
-      NotificationItem(
-        id: '2',
-        title: 'Room Change',
-        description: 'Room updated from R1 → R3 for 12PM Facial',
-        time: '1 hour ago',
-        icon: FontAwesomeIcons.doorOpen,
-        type: 'task',
-        isRead: false,
-      ),
-      NotificationItem(
-        id: '3',
-        title: 'Timesheet Approved',
-        description: 'Your hours for 14 March have been approved.',
-        time: 'Yesterday at 7:45 PM',
-        icon: FontAwesomeIcons.circleCheck,
-        type: 'system',
-        isRead: true,
-      ),
-      NotificationItem(
-        id: '4',
-        title: 'Customer Feedback',
-        description: 'Maria rated you 5 stars for your service 💖',
-        time: '2 days ago',
-        icon: FontAwesomeIcons.star,
-        type: 'system',
-        isRead: true,
-      ),
-      NotificationItem(
-        id: '5',
-        title: 'Schedule Update',
-        description: 'Your shift for tomorrow has been confirmed',
-        time: '3 days ago',
-        icon: FontAwesomeIcons.calendar,
-        type: 'system',
-        isRead: true,
-      ),
-      NotificationItem(
-        id: '6',
-        title: 'Payment Processed',
-        description: 'Weekly salary has been deposited to your account',
-        time: '1 week ago',
-        icon: FontAwesomeIcons.dollarSign,
-        type: 'system',
-        isRead: true,
-      ),
-    ];
-
     _bellBadgeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
+    
+    _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() {
+        _loading = false;
+      });
+      return;
+    }
+    
+    _currentUserId = user.uid;
+    
+    // Listen to notifications where staffUid matches current user
+    // This captures booking assignments to this staff member
+    _notificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('staffUid', isEqualTo: user.uid)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _notifications = snapshot.docs
+              .map((doc) => NotificationItem.fromFirestore(doc))
+              .toList();
+          _loading = false;
+        });
+      }
+    }, onError: (e) {
+      debugPrint("Error loading notifications: $e");
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
     _bellBadgeController.dispose();
+    _notificationsSub?.cancel();
     super.dispose();
   }
 
@@ -123,20 +183,46 @@ class _NotificationsPageState extends State<NotificationsPage>
 
   int get _unreadCount => _notifications.where((n) => !n.isRead).length;
 
-  void _markAsRead(NotificationItem item) {
+  Future<void> _markAsRead(NotificationItem item) async {
     if (!item.isRead) {
+      // Update local state immediately for responsiveness
       setState(() {
         item.isRead = true;
       });
+      
+      // Update Firestore
+      try {
+        await FirebaseFirestore.instance
+            .collection('notifications')
+            .doc(item.id)
+            .update({'read': true});
+      } catch (e) {
+        debugPrint("Error marking notification as read: $e");
+      }
     }
   }
 
-  void _clearAll() {
+  Future<void> _clearAll() async {
+    // Mark all as read locally
     setState(() {
       for (final n in _notifications) {
         n.isRead = true;
       }
     });
+    
+    // Batch update in Firestore
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      for (final n in _notifications) {
+        batch.update(
+          FirebaseFirestore.instance.collection('notifications').doc(n.id),
+          {'read': true},
+        );
+      }
+      await batch.commit();
+    } catch (e) {
+      debugPrint("Error marking all notifications as read: $e");
+    }
   }
 
   @override
@@ -148,16 +234,68 @@ class _NotificationsPageState extends State<NotificationsPage>
           children: [
             _buildHeader(),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _buildTabs(),
-                  const SizedBox(height: 24),
-                  _buildNotificationList(),
-                  const SizedBox(height: 32),
-                  _buildClearButton(),
-                  const SizedBox(height: 16),
-                ],
+              child: _loading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: _NotifTheme.primary,
+                      ),
+                    )
+                  : _notifications.isEmpty
+                      ? _buildEmptyState()
+                      : ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            _buildTabs(),
+                            const SizedBox(height: 24),
+                            _buildNotificationList(),
+                            const SizedBox(height: 32),
+                            if (_notifications.isNotEmpty) _buildClearButton(),
+                            const SizedBox(height: 16),
+                          ],
+                        ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                color: _NotifTheme.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                FontAwesomeIcons.bellSlash,
+                size: 40,
+                color: _NotifTheme.primary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'No Notifications',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: _NotifTheme.text,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'You\'ll receive notifications here when bookings are assigned to you.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: _NotifTheme.muted,
               ),
             ),
           ],
@@ -246,6 +384,30 @@ class _NotificationsPageState extends State<NotificationsPage>
 
   Widget _buildNotificationList() {
     final items = _filteredNotifications;
+    if (items.isEmpty && _notifications.isNotEmpty) {
+      // Filter returned no results
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        child: Column(
+          children: [
+            Icon(
+              FontAwesomeIcons.filter,
+              size: 32,
+              color: _NotifTheme.muted.withOpacity(0.5),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'No ${_currentFilter == 'task' ? 'task' : 'system'} notifications',
+              style: const TextStyle(
+                color: _NotifTheme.muted,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
     return Column(
       children: items
           .map(

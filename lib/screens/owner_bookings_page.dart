@@ -351,11 +351,11 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
           ? (updatedServices.first['staffName'] ?? booking.staff)
           : booking.staff;
       
-      // Generate content
+      // Generate content for CUSTOMER notification
       final content = _getNotificationContent(
         status: newStatus,
         bookingCode: raw['bookingCode']?.toString(),
-        staffName: finalStaffName, // This is just for the message text
+        staffName: finalStaffName,
         serviceName: booking.service,
         bookingDate: booking.date,
         bookingTime: (raw['time'] ?? '').toString(),
@@ -373,9 +373,6 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         'createdAt': FieldValue.serverTimestamp(),
       };
       
-      // Remove top-level staffName from notification data if it exists in raw
-      // But we might want to keep it if the notification UI expects it for display
-      // For now, we'll keep it as a fallback display value
       notifData['staffName'] = finalStaffName;
 
       // Add optional fields
@@ -385,7 +382,6 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       if (raw['bookingCode'] != null) notifData['bookingCode'] = raw['bookingCode'];
       
       // Richer details
-      notifData['staffName'] = finalStaffName;
       notifData['serviceName'] = booking.service;
       if (raw['branchName'] != null) notifData['branchName'] = raw['branchName'];
       if (booking.date.isNotEmpty) notifData['bookingDate'] = booking.date;
@@ -399,9 +395,84 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         }).toList();
       }
 
+      // Create customer notification
       await db.collection('notifications').add(notifData);
+      
+      // Create STAFF notifications when booking is confirmed with assigned staff
+      if (newStatus == 'Confirmed' && finalServices.isNotEmpty) {
+        await _createStaffNotifications(
+          db: db,
+          bookingId: bookingId,
+          booking: booking,
+          services: finalServices,
+          ownerUid: raw['ownerUid']?.toString() ?? '',
+        );
+      }
     } catch (e) {
       debugPrint("Error creating notification: $e");
+    }
+  }
+
+  /// Create notifications for each staff member assigned to a confirmed booking
+  Future<void> _createStaffNotifications({
+    required FirebaseFirestore db,
+    required String bookingId,
+    required _Booking booking,
+    required List<Map<String, dynamic>> services,
+    required String ownerUid,
+  }) async {
+    try {
+      // Collect unique staff IDs from services
+      final Set<String> notifiedStaffIds = {};
+      
+      for (final service in services) {
+        final staffId = (service['staffId'] ?? '').toString();
+        final staffName = (service['staffName'] ?? '').toString();
+        
+        // Skip if no valid staff assigned or already notified
+        if (staffId.isEmpty || notifiedStaffIds.contains(staffId)) continue;
+        if (staffName.toLowerCase().contains('any staff') || 
+            staffName.toLowerCase().contains('any available')) continue;
+        
+        notifiedStaffIds.add(staffId);
+        
+        // Build list of services assigned to this staff
+        final staffServices = services
+            .where((s) => s['staffId'] == staffId)
+            .map((s) => s['name'] ?? 'Service')
+            .toList();
+        
+        final servicesList = staffServices.join(', ');
+        final time = (booking.rawData['time'] ?? '').toString();
+        
+        final staffNotifData = {
+          'bookingId': bookingId,
+          'type': 'booking_assigned',
+          'title': 'New Booking Assigned',
+          'message': 'You have been assigned a booking for $servicesList with ${booking.customerName} on ${booking.date} at $time.',
+          'status': 'Confirmed',
+          'ownerUid': ownerUid,
+          'staffUid': staffId, // Key field for staff notifications
+          'staffName': staffName,
+          'customerName': booking.customerName,
+          'customerEmail': booking.email,
+          'serviceName': servicesList,
+          'branchName': booking.rawData['branchName'],
+          'branchId': booking.branchId,
+          'bookingDate': booking.date,
+          'bookingTime': time,
+          'read': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        };
+        
+        // Add services array for detailed view
+        staffNotifData['services'] = staffServices.map((name) => {'name': name}).toList();
+        
+        await db.collection('notifications').add(staffNotifData);
+        debugPrint("Created staff notification for $staffName ($staffId)");
+      }
+    } catch (e) {
+      debugPrint("Error creating staff notifications: $e");
     }
   }
 
