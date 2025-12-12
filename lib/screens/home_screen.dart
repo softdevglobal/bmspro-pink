@@ -13,6 +13,7 @@ import 'all_appointments_page.dart';
 import 'appointment_details_page.dart';
 import 'clients_screen.dart';
 import 'walk_in_booking_page.dart';
+import 'appointment_requests_page.dart';
 import 'admin_dashboard.dart';
 import 'branch_admin_dashboard.dart';
 import 'owner_bookings_page.dart';
@@ -84,6 +85,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Unread notifications count
   int _unreadNotificationCount = 0;
   StreamSubscription<QuerySnapshot>? _notificationsSub;
+  
+  // Pending appointment requests count (for staff)
+  int _pendingRequestsCount = 0;
+  StreamSubscription<QuerySnapshot>? _pendingRequestsSub;
 
   @override
   void initState() {
@@ -100,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     _fetchUserRole();
     _listenToUnreadNotifications();
+    _listenToPendingRequests();
   }
 
   /// Listen to unread notifications for the current staff
@@ -120,6 +126,67 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     }, onError: (e) {
       debugPrint('Error listening to notifications: $e');
+    });
+  }
+
+  /// Listen to pending appointment requests assigned to this staff
+  void _listenToPendingRequests() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Wait for ownerUid to be available
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (_ownerUid == null || _ownerUid!.isEmpty) return;
+
+    // Listen for both AwaitingStaffApproval AND PartiallyApproved statuses
+    _pendingRequestsSub = FirebaseFirestore.instance
+        .collection('bookings')
+        .where('ownerUid', isEqualTo: _ownerUid)
+        .where('status', whereIn: ['AwaitingStaffApproval', 'PartiallyApproved'])
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      
+      int count = 0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        
+        // Check if assigned to current user (check both staffId and staffAuthUid)
+        bool hasPendingService = false;
+        
+        // Single service booking
+        final bookingStaffId = data['staffId']?.toString();
+        final bookingStaffAuthUid = data['staffAuthUid']?.toString();
+        if (bookingStaffId == user.uid || bookingStaffAuthUid == user.uid) {
+          hasPendingService = true;
+        }
+        
+        // Multi-service booking - check for pending services assigned to this staff
+        if (data['services'] is List) {
+          for (final service in (data['services'] as List)) {
+            if (service is Map) {
+              final serviceStaffId = service['staffId']?.toString();
+              final serviceStaffAuthUid = service['staffAuthUid']?.toString();
+              final approvalStatus = service['approvalStatus']?.toString() ?? 'pending';
+              
+              // Only count if assigned to this staff AND status is pending
+              final isMyService = serviceStaffId == user.uid || serviceStaffAuthUid == user.uid;
+              if (isMyService && approvalStatus == 'pending') {
+                hasPendingService = true;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (hasPendingService) count++;
+      }
+      
+      setState(() {
+        _pendingRequestsCount = count;
+      });
+    }, onError: (e) {
+      debugPrint('Error listening to pending requests: $e');
     });
   }
 
@@ -255,18 +322,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           String? serviceName;
           String? duration;
           
-          // Check staffId at booking level
-          if (data['staffId'] == user.uid) {
+          // Check staffId and staffAuthUid at booking level
+          final bookingStaffId = data['staffId']?.toString();
+          final bookingStaffAuthUid = data['staffAuthUid']?.toString();
+          if (bookingStaffId == user.uid || bookingStaffAuthUid == user.uid) {
             isAssigned = true;
             debugPrint('Booking ${doc.id} assigned via staffId');
           }
           
-          // Check services array for staff assignment
+          // Check services array for staff assignment (check both staffId and staffAuthUid)
           if (data['services'] is List) {
             for (final service in (data['services'] as List)) {
               if (service is Map) {
                 final serviceStaffId = service['staffId']?.toString();
-                if (serviceStaffId == user.uid) {
+                final serviceStaffAuthUid = service['staffAuthUid']?.toString();
+                if (serviceStaffId == user.uid || serviceStaffAuthUid == user.uid) {
                   isAssigned = true;
                   serviceName ??= service['name']?.toString() ?? service['serviceName']?.toString();
                   duration ??= service['duration']?.toString();
@@ -339,6 +409,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _pulseController.dispose();
     _workTimer?.cancel();
     _notificationsSub?.cancel();
+    _pendingRequestsSub?.cancel();
     super.dispose();
   }
 
@@ -478,11 +549,134 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           children: [
             _buildHeader(),
             const SizedBox(height: 24),
+            // Show pending requests alert if there are any
+            if (_pendingRequestsCount > 0) ...[
+              _buildPendingRequestsAlert(),
+              const SizedBox(height: 24),
+            ],
             _buildStatusCard(),
             const SizedBox(height: 24),
             _buildAppointmentsSection(),
             const SizedBox(height: 24),
             _buildCreateBookingSection(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPendingRequestsAlert() {
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AppointmentRequestsPage()),
+        );
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.orange.shade400,
+              Colors.orange.shade600,
+            ],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.orange.withOpacity(0.3),
+              blurRadius: 15,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Center(
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Icon(
+                      FontAwesomeIcons.userClock,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                    Positioned(
+                      top: -8,
+                      right: -8,
+                      child: Container(
+                        width: 22,
+                        height: 22,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.orange.shade600, width: 2),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '$_pendingRequestsCount',
+                            style: TextStyle(
+                              color: Colors.orange.shade700,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Pending Requests',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$_pendingRequestsCount appointment${_pendingRequestsCount == 1 ? '' : 's'} awaiting your approval',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Icon(
+                  FontAwesomeIcons.chevronRight,
+                  color: Colors.white,
+                  size: 14,
+                ),
+              ),
+            ),
           ],
         ),
       ),

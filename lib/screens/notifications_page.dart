@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'appointment_requests_page.dart';
 
 class _NotifTheme {
   static const Color primary = Color(0xFFFF2D8F);
@@ -57,7 +58,14 @@ class NotificationItem {
     IconData icon = FontAwesomeIcons.bell;
     String displayType = 'system';
     
-    if (type == 'booking_assigned' || type == 'booking_confirmed') {
+    // Staff assignment notifications (new workflow)
+    if (type == 'staff_assignment') {
+      icon = FontAwesomeIcons.userClock;
+      displayType = 'task';
+    } else if (type == 'staff_reassignment') {
+      icon = FontAwesomeIcons.userPlus;
+      displayType = 'task';
+    } else if (type == 'booking_assigned' || type == 'booking_confirmed') {
       icon = FontAwesomeIcons.calendarCheck;
       displayType = 'task';
     } else if (type == 'booking_completed') {
@@ -69,6 +77,12 @@ class NotificationItem {
     } else if (type == 'booking_status_changed') {
       icon = FontAwesomeIcons.calendarDay;
       displayType = 'task';
+    } else if (type == 'staff_accepted') {
+      icon = FontAwesomeIcons.thumbsUp;
+      displayType = 'system';
+    } else if (type == 'staff_rejected') {
+      icon = FontAwesomeIcons.userXmark;
+      displayType = 'system';
     }
     
     return NotificationItem(
@@ -415,7 +429,16 @@ class _NotificationsPageState extends State<NotificationsPage>
               padding: const EdgeInsets.only(bottom: 16),
               child: _NotificationCard(
                 item: item,
-                onTap: () => _markAsRead(item),
+                onTap: () {
+                  _markAsRead(item);
+                  // Navigate to appointment requests if it's a staff assignment notification
+                  final type = item.rawData?['type']?.toString() ?? '';
+                  if (type == 'staff_assignment' || type == 'staff_reassignment') {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AppointmentRequestsPage()),
+                    );
+                  }
+                },
               ),
             ),
           )
