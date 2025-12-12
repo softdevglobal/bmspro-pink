@@ -4,6 +4,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'client_profile_page.dart';
+import '../widgets/animated_toggle.dart';
 
 // --- 1. Theme & Colors ---
 class AppColors {
@@ -54,11 +55,26 @@ class ClientsScreen extends StatefulWidget {
 class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateMixin {
   // Live data from Firestore
   List<Client> _allClients = [];
+  List<Client> _myClients = [];
+  List<Client> _branchClients = [];
+  
+  // Saved customers from customers collection
+  List<Client> _savedMyClients = [];
+  List<Client> _savedBranchClients = [];
 
   // State
   String _currentFilter = 'all';
   String _searchQuery = '';
   List<Client> _filteredClients = [];
+  
+  // Toggle state: false = My Clients, true = Branch Clients
+  bool _showBranchClients = false;
+  
+  // User role info
+  String? _userRole;
+  String? _branchId;
+  String? _ownerUid;
+  bool _isLoadingRole = true;
 
   // Animation Controllers
   final List<AnimationController> _staggerControllers = [];
@@ -67,27 +83,131 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
   void initState() {
     super.initState();
     _filteredClients = [];
-    _listenToClients();
+    _fetchUserRoleAndListenToClients();
   }
 
+  Future<void> _fetchUserRoleAndListenToClients() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() => _isLoadingRole = false);
+        return;
+      }
+
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (mounted && userDoc.exists) {
+        final data = userDoc.data()!;
+        setState(() {
+          _userRole = (data['role'] ?? '').toString();
+          _branchId = (data['branchId'] ?? '').toString();
+          // For branch admin, use ownerUid; for owner, use own uid
+          if (_userRole == 'salon_branch_admin') {
+            _ownerUid = (data['ownerUid'] ?? '').toString();
+          } else {
+            _ownerUid = user.uid;
+          }
+          _isLoadingRole = false;
+        });
+        _listenToClients();
+      } else {
+        setState(() {
+          _ownerUid = user.uid;
+          _isLoadingRole = false;
+        });
+        _listenToClients();
+      }
+    } catch (e) {
+      debugPrint('Error fetching user role: $e');
+      final user = FirebaseAuth.instance.currentUser;
+      setState(() {
+        _ownerUid = user?.uid;
+        _isLoadingRole = false;
+      });
+      _listenToClients();
+    }
+  }
+
+  bool get _isBranchAdmin => _userRole == 'salon_branch_admin';
+
   void _listenToClients() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (_ownerUid == null || _ownerUid!.isEmpty) return;
 
-    final ownerUid = user.uid;
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
+    // Listen to saved customers collection
     FirebaseFirestore.instance
-        .collection('bookings')
-        .where('ownerUid', isEqualTo: ownerUid)
+        .collection('customers')
+        .where('ownerUid', isEqualTo: _ownerUid)
         .snapshots()
         .listen((snap) {
-      final Map<String, Map<String, dynamic>> map = {};
+      final List<Client> myClients = [];
+      final List<Client> branchClients = [];
+
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final name = (data['name'] ?? data['fullName'] ?? '').toString().trim();
+        final email = (data['email'] ?? '').toString().trim();
+        final phone = (data['phone'] ?? '').toString().trim();
+        final staffId = (data['staffId'] ?? '').toString();
+        final customerBranchId = (data['branchId'] ?? '').toString();
+        final visits = (data['visits'] ?? 0) as int;
+
+        if (name.isEmpty && email.isEmpty && phone.isEmpty) continue;
+
+        final client = Client(
+          id: doc.id,
+          name: name.isNotEmpty ? name : (email.isNotEmpty ? email : phone),
+          phone: phone,
+          email: email,
+          type: visits >= 8 ? 'vip' : (visits <= 1 ? 'new' : 'active'),
+          avatarUrl: '',
+          visits: visits,
+          lastVisit: null,
+        );
+
+        // Check if this is my client (created by me)
+        if (staffId == currentUserId || data['createdBy'] == currentUserId) {
+          myClients.add(client);
+        }
+
+        // Check if this belongs to my branch
+        if (_branchId != null && _branchId!.isNotEmpty && customerBranchId == _branchId) {
+          branchClients.add(client);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _savedMyClients = myClients;
+        _savedBranchClients = branchClients;
+      });
+      _mergeAndFilterClients();
+    }, onError: (e) {
+      debugPrint('Error loading saved customers: $e');
+    });
+
+    // Listen to bookings collection
+    FirebaseFirestore.instance
+        .collection('bookings')
+        .where('ownerUid', isEqualTo: _ownerUid)
+        .snapshots()
+        .listen((snap) {
+      final Map<String, Map<String, dynamic>> allClientsMap = {};
+      final Map<String, Map<String, dynamic>> myClientsMap = {};
+      final Map<String, Map<String, dynamic>> branchClientsMap = {};
+      
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
       for (final doc in snap.docs) {
         final data = doc.data();
         final name = (data['client'] ?? '').toString().trim();
         final email = (data['clientEmail'] ?? '').toString().trim();
         final phone = (data['clientPhone'] ?? '').toString().trim();
+        final bookingBranchId = (data['branchId'] ?? '').toString();
 
         if (name.isEmpty && email.isEmpty && phone.isEmpty) continue;
 
@@ -105,89 +225,199 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
           }
         } catch (_) {}
 
-        final existing = map[key];
-        if (existing == null) {
-          map[key] = {
-            'name': name.isNotEmpty ? name : (email.isNotEmpty ? email : phone),
-            'email': email,
-            'phone': phone,
-            'visits': 1,
-            'lastVisit': bookingDate,
-          };
-        } else {
-          existing['visits'] = (existing['visits'] as int) + 1;
-          final currentLast = existing['lastVisit'] as DateTime?;
-          if (bookingDate != null &&
-              (currentLast == null || bookingDate.isAfter(currentLast))) {
-            existing['lastVisit'] = bookingDate;
+        // Check if this booking belongs to current user (staff)
+        bool isMyClient = false;
+        if (data['staffId'] == currentUserId) {
+          isMyClient = true;
+        }
+        if (data['services'] is List) {
+          for (final service in (data['services'] as List)) {
+            if (service is Map && service['staffId'] == currentUserId) {
+              isMyClient = true;
+              break;
+            }
           }
+        }
+
+        // Check if this booking belongs to current branch
+        bool isBranchClient = _branchId != null && 
+            _branchId!.isNotEmpty && 
+            bookingBranchId == _branchId;
+
+        // Helper to add/update client in a map
+        void addToMap(Map<String, Map<String, dynamic>> map) {
+          final existing = map[key];
+          if (existing == null) {
+            map[key] = {
+              'name': name.isNotEmpty ? name : (email.isNotEmpty ? email : phone),
+              'email': email,
+              'phone': phone,
+              'visits': 1,
+              'lastVisit': bookingDate,
+            };
+          } else {
+            existing['visits'] = (existing['visits'] as int) + 1;
+            final currentLast = existing['lastVisit'] as DateTime?;
+            if (bookingDate != null &&
+                (currentLast == null || bookingDate.isAfter(currentLast))) {
+              existing['lastVisit'] = bookingDate;
+            }
+          }
+        }
+
+        // Add to all clients
+        addToMap(allClientsMap);
+        
+        // Add to my clients if served by me
+        if (isMyClient) {
+          addToMap(myClientsMap);
+        }
+        
+        // Add to branch clients if same branch
+        if (isBranchClient) {
+          addToMap(branchClientsMap);
         }
       }
 
-      final now = DateTime.now();
-      final clients = map.entries.map((entry) {
-        final data = entry.value;
-        final visits = (data['visits'] as int?) ?? 0;
-        final DateTime? lastVisit = data['lastVisit'] as DateTime?;
+      // Convert maps to Client lists
+      List<Client> convertMapToClients(Map<String, Map<String, dynamic>> map) {
+        final now = DateTime.now();
+        return map.entries.map((entry) {
+          final data = entry.value;
+          final visits = (data['visits'] as int?) ?? 0;
+          final DateTime? lastVisit = data['lastVisit'] as DateTime?;
 
-        String type = 'active';
-        if (visits >= 8) {
-          type = 'vip';
-        } else if (visits <= 1) {
-          type = 'new';
-        }
-        if (lastVisit != null &&
-            now.difference(lastVisit).inDays > 120 &&
-            visits > 0) {
-          type = 'risk';
-        }
+          String type = 'active';
+          if (visits >= 8) {
+            type = 'vip';
+          } else if (visits <= 1) {
+            type = 'new';
+          }
+          if (lastVisit != null &&
+              now.difference(lastVisit).inDays > 120 &&
+              visits > 0) {
+            type = 'risk';
+          }
 
-        final name = (data['name'] as String?) ?? 'Customer';
-        final email = (data['email'] as String?) ?? '';
-        final phone = (data['phone'] as String?) ?? '';
+          final name = (data['name'] as String?) ?? 'Customer';
+          final email = (data['email'] as String?) ?? '';
+          final phone = (data['phone'] as String?) ?? '';
 
-        final avatarUrl =
-            'https://ui-avatars.com/api/?background=FF2D8F&color=fff&name=${Uri.encodeComponent(name)}';
+          final avatarUrl =
+              'https://ui-avatars.com/api/?background=FF2D8F&color=fff&name=${Uri.encodeComponent(name)}';
 
-        return Client(
-          id: entry.key,
-          name: name,
-          phone: phone,
-          email: email,
-          type: type,
-          avatarUrl: avatarUrl,
-          visits: visits,
-          lastVisit: lastVisit,
-        );
-      }).toList()
-        ..sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-        );
+          return Client(
+            id: entry.key,
+            name: name,
+            phone: phone,
+            email: email,
+            type: type,
+            avatarUrl: avatarUrl,
+            visits: visits,
+            lastVisit: lastVisit,
+          );
+        }).toList()
+          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      }
+
+      final allClients = convertMapToClients(allClientsMap);
+      final myClients = convertMapToClients(myClientsMap);
+      final branchClients = convertMapToClients(branchClientsMap);
 
       if (!mounted) return;
 
       setState(() {
-        _allClients = clients;
-
-        // Recreate stagger controllers for current list
-        for (final c in _staggerControllers) {
-          c.dispose();
-        }
-        _staggerControllers.clear();
-        for (int i = 0; i < clients.length; i++) {
-          _staggerControllers.add(
-            AnimationController(
-              vsync: this,
-              duration: const Duration(milliseconds: 600),
-            ),
-          );
-        }
+        _allClients = allClients;
+        _myClients = myClients;
+        _branchClients = branchClients;
       });
 
-      _filterClients();
+      _mergeAndFilterClients();
     }, onError: (e) {
       debugPrint('Error loading clients: $e');
     });
+  }
+
+  // Merge saved customers with booking customers and filter
+  void _mergeAndFilterClients() {
+    // Merge saved clients with booking-derived clients
+    List<Client> mergeClients(List<Client> bookingClients, List<Client> savedClients) {
+      final Map<String, Client> merged = {};
+      
+      // Add booking clients
+      for (final client in bookingClients) {
+        final key = (client.email.isNotEmpty ? client.email : 
+            (client.phone.isNotEmpty ? client.phone : client.name)).toLowerCase();
+        merged[key] = client;
+      }
+      
+      // Add saved clients (won't overwrite if already exists from bookings)
+      for (final client in savedClients) {
+        final key = (client.email.isNotEmpty ? client.email : 
+            (client.phone.isNotEmpty ? client.phone : client.name)).toLowerCase();
+        if (!merged.containsKey(key)) {
+          merged[key] = client;
+        }
+      }
+      
+      return merged.values.toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    }
+
+    final mergedMyClients = mergeClients(_myClients, _savedMyClients);
+    final mergedBranchClients = mergeClients(_branchClients, _savedBranchClients);
+
+    // Update stagger controllers
+    for (final c in _staggerControllers) {
+      c.dispose();
+    }
+    _staggerControllers.clear();
+    
+    final currentList = _isBranchAdmin 
+        ? (_showBranchClients ? mergedBranchClients : mergedMyClients)
+        : _allClients;
+        
+    for (int i = 0; i < currentList.length; i++) {
+      _staggerControllers.add(
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 600),
+        ),
+      );
+    }
+
+    _filterClients();
+  }
+  
+  List<Client> _getActiveClientList() {
+    // Merge saved clients with booking-derived clients
+    List<Client> mergeClients(List<Client> bookingClients, List<Client> savedClients) {
+      final Map<String, Client> merged = {};
+      
+      for (final client in bookingClients) {
+        final key = (client.email.isNotEmpty ? client.email : 
+            (client.phone.isNotEmpty ? client.phone : client.name)).toLowerCase();
+        merged[key] = client;
+      }
+      
+      for (final client in savedClients) {
+        final key = (client.email.isNotEmpty ? client.email : 
+            (client.phone.isNotEmpty ? client.phone : client.name)).toLowerCase();
+        if (!merged.containsKey(key)) {
+          merged[key] = client;
+        }
+      }
+      
+      return merged.values.toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    }
+
+    if (_isBranchAdmin) {
+      return _showBranchClients 
+          ? mergeClients(_branchClients, _savedBranchClients) 
+          : mergeClients(_myClients, _savedMyClients);
+    }
+    return _allClients;
   }
 
   void _startAnimations() {
@@ -210,7 +440,8 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
 
   // --- Logic ---
   void _filterClients() {
-    final filtered = _allClients.where((client) {
+    final sourceList = _getActiveClientList();
+    final filtered = sourceList.where((client) {
       final query = _searchQuery.toLowerCase();
       final matchesSearch =
           client.name.toLowerCase().contains(query) ||
@@ -250,10 +481,315 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
     _currentFilter = filter;
     _filterClients();
   }
+  
+  void _onToggleChanged(int index) {
+    setState(() {
+      _showBranchClients = index == 1;
+    });
+    _filterClients();
+  }
+
+  // Add Client Modal
+  void _showAddClientModal() {
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+    final emailController = TextEditingController();
+    final notesController = TextEditingController();
+    bool isSaving = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Handle bar
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          FontAwesomeIcons.userPlus,
+                          color: AppColors.primary,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Add New Client',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.text,
+                            ),
+                          ),
+                          Text(
+                            'Add to your client list',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Name Field
+                  _buildInputField(
+                    label: 'Full Name *',
+                    controller: nameController,
+                    icon: FontAwesomeIcons.user,
+                    placeholder: 'Enter client name',
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Phone Field
+                  _buildInputField(
+                    label: 'Phone Number',
+                    controller: phoneController,
+                    icon: FontAwesomeIcons.phone,
+                    placeholder: 'Enter phone number',
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Email Field
+                  _buildInputField(
+                    label: 'Email Address',
+                    controller: emailController,
+                    icon: FontAwesomeIcons.envelope,
+                    placeholder: 'Enter email address',
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Notes Field
+                  _buildInputField(
+                    label: 'Notes',
+                    controller: notesController,
+                    icon: FontAwesomeIcons.noteSticky,
+                    placeholder: 'Any additional notes...',
+                    maxLines: 3,
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Action Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: Colors.grey[300]!),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: AppColors.muted,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: isSaving
+                              ? null
+                              : () async {
+                                  final name = nameController.text.trim();
+                                  if (name.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Please enter client name'),
+                                        backgroundColor: AppColors.red,
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  setModalState(() => isSaving = true);
+
+                                  try {
+                                    final user = FirebaseAuth.instance.currentUser;
+                                    if (user == null) return;
+
+                                    // Create customer document
+                                    await FirebaseFirestore.instance
+                                        .collection('customers')
+                                        .add({
+                                      'name': name,
+                                      'phone': phoneController.text.trim(),
+                                      'email': emailController.text.trim(),
+                                      'notes': notesController.text.trim(),
+                                      'ownerUid': _ownerUid,
+                                      'staffId': user.uid,
+                                      'branchId': _branchId ?? '',
+                                      'status': 'Active',
+                                      'visits': 0,
+                                      'createdAt': FieldValue.serverTimestamp(),
+                                      'createdBy': user.uid,
+                                    });
+
+                                    if (mounted) {
+                                      Navigator.pop(context);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('$name added successfully'),
+                                          backgroundColor: AppColors.green,
+                                        ),
+                                      );
+                                    }
+                                  } catch (e) {
+                                    debugPrint('Error adding client: $e');
+                                    setModalState(() => isSaving = false);
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Failed to add client'),
+                                          backgroundColor: AppColors.red,
+                                        ),
+                                      );
+                                    }
+                                  }
+                                },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: isSaving
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  'Add Client',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputField({
+    required String label,
+    required TextEditingController controller,
+    required IconData icon,
+    required String placeholder,
+    TextInputType? keyboardType,
+    int maxLines = 1,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.text,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.chipBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: TextField(
+            controller: controller,
+            keyboardType: keyboardType,
+            maxLines: maxLines,
+            decoration: InputDecoration(
+              hintText: placeholder,
+              hintStyle: TextStyle(color: AppColors.muted.withOpacity(0.7), fontSize: 14),
+              prefixIcon: Icon(icon, size: 16, color: AppColors.muted),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(
+                vertical: maxLines > 1 ? 12 : 14,
+                horizontal: 12,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   // --- UI ---
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingRole) {
+      return const SafeArea(
+        child: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
+    }
+
     return SafeArea(
       child: Column(
         children: [
@@ -261,6 +797,19 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
             padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
             child: _buildHeader(),
           ),
+          // Toggle for branch admins
+          if (_isBranchAdmin) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: AnimatedToggle(
+                backgroundColor: Colors.white,
+                values: const ['My Clients', 'Branch Clients'],
+                selectedIndex: _showBranchClients ? 1 : 0,
+                onChanged: _onToggleChanged,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           _buildSearchAndFilter(),
           Expanded(
             child: Stack(
@@ -276,6 +825,15 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
   }
 
   Widget _buildHeader() {
+    final activeList = _getActiveClientList();
+    final clientCount = activeList.length;
+    final label = _isBranchAdmin 
+        ? (_showBranchClients ? '$clientCount Branch Clients' : '$clientCount My Clients')
+        : '$clientCount Active Clients';
+    
+    // Show add button only for "My Clients" (branch admin) or always (salon owner)
+    final showAddButton = !_isBranchAdmin || !_showBranchClients;
+    
     return Row(
       children: [
         const SizedBox(width: 24),
@@ -284,13 +842,18 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const Text('Clients', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.text)),
-              Text('156 Active Clients', style: GoogleFonts.inter(fontSize: 12, color: AppColors.muted)),
+              Text(label, style: GoogleFonts.inter(fontSize: 12, color: AppColors.muted)),
             ],
           ),
         ),
-        const SizedBox(
+        SizedBox(
           width: 24,
-          child: Icon(FontAwesomeIcons.userPlus, color: AppColors.primary, size: 18),
+          child: showAddButton
+              ? GestureDetector(
+                  onTap: _showAddClientModal,
+                  child: const Icon(FontAwesomeIcons.userPlus, color: AppColors.primary, size: 18),
+                )
+              : const SizedBox(),
         ),
       ],
     );
@@ -364,6 +927,66 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
   }
 
   Widget _buildClientList() {
+    final showAddButton = !_isBranchAdmin || !_showBranchClients;
+    
+    if (_filteredClients.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              FontAwesomeIcons.users,
+              size: 48,
+              color: AppColors.muted.withOpacity(0.5),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _isBranchAdmin
+                  ? (_showBranchClients ? 'No branch clients yet' : 'No clients yet')
+                  : 'No clients found',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.muted,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                _isBranchAdmin
+                    ? (_showBranchClients 
+                        ? 'Clients will appear here when bookings are made at your branch'
+                        : 'Add your first client or complete bookings')
+                    : 'Try adjusting your search or filters',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: AppColors.muted.withOpacity(0.7),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            if (showAddButton && _isBranchAdmin && !_showBranchClients) ...[
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: _showAddClientModal,
+                icon: const Icon(FontAwesomeIcons.userPlus, size: 14),
+                label: const Text('Add Client'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       itemCount: _filteredClients.length,

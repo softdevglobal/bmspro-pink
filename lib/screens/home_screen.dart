@@ -71,7 +71,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Role state
   String? _userRole;
   String? _branchName; // Store branch name if available
+  String? _userName; // Store user's name
+  String? _branchId;
+  String? _ownerUid;
   bool _isLoadingRole = true;
+  
+  // Today's appointments
+  List<Map<String, dynamic>> _todayAppointments = [];
+  bool _isLoadingAppointments = true;
 
   @override
   void initState() {
@@ -100,17 +107,51 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         
         if (mounted && doc.exists) {
           final data = doc.data();
+          
+          // Get name from various possible fields
+          String? fetchedName;
+          if (data?['displayName'] != null && data!['displayName'].toString().isNotEmpty) {
+            fetchedName = data['displayName'].toString();
+          } else if (data?['firstName'] != null && data!['firstName'].toString().isNotEmpty) {
+            final firstName = data['firstName'].toString();
+            final lastName = data['lastName']?.toString() ?? '';
+            fetchedName = '$firstName $lastName'.trim();
+          } else if (data?['name'] != null && data!['name'].toString().isNotEmpty) {
+            fetchedName = data['name'].toString();
+          } else if (data?['fullName'] != null && data!['fullName'].toString().isNotEmpty) {
+            fetchedName = data['fullName'].toString();
+          } else if (user.displayName != null && user.displayName!.isNotEmpty) {
+            fetchedName = user.displayName;
+          } else if (user.email != null) {
+            // Use email prefix as fallback
+            fetchedName = user.email!.split('@').first;
+          }
+          
           setState(() {
             // Trim and normalize the role to ensure proper comparison
             final rawRole = data?['role'];
             _userRole = rawRole != null ? rawRole.toString().trim() : null;
             // Try to find a branch name or branch field
-            // Assuming 'branch' or 'branchName' exists in the user document
             _branchName = data?['branchName'] ?? data?['branch'];
+            _userName = fetchedName ?? 'Staff';
+            _branchId = data?['branchId'];
+            _ownerUid = data?['ownerUid'] ?? user.uid;
             _isLoadingRole = false;
           });
+          
+          // Fetch today's appointments for staff
+          if (_userRole != 'salon_owner' && _userRole != 'salon_branch_admin') {
+            _fetchTodayAppointments();
+          }
         } else {
-          if (mounted) setState(() => _isLoadingRole = false);
+          // User document doesn't exist, try to get name from Firebase Auth
+          if (mounted) {
+            setState(() {
+              _userName = user.displayName ?? user.email?.split('@').first ?? 'Staff';
+              _ownerUid = user.uid;
+              _isLoadingRole = false;
+            });
+          }
         }
       } else {
         if (mounted) setState(() => _isLoadingRole = false);
@@ -118,6 +159,130 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } catch (e) {
       debugPrint('Error fetching role: $e');
       if (mounted) setState(() => _isLoadingRole = false);
+    }
+  }
+
+  Future<void> _fetchTodayAppointments() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() => _isLoadingAppointments = false);
+        return;
+      }
+
+      // Get today's date in YYYY-MM-DD format
+      final now = DateTime.now();
+      final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+      debugPrint('Fetching appointments for date: $todayStr, ownerUid: $_ownerUid, staffId: ${user.uid}');
+
+      // Build query - if ownerUid is available, use it; otherwise query by staffId
+      Query<Map<String, dynamic>> bookingsQuery;
+      
+      if (_ownerUid != null && _ownerUid!.isNotEmpty) {
+        // Query by ownerUid and date
+        bookingsQuery = FirebaseFirestore.instance
+            .collection('bookings')
+            .where('ownerUid', isEqualTo: _ownerUid)
+            .where('date', isEqualTo: todayStr);
+      } else {
+        // Fallback: Query by staffId directly
+        bookingsQuery = FirebaseFirestore.instance
+            .collection('bookings')
+            .where('staffId', isEqualTo: user.uid)
+            .where('date', isEqualTo: todayStr);
+      }
+
+      // Listen to bookings
+      bookingsQuery.snapshots().listen((snap) {
+        final List<Map<String, dynamic>> appointments = [];
+        
+        debugPrint('Found ${snap.docs.length} bookings for today');
+        
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          
+          // Check if this booking is assigned to the current staff
+          bool isAssigned = false;
+          String? serviceName;
+          String? duration;
+          
+          // Check staffId at booking level
+          if (data['staffId'] == user.uid) {
+            isAssigned = true;
+            debugPrint('Booking ${doc.id} assigned via staffId');
+          }
+          
+          // Check services array for staff assignment
+          if (data['services'] is List) {
+            for (final service in (data['services'] as List)) {
+              if (service is Map) {
+                final serviceStaffId = service['staffId']?.toString();
+                if (serviceStaffId == user.uid) {
+                  isAssigned = true;
+                  serviceName ??= service['name']?.toString() ?? service['serviceName']?.toString();
+                  duration ??= service['duration']?.toString();
+                  debugPrint('Booking ${doc.id} assigned via service staffId');
+                }
+              }
+            }
+          }
+          
+          // If we queried by staffId directly, it's assigned
+          if (_ownerUid == null || _ownerUid!.isEmpty) {
+            isAssigned = true;
+          }
+          
+          if (!isAssigned) continue;
+          
+          // Get service name from various possible fields
+          if (serviceName == null || serviceName.isEmpty) {
+            if (data['services'] is List && (data['services'] as List).isNotEmpty) {
+              final firstService = (data['services'] as List).first;
+              if (firstService is Map) {
+                serviceName = firstService['name']?.toString() ?? firstService['serviceName']?.toString();
+                duration = firstService['duration']?.toString();
+              }
+            }
+          }
+          serviceName ??= data['serviceName']?.toString() ?? data['service']?.toString() ?? 'Service';
+          duration ??= data['duration']?.toString() ?? '';
+          
+          final time = data['time']?.toString() ?? data['startTime']?.toString() ?? '';
+          final status = data['status']?.toString() ?? 'pending';
+          
+          appointments.add({
+            'id': doc.id,
+            'serviceName': serviceName,
+            'duration': duration,
+            'time': time,
+            'status': status,
+            'client': data['client']?.toString() ?? data['clientName']?.toString() ?? 'Client',
+            'data': data,
+          });
+        }
+        
+        // Sort by time
+        appointments.sort((a, b) {
+          final timeA = a['time'] ?? '';
+          final timeB = b['time'] ?? '';
+          return timeA.compareTo(timeB);
+        });
+        
+        debugPrint('Processed ${appointments.length} appointments assigned to this staff');
+        
+        if (!mounted) return;
+        setState(() {
+          _todayAppointments = appointments;
+          _isLoadingAppointments = false;
+        });
+      }, onError: (e) {
+        debugPrint('Error fetching appointments: $e');
+        if (mounted) setState(() => _isLoadingAppointments = false);
+      });
+    } catch (e) {
+      debugPrint('Error fetching appointments: $e');
+      if (mounted) setState(() => _isLoadingAppointments = false);
     }
   }
 
@@ -310,7 +475,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // --- UI Components ---
+  String _getInitials(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2 && parts[0].isNotEmpty && parts[1].isNotEmpty) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
+
+  String _formatDate(DateTime date) {
+    const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                    'July', 'August', 'September', 'October', 'November', 'December'];
+    return '${weekDays[date.weekday - 1]}, ${date.day} ${months[date.month - 1]}';
+  }
+
   Widget _buildHeader() {
+    final displayName = _userName ?? 'Staff';
+    // Capitalize first letter of each word
+    final formattedName = displayName.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ');
+    final firstName = formattedName.split(' ').first;
+    final initials = _getInitials(displayName);
+    final today = DateTime.now();
+    
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -320,7 +511,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.primary.withOpacity(0.2), AppColors.accent.withOpacity(0.2)],
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: AppColors.primary.withOpacity(0.08),
@@ -328,10 +524,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     offset: const Offset(0, 8),
                   ),
                 ],
-                image: const DecorationImage(
-                  image: NetworkImage(
-                      'https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg'),
-                  fit: BoxFit.cover,
+              ),
+              child: Center(
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
                 ),
               ),
             ),
@@ -340,7 +541,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Hi Emma',
+                  'Hi $firstName',
                   style: GoogleFonts.inter(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -348,7 +549,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                 ),
                 Text(
-                  'Tuesday, 17 March',
+                  _formatDate(today),
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     color: AppColors.muted,
@@ -589,6 +790,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildAppointmentsSection() {
+    // Get pending/confirmed appointments
+    final upcomingAppointments = _todayAppointments.where((a) {
+      final status = (a['status'] ?? '').toString().toLowerCase();
+      return status == 'pending' || status == 'confirmed';
+    }).toList();
+    
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -620,34 +827,83 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   color: AppColors.primary,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text('3',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold)),
+                child: _isLoadingAppointments
+                    ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Text('${upcomingAppointments.length}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
               )
             ],
           ),
           const SizedBox(height: 16),
-          _buildAppointmentItem(
-            'Massage 60min',
-            '10:00 AM',
-            FontAwesomeIcons.spa,
-            [Colors.purple.shade400, Colors.purple.shade600],
-            isNext: true,
-          ),
-          _buildAppointmentItem(
-            'Facial 45min',
-            '12:00 PM',
-            FontAwesomeIcons.leaf,
-            [Colors.pink.shade400, Colors.pink.shade600],
-          ),
-          _buildAppointmentItem(
-            'Nails 45min',
-            '3:00 PM',
-            FontAwesomeIcons.handSparkles,
-            [AppColors.accent, AppColors.primary],
-          ),
+          if (_isLoadingAppointments)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(color: AppColors.primary),
+            )
+          else if (upcomingAppointments.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Column(
+                children: [
+                  Icon(
+                    FontAwesomeIcons.calendarCheck,
+                    size: 40,
+                    color: AppColors.muted.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No appointments today',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: AppColors.muted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Your schedule is clear!',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.muted.withOpacity(0.7),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...upcomingAppointments.asMap().entries.map((entry) {
+              final index = entry.key;
+              final appointment = entry.value;
+              final serviceName = appointment['serviceName'] ?? 'Service';
+              final duration = appointment['duration'];
+              final time = appointment['time'] ?? '';
+              final displayTitle = duration != null && duration.isNotEmpty 
+                  ? '$serviceName ${duration}min' 
+                  : serviceName;
+              
+              // Get icon and colors based on service name
+              final iconData = _getServiceIcon(serviceName);
+              final colors = _getServiceColors(index);
+              
+              return _buildAppointmentItem(
+                displayTitle,
+                _formatTime(time),
+                iconData,
+                colors,
+                isNext: index == 0,
+                appointmentData: appointment,
+              );
+            }),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
@@ -673,12 +929,67 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  IconData _getServiceIcon(String serviceName) {
+    final name = serviceName.toLowerCase();
+    if (name.contains('massage') || name.contains('spa')) {
+      return FontAwesomeIcons.spa;
+    } else if (name.contains('facial') || name.contains('face')) {
+      return FontAwesomeIcons.leaf;
+    } else if (name.contains('nail') || name.contains('manicure') || name.contains('pedicure')) {
+      return FontAwesomeIcons.handSparkles;
+    } else if (name.contains('hair') || name.contains('cut') || name.contains('style')) {
+      return FontAwesomeIcons.scissors;
+    } else if (name.contains('wax') || name.contains('threading')) {
+      return FontAwesomeIcons.feather;
+    } else if (name.contains('makeup') || name.contains('beauty')) {
+      return FontAwesomeIcons.wandMagicSparkles;
+    }
+    return FontAwesomeIcons.calendarCheck;
+  }
+
+  List<Color> _getServiceColors(int index) {
+    final colorSets = [
+      [Colors.purple.shade400, Colors.purple.shade600],
+      [Colors.pink.shade400, Colors.pink.shade600],
+      [AppColors.accent, AppColors.primary],
+      [Colors.blue.shade400, Colors.blue.shade600],
+      [Colors.teal.shade400, Colors.teal.shade600],
+      [Colors.orange.shade400, Colors.orange.shade600],
+    ];
+    return colorSets[index % colorSets.length];
+  }
+
+  String _formatTime(String time) {
+    if (time.isEmpty) return '';
+    
+    // If already formatted (contains AM/PM), return as is
+    if (time.toUpperCase().contains('AM') || time.toUpperCase().contains('PM')) {
+      return time;
+    }
+    
+    // Try to parse HH:mm format
+    try {
+      final parts = time.split(':');
+      if (parts.length >= 2) {
+        int hour = int.parse(parts[0]);
+        final minute = parts[1];
+        final period = hour >= 12 ? 'PM' : 'AM';
+        if (hour > 12) hour -= 12;
+        if (hour == 0) hour = 12;
+        return '$hour:$minute $period';
+      }
+    } catch (_) {}
+    
+    return time;
+  }
+
   Widget _buildAppointmentItem(
     String title,
     String time,
     IconData icon,
     List<Color> gradientColors, {
     bool isNext = false,
+    Map<String, dynamic>? appointmentData,
   }) {
     return InkWell(
       onTap: () {
@@ -717,18 +1028,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   Text(title,
                       style: const TextStyle(
                           fontWeight: FontWeight.w500, fontSize: 14)),
-                  Text(time,
-                      style: const TextStyle(
-                          color: AppColors.muted, fontSize: 12)),
+                  Row(
+                    children: [
+                      Text(time,
+                          style: const TextStyle(
+                              color: AppColors.muted, fontSize: 12)),
+                      if (appointmentData != null && appointmentData['client'] != null) ...[
+                        const Text(' • ', style: TextStyle(color: AppColors.muted, fontSize: 12)),
+                        Flexible(
+                          child: Text(
+                            appointmentData['client'],
+                            style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ],
               ),
             ),
             if (isNext)
-              const Text('Next',
-                  style: TextStyle(
-                      color: AppColors.primary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text('Next',
+                    style: TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold)),
+              ),
           ],
         ),
       ),
@@ -825,12 +1157,126 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 }
 
 // --- 3. Branch Selection Modal ---
-class BranchSelectionDialog extends StatelessWidget {
+class BranchSelectionDialog extends StatefulWidget {
   final Function(String) onBranchSelected;
   const BranchSelectionDialog({super.key, required this.onBranchSelected});
 
   @override
+  State<BranchSelectionDialog> createState() => _BranchSelectionDialogState();
+}
+
+class _BranchSelectionDialogState extends State<BranchSelectionDialog> {
+  List<Map<String, dynamic>> _branches = [];
+  bool _isLoading = true;
+  String? _scheduledBranchName;
+  String? _scheduledBranchId;
+  
+  // Color palette for branches
+  final List<List<Color>> _colorPalette = [
+    [Colors.purple.shade400, Colors.purple.shade600],
+    [Colors.blue.shade400, Colors.blue.shade600],
+    [Colors.green.shade400, Colors.green.shade600],
+    [Colors.orange.shade400, Colors.orange.shade600],
+    [Colors.pink.shade400, Colors.pink.shade600],
+    [Colors.teal.shade400, Colors.teal.shade600],
+    [Colors.indigo.shade400, Colors.indigo.shade600],
+    [Colors.red.shade400, Colors.red.shade600],
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBranchesAndSchedule();
+  }
+
+  String _getTodayWeekday() {
+    const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    return weekDays[DateTime.now().weekday - 1];
+  }
+
+  String _formatDate(DateTime date) {
+    const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                    'July', 'August', 'September', 'October', 'November', 'December'];
+    return '${weekDays[date.weekday - 1]}, ${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
+  Future<void> _loadBranchesAndSchedule() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      // Get user document to find ownerUid and schedule
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      String? ownerUid;
+      if (userDoc.exists) {
+        final userData = userDoc.data()!;
+        ownerUid = userData['ownerUid']?.toString() ?? user.uid;
+        
+        // Check today's schedule
+        final todayWeekday = _getTodayWeekday();
+        final schedule = userData['schedule'];
+        if (schedule is Map && schedule[todayWeekday] != null) {
+          final todaySchedule = schedule[todayWeekday];
+          if (todaySchedule is Map) {
+            _scheduledBranchName = todaySchedule['branchName']?.toString();
+            _scheduledBranchId = todaySchedule['branchId']?.toString();
+          }
+        }
+        
+        // Also check weeklySchedule format
+        final weeklySchedule = userData['weeklySchedule'];
+        if (weeklySchedule is Map && weeklySchedule[todayWeekday] != null) {
+          final todaySchedule = weeklySchedule[todayWeekday];
+          if (todaySchedule is Map) {
+            _scheduledBranchName ??= todaySchedule['branchName']?.toString();
+            _scheduledBranchId ??= todaySchedule['branchId']?.toString();
+          }
+        }
+      }
+
+      // Fetch branches for this owner
+      if (ownerUid != null && ownerUid.isNotEmpty) {
+        final branchesSnap = await FirebaseFirestore.instance
+            .collection('branches')
+            .where('ownerUid', isEqualTo: ownerUid)
+            .get();
+
+        final branches = branchesSnap.docs.map((doc) {
+          final data = doc.data();
+          return {
+            'id': doc.id,
+            'name': data['name']?.toString() ?? data['branchName']?.toString() ?? 'Branch',
+            'address': data['address']?.toString() ?? '',
+          };
+        }).toList();
+
+        if (mounted) {
+          setState(() {
+            _branches = branches;
+            _isLoading = false;
+          });
+        }
+      } else {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint('Error loading branches: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final today = DateTime.now();
+    
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
@@ -865,22 +1311,96 @@ class BranchSelectionDialog extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                   color: AppColors.text),
             ),
-            const Text(
-              "Choose the location you're clocking in at",
-              style: TextStyle(fontSize: 14, color: AppColors.muted),
-              textAlign: TextAlign.center,
+            const SizedBox(height: 4),
+            // Today's date
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                _formatDate(today),
+                style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w500),
+              ),
             ),
-            const SizedBox(height: 24),
-            _buildBranchOption(
-                'Toorak', [Colors.purple.shade400, Colors.purple.shade600]),
-            _buildBranchOption(
-                'Burwood', [Colors.blue.shade400, Colors.blue.shade600]),
-            _buildBranchOption(
-                'Cranbourne', [Colors.green.shade400, Colors.green.shade600]),
-            _buildBranchOption(
-                'Dandenong', [Colors.orange.shade400, Colors.orange.shade600]),
-            _buildBranchOption(
-                'Richmond', [Colors.pink.shade400, Colors.pink.shade600]),
+            const SizedBox(height: 8),
+            // Scheduled branch info
+            if (_scheduledBranchName != null && _scheduledBranchName!.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.primary.withOpacity(0.1), AppColors.accent.withOpacity(0.1)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(FontAwesomeIcons.calendarCheck, size: 14, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Today you work at $_scheduledBranchName',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ] else ...[
+              const Text(
+                "Choose the location you're clocking in at",
+                style: TextStyle(fontSize: 14, color: AppColors.muted),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+            ],
+            // Branches list
+            if (_isLoading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(color: AppColors.primary),
+              )
+            else if (_branches.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    Icon(FontAwesomeIcons.building, size: 32, color: AppColors.muted.withOpacity(0.5)),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No branches found',
+                      style: TextStyle(color: AppColors.muted, fontSize: 14),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 300),
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: _branches.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final branch = entry.value;
+                      final isScheduled = branch['id'] == _scheduledBranchId || 
+                                         branch['name'] == _scheduledBranchName;
+                      return _buildBranchOption(
+                        branch['name'] ?? 'Branch',
+                        branch['id'] ?? '',
+                        _colorPalette[index % _colorPalette.length],
+                        isScheduled: isScheduled,
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -900,48 +1420,66 @@ class BranchSelectionDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildBranchOption(String name, List<Color> colors) {
+  Widget _buildBranchOption(String name, String branchId, List<Color> colors, {bool isScheduled = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: InkWell(
-        onTap: () => onBranchSelected(name),
+        onTap: () => widget.onBranchSelected(name),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.background,
+            color: isScheduled ? AppColors.primary.withOpacity(0.08) : AppColors.background,
             borderRadius: BorderRadius.circular(12),
+            border: isScheduled ? Border.all(color: AppColors.primary.withOpacity(0.3), width: 1.5) : null,
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: colors,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Center(
-                        child: Icon(FontAwesomeIcons.building,
-                            color: Colors.white, size: 16)),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: colors,
                   ),
-                  const SizedBox(width: 12),
-                  Text(
-                    name,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, color: AppColors.text),
-                  ),
-                ],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Center(
+                    child: Icon(FontAwesomeIcons.building,
+                        color: Colors.white, size: 16)),
               ),
-              const Icon(FontAwesomeIcons.chevronRight,
-                  size: 16, color: AppColors.muted),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, color: AppColors.text),
+                    ),
+                    if (isScheduled)
+                      const Text(
+                        'Scheduled today',
+                        style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500),
+                      ),
+                  ],
+                ),
+              ),
+              if (isScheduled)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(FontAwesomeIcons.check, size: 10, color: Colors.white),
+                )
+              else
+                const Icon(FontAwesomeIcons.chevronRight,
+                    size: 16, color: AppColors.muted),
             ],
           ),
         ),
