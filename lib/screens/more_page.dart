@@ -7,6 +7,7 @@ import 'staff_management_page.dart';
 import 'attendance_page.dart';
 import 'branches_page.dart';
 import 'salon_settings_page.dart';
+import '../widgets/animated_toggle.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -168,6 +169,24 @@ class _MorePageState extends State<MorePage> {
                 );
               },
             ),
+
+            // Summary Section - For branch admins
+            if (_isBranchAdmin) ...[
+              const SizedBox(height: 16),
+              _buildMenuCard(
+                context,
+                icon: FontAwesomeIcons.chartPie,
+                title: 'Summary',
+                subtitle: 'View your performance & branch reports',
+                gradientColors: [const Color(0xFFF59E0B), const Color(0xFFFBBF24)],
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BranchAdminSummaryPage()),
+                  );
+                },
+              ),
+            ],
 
             // Summary Section - Only for salon owners
             if (_isSalonOwner) ...[
@@ -578,6 +597,643 @@ class _MySummaryPageState extends State<MySummaryPage> {
           Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.text)),
           const SizedBox(height: 4),
           Text(label, style: const TextStyle(fontSize: 13, color: AppColors.muted)),
+        ],
+      ),
+    );
+  }
+
+  String _getDateString() {
+    final now = DateTime.now();
+    final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    final months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return '${weekdays[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
+  }
+}
+
+// ============================================================================
+// BRANCH ADMIN SUMMARY PAGE
+// ============================================================================
+
+class BranchAdminSummaryPage extends StatefulWidget {
+  const BranchAdminSummaryPage({super.key});
+
+  @override
+  State<BranchAdminSummaryPage> createState() => _BranchAdminSummaryPageState();
+}
+
+class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
+  bool _showBranchSummary = false; // false = My Summary, true = Branch Summary
+  bool _loading = true;
+
+  // My Summary data
+  int _myCompletedServices = 0;
+  double _myRevenue = 0;
+  int _myTotalBookings = 0;
+
+  // Branch Summary data
+  double _branchRevenue = 0;
+  int _branchBookings = 0;
+  int _branchStaffCount = 0;
+  int _branchCompletedBookings = 0;
+  int _branchPendingBookings = 0;
+  String _branchName = 'My Branch';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSummaryData();
+  }
+
+  Future<void> _loadSummaryData() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() => _loading = false);
+        return;
+      }
+
+      // Get user document to find branchId and ownerUid
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        setState(() => _loading = false);
+        return;
+      }
+
+      final userData = userDoc.data()!;
+      final branchId = (userData['branchId'] ?? '').toString();
+      final ownerUid = (userData['ownerUid'] ?? '').toString();
+      _branchName = (userData['branchName'] ?? 'My Branch').toString();
+
+      // Load My Summary - bookings where I am the staff
+      final myBookingsQuery = await FirebaseFirestore.instance
+          .collection('bookings')
+          .where('ownerUid', isEqualTo: ownerUid)
+          .get();
+
+      int myCompleted = 0;
+      double myRevenue = 0;
+      int myTotal = 0;
+
+      for (final doc in myBookingsQuery.docs) {
+        final data = doc.data();
+        final status = (data['status'] ?? '').toString().toLowerCase();
+        
+        // Check if this booking is assigned to me
+        bool isMyBooking = false;
+        
+        // Check top-level staffId
+        if (data['staffId'] == user.uid) {
+          isMyBooking = true;
+        }
+        
+        // Check services array
+        if (data['services'] is List) {
+          for (final service in (data['services'] as List)) {
+            if (service is Map && service['staffId'] == user.uid) {
+              isMyBooking = true;
+              break;
+            }
+          }
+        }
+
+        if (isMyBooking) {
+          myTotal++;
+          if (status == 'completed') {
+            myCompleted++;
+            double price = 0;
+            if (data['price'] is num) {
+              price = (data['price'] as num).toDouble();
+            } else if (data['price'] is String) {
+              price = double.tryParse(data['price']) ?? 0;
+            }
+            myRevenue += price;
+          }
+        }
+      }
+
+      // Load Branch Summary
+      double branchRevenue = 0;
+      int branchBookings = 0;
+      int branchCompleted = 0;
+      int branchPending = 0;
+
+      for (final doc in myBookingsQuery.docs) {
+        final data = doc.data();
+        final bookingBranchId = (data['branchId'] ?? '').toString();
+        
+        if (bookingBranchId == branchId) {
+          branchBookings++;
+          final status = (data['status'] ?? '').toString().toLowerCase();
+          
+          if (status == 'completed') {
+            branchCompleted++;
+          } else if (status == 'pending') {
+            branchPending++;
+          }
+          
+          if (status == 'completed' || status == 'confirmed') {
+            double price = 0;
+            if (data['price'] is num) {
+              price = (data['price'] as num).toDouble();
+            } else if (data['price'] is String) {
+              price = double.tryParse(data['price']) ?? 0;
+            }
+            branchRevenue += price;
+          }
+        }
+      }
+
+      // Count branch staff
+      final staffQuery = await FirebaseFirestore.instance
+          .collection('users')
+          .where('ownerUid', isEqualTo: ownerUid)
+          .where('branchId', isEqualTo: branchId)
+          .get();
+
+      int staffCount = 0;
+      for (final doc in staffQuery.docs) {
+        final role = (doc.data()['role'] ?? '').toString();
+        if (role == 'salon_staff' || role == 'salon_branch_admin') {
+          staffCount++;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _myCompletedServices = myCompleted;
+        _myRevenue = myRevenue;
+        _myTotalBookings = myTotal;
+        _branchRevenue = branchRevenue;
+        _branchBookings = branchBookings;
+        _branchStaffCount = staffCount;
+        _branchCompletedBookings = branchCompleted;
+        _branchPendingBookings = branchPending;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading summary data: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(FontAwesomeIcons.arrowLeft, size: 18, color: AppColors.text),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'Summary',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.text),
+        ),
+        centerTitle: true,
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          : SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    // Toggle Switch
+                    _buildToggle(),
+                    const SizedBox(height: 24),
+                    // Content based on toggle
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: _showBranchSummary
+                          ? _buildBranchSummary()
+                          : _buildMySummary(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildToggle() {
+    return AnimatedToggle(
+      backgroundColor: Colors.white,
+      values: const ['My Summary', 'Branch Summary'],
+      selectedIndex: _showBranchSummary ? 1 : 0,
+      onChanged: (index) => setState(() => _showBranchSummary = index == 1),
+    );
+  }
+
+  Widget _buildMySummary() {
+    return Column(
+      key: const ValueKey('my_summary'),
+      children: [
+        // Header Card
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFF2D8F), Color(0xFFFF6FB5)],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFFF2D8F).withOpacity(0.3),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      FontAwesomeIcons.userCheck,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'My Performance',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _getDateString(),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.white.withOpacity(0.8),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        // Stats Grid
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.circleCheck,
+                '$_myCompletedServices',
+                'Services Done',
+                const Color(0xFF10B981),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.dollarSign,
+                '\$${_myRevenue.toStringAsFixed(0)}',
+                'Revenue Generated',
+                const Color(0xFF8B5CF6),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.calendarCheck,
+                '$_myTotalBookings',
+                'Total Bookings',
+                const Color(0xFF3B82F6),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.star,
+                _myCompletedServices > 0 ? '4.8' : '—',
+                'Rating',
+                const Color(0xFFF59E0B),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        // Tips Section
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      FontAwesomeIcons.lightbulb,
+                      color: Color(0xFFF59E0B),
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Performance Tip',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _myCompletedServices > 0
+                    ? 'Great work! You\'ve completed $_myCompletedServices services. Keep up the excellent performance! 🌟'
+                    : 'Start completing services to see your performance stats here.',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: AppColors.muted,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBranchSummary() {
+    return Column(
+      key: const ValueKey('branch_summary'),
+      children: [
+        // Header Card
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF10B981), Color(0xFF34D399)],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF10B981).withOpacity(0.3),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      FontAwesomeIcons.building,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _branchName,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Branch Overview',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.white.withOpacity(0.8),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        // Stats Grid
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.dollarSign,
+                '\$${_branchRevenue.toStringAsFixed(0)}',
+                'Total Revenue',
+                const Color(0xFF10B981),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.calendarDays,
+                '$_branchBookings',
+                'Total Bookings',
+                const Color(0xFF3B82F6),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.users,
+                '$_branchStaffCount',
+                'Staff Members',
+                const Color(0xFF8B5CF6),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.circleCheck,
+                '$_branchCompletedBookings',
+                'Completed',
+                const Color(0xFF10B981),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.clock,
+                '$_branchPendingBookings',
+                'Pending',
+                const Color(0xFFF59E0B),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                FontAwesomeIcons.chartLine,
+                _branchBookings > 0
+                    ? '${((_branchCompletedBookings / _branchBookings) * 100).toStringAsFixed(0)}%'
+                    : '—',
+                'Completion Rate',
+                const Color(0xFFEC4899),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        // Branch Info Section
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDBEAFE),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      FontAwesomeIcons.chartPie,
+                      color: Color(0xFF3B82F6),
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Branch Insights',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _branchBookings > 0
+                    ? 'Your branch has processed $_branchBookings bookings with $_branchStaffCount active staff members. '
+                      '${_branchCompletedBookings > 0 ? "Keep up the great work! 💪" : "Focus on completing pending bookings."}'
+                    : 'No bookings yet for this branch. Start accepting bookings to see insights here.',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: AppColors.muted,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard(IconData icon, String value, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: Icon(icon, color: color, size: 18),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.muted,
+            ),
+          ),
         ],
       ),
     );
