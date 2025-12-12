@@ -522,11 +522,13 @@ class _ProfileScreenState extends State<ProfileScreen>
             ],
           ),
           isLogout: isLogout,
-          onTap: () {
+          onTap: () async {
             if (title == 'Edit Profile') {
-              Navigator.of(context).push(
+              await Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const EditProfilePage()),
               );
+              // Reload profile after returning from edit page
+              _loadProfile();
             } else if (title == 'Settings') {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SettingsPage()),

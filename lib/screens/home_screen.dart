@@ -74,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _userName; // Store user's name
   String? _branchId;
   String? _ownerUid;
+  String? _photoUrl; // Store user's profile photo URL
   bool _isLoadingRole = true;
   
   // Today's appointments
@@ -100,59 +101,80 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        final doc = await FirebaseFirestore.instance
+        // Use real-time listener so profile updates are reflected immediately
+        FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
-            .get();
-        
-        if (mounted && doc.exists) {
-          final data = doc.data();
+            .snapshots()
+            .listen((doc) {
+          if (!mounted) return;
           
-          // Get name from various possible fields
-          String? fetchedName;
-          if (data?['displayName'] != null && data!['displayName'].toString().isNotEmpty) {
-            fetchedName = data['displayName'].toString();
-          } else if (data?['firstName'] != null && data!['firstName'].toString().isNotEmpty) {
-            final firstName = data['firstName'].toString();
-            final lastName = data['lastName']?.toString() ?? '';
-            fetchedName = '$firstName $lastName'.trim();
-          } else if (data?['name'] != null && data!['name'].toString().isNotEmpty) {
-            fetchedName = data['name'].toString();
-          } else if (data?['fullName'] != null && data!['fullName'].toString().isNotEmpty) {
-            fetchedName = data['fullName'].toString();
-          } else if (user.displayName != null && user.displayName!.isNotEmpty) {
-            fetchedName = user.displayName;
-          } else if (user.email != null) {
-            // Use email prefix as fallback
-            fetchedName = user.email!.split('@').first;
-          }
-          
-          setState(() {
-            // Trim and normalize the role to ensure proper comparison
-            final rawRole = data?['role'];
-            _userRole = rawRole != null ? rawRole.toString().trim() : null;
-            // Try to find a branch name or branch field
-            _branchName = data?['branchName'] ?? data?['branch'];
-            _userName = fetchedName ?? 'Staff';
-            _branchId = data?['branchId'];
-            _ownerUid = data?['ownerUid'] ?? user.uid;
-            _isLoadingRole = false;
-          });
-          
-          // Fetch today's appointments for staff
-          if (_userRole != 'salon_owner' && _userRole != 'salon_branch_admin') {
-            _fetchTodayAppointments();
-          }
-        } else {
-          // User document doesn't exist, try to get name from Firebase Auth
-          if (mounted) {
+          if (doc.exists) {
+            final data = doc.data();
+            
+            // Get name from various possible fields
+            String? fetchedName;
+            if (data?['displayName'] != null && data!['displayName'].toString().isNotEmpty) {
+              fetchedName = data['displayName'].toString();
+            } else if (data?['firstName'] != null && data!['firstName'].toString().isNotEmpty) {
+              final firstName = data['firstName'].toString();
+              final lastName = data['lastName']?.toString() ?? '';
+              fetchedName = '$firstName $lastName'.trim();
+            } else if (data?['name'] != null && data!['name'].toString().isNotEmpty) {
+              fetchedName = data['name'].toString();
+            } else if (data?['fullName'] != null && data!['fullName'].toString().isNotEmpty) {
+              fetchedName = data['fullName'].toString();
+            } else if (user.displayName != null && user.displayName!.isNotEmpty) {
+              fetchedName = user.displayName;
+            } else if (user.email != null) {
+              // Use email prefix as fallback
+              fetchedName = user.email!.split('@').first;
+            }
+            
+            // Get photo URL from various possible fields
+            String? photoUrl;
+            if (data?['photoURL'] != null && data!['photoURL'].toString().isNotEmpty) {
+              photoUrl = data['photoURL'].toString();
+            } else if (data?['avatarUrl'] != null && data!['avatarUrl'].toString().isNotEmpty) {
+              photoUrl = data['avatarUrl'].toString();
+            } else if (data?['avatar'] != null && data!['avatar'].toString().startsWith('http')) {
+              photoUrl = data['avatar'].toString();
+            } else if (user.photoURL != null && user.photoURL!.isNotEmpty) {
+              photoUrl = user.photoURL;
+            }
+
+            final previousRole = _userRole;
+            
+            setState(() {
+              // Trim and normalize the role to ensure proper comparison
+              final rawRole = data?['role'];
+              _userRole = rawRole != null ? rawRole.toString().trim() : null;
+              // Try to find a branch name or branch field
+              _branchName = data?['branchName'] ?? data?['branch'];
+              _userName = fetchedName ?? 'Staff';
+              _branchId = data?['branchId'];
+              _ownerUid = data?['ownerUid'] ?? user.uid;
+              _photoUrl = photoUrl;
+              _isLoadingRole = false;
+            });
+            
+            // Fetch today's appointments for staff (only once on initial load)
+            if (previousRole == null && _userRole != 'salon_owner' && _userRole != 'salon_branch_admin') {
+              _fetchTodayAppointments();
+            }
+          } else {
+            // User document doesn't exist, try to get name from Firebase Auth
             setState(() {
               _userName = user.displayName ?? user.email?.split('@').first ?? 'Staff';
+              _photoUrl = user.photoURL;
               _ownerUid = user.uid;
               _isLoadingRole = false;
             });
           }
-        }
+        }, onError: (e) {
+          debugPrint('Error listening to user document: $e');
+          if (mounted) setState(() => _isLoadingRole = false);
+        });
       } else {
         if (mounted) setState(() => _isLoadingRole = false);
       }
@@ -501,6 +523,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final firstName = formattedName.split(' ').first;
     final initials = _getInitials(displayName);
     final today = DateTime.now();
+    final hasPhoto = _photoUrl != null && _photoUrl!.isNotEmpty;
     
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -512,11 +535,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               height: 48,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: LinearGradient(
+                gradient: hasPhoto ? null : LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [AppColors.primary.withOpacity(0.2), AppColors.accent.withOpacity(0.2)],
                 ),
+                image: hasPhoto
+                    ? DecorationImage(
+                        image: NetworkImage(_photoUrl!),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
                 boxShadow: [
                   BoxShadow(
                     color: AppColors.primary.withOpacity(0.08),
@@ -525,16 +554,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                 ],
               ),
-              child: Center(
-                child: Text(
-                  initials,
-                  style: const TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                  ),
-                ),
-              ),
+              child: hasPhoto
+                  ? null
+                  : Center(
+                      child: Text(
+                        initials,
+                        style: const TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
             ),
             const SizedBox(width: 12),
             Column(
