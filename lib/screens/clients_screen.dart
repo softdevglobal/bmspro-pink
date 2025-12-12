@@ -419,8 +419,19 @@ class _ClientCard extends StatelessWidget {
   final Client client;
   const _ClientCard({required this.client});
 
+  String _getInitials(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2 && parts[0].isNotEmpty && parts[1].isNotEmpty) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final initials = _getInitials(client.name);
+    
     return GestureDetector(
       onTap: () {
         Navigator.of(context).push(
@@ -440,7 +451,15 @@ class _ClientCard extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 28,
-              backgroundImage: NetworkImage(client.avatarUrl),
+              backgroundColor: AppColors.primary.withOpacity(0.15),
+              child: Text(
+                initials,
+                style: const TextStyle(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
             ),
             const SizedBox(width: 16),
             Expanded(

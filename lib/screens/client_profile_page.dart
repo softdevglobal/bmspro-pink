@@ -277,6 +277,15 @@ class _ClientProfilePageState extends State<ClientProfilePage> with TickerProvid
     );
   }
 
+  String _getInitials(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2 && parts[0].isNotEmpty && parts[1].isNotEmpty) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
+
   // --- Client Header Card ---
   Widget _buildClientHeaderCard() {
     final client = widget.client;
@@ -284,6 +293,7 @@ class _ClientProfilePageState extends State<ClientProfilePage> with TickerProvid
     final name = client.name;
     final phone = client.phone.isNotEmpty ? client.phone : 'Not provided';
     final email = client.email.isNotEmpty ? client.email : 'Not provided';
+    final initials = _getInitials(name);
 
     String statusLabel = 'Active Client';
     Color statusColor = AppColors.green;
@@ -306,19 +316,23 @@ class _ClientProfilePageState extends State<ClientProfilePage> with TickerProvid
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Stack(
-                children: [
-                  Container(
-                    width: 80, height: 80,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      image: DecorationImage(
-                        image: NetworkImage(client.avatarUrl),
-                        fit: BoxFit.cover,
-                      ),
+              Container(
+                width: 80, 
+                height: 80,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  color: AppColors.primary.withOpacity(0.15),
+                ),
+                child: Center(
+                  child: Text(
+                    initials,
+                    style: const TextStyle(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 28,
                     ),
                   ),
-                ],
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(

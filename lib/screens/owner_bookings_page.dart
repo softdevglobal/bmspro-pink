@@ -1529,6 +1529,15 @@ class _BookingCard extends StatelessWidget {
 
   const _BookingCard({required this.booking, required this.onStatusUpdate});
 
+  String _getInitials(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2 && parts[0].isNotEmpty && parts[1].isNotEmpty) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
+
   Color _statusBg(String status) {
     switch (status) {
       case 'confirmed':
@@ -1588,7 +1597,15 @@ class _BookingCard extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     radius: 22,
-                    backgroundImage: NetworkImage(booking.avatarUrl),
+                    backgroundColor: const Color(0xFFFF2D8F).withOpacity(0.15),
+                    child: Text(
+                      _getInitials(booking.customerName),
+                      style: const TextStyle(
+                        color: Color(0xFFFF2D8F),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Column(
@@ -1754,7 +1771,15 @@ class _BookingCard extends StatelessWidget {
                         children: [
                           CircleAvatar(
                             radius: 40,
-                            backgroundImage: NetworkImage(booking.avatarUrl),
+                            backgroundColor: const Color(0xFFFF2D8F).withOpacity(0.15),
+                            child: Text(
+                              _getInitials(booking.customerName),
+                              style: const TextStyle(
+                                color: Color(0xFFFF2D8F),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 28,
+                              ),
+                            ),
                           ),
                           const SizedBox(height: 16),
                           Text(

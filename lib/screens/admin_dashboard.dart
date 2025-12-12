@@ -44,6 +44,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
   double _staffUtilization = 0; // 0–1
   double _clientRetention = 0; // 0–1
 
+  // Revenue chart data (last 7 days)
+  List<Map<String, dynamic>> _revenueByDay = [];
+
+  // Service breakdown data
+  List<Map<String, dynamic>> _serviceBreakdown = [];
+
+  // Top performers data
+  List<Map<String, dynamic>> _topPerformers = [];
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +77,22 @@ class _AdminDashboardState extends State<AdminDashboard> {
       int bookingCount = 0;
       final Set<String> staffIds = {};
       final Map<String, int> clientVisits = {};
+
+      // For revenue by day chart (last 30 days)
+      final Map<String, double> revenueByDate = {};
+      final now = DateTime.now();
+      // Initialize last 7 days with 0
+      for (int i = 6; i >= 0; i--) {
+        final date = now.subtract(Duration(days: i));
+        final dateKey = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+        revenueByDate[dateKey] = 0;
+      }
+
+      // For service breakdown
+      final Map<String, double> serviceRevenue = {};
+
+      // For staff performance
+      final Map<String, Map<String, dynamic>> staffPerformance = {};
 
       for (final doc in qs.docs) {
         final data = doc.data();
@@ -104,6 +129,68 @@ class _AdminDashboardState extends State<AdminDashboard> {
         }
 
         totalRevenue += price;
+
+        // Revenue by date (for chart)
+        final bookingDate = (data['date'] ?? '').toString();
+        if (bookingDate.isNotEmpty && revenueByDate.containsKey(bookingDate)) {
+          revenueByDate[bookingDate] = (revenueByDate[bookingDate] ?? 0) + price;
+        }
+
+        // Service breakdown
+        if (data['services'] is List) {
+          for (final item in (data['services'] as List)) {
+            if (item is Map) {
+              final serviceName = (item['name'] ?? 'Other').toString();
+              double servicePrice = 0;
+              if (item['price'] is num) {
+                servicePrice = (item['price'] as num).toDouble();
+              } else if (item['price'] is String) {
+                servicePrice = double.tryParse(item['price']) ?? 0;
+              }
+              serviceRevenue[serviceName] = (serviceRevenue[serviceName] ?? 0) + servicePrice;
+
+              // Staff performance from services list
+              final staffId = (item['staffId'] ?? '').toString();
+              final staffName = (item['staffName'] ?? '').toString();
+              if (staffId.isNotEmpty && staffName.isNotEmpty && 
+                  !staffName.toLowerCase().contains('any')) {
+                if (!staffPerformance.containsKey(staffId)) {
+                  staffPerformance[staffId] = {
+                    'name': staffName,
+                    'revenue': 0.0,
+                    'services': 0,
+                  };
+                }
+                staffPerformance[staffId]!['revenue'] = 
+                    (staffPerformance[staffId]!['revenue'] as double) + servicePrice;
+                staffPerformance[staffId]!['services'] = 
+                    (staffPerformance[staffId]!['services'] as int) + 1;
+              }
+            }
+          }
+        } else {
+          // Legacy booking without services array
+          final serviceName = (data['serviceName'] ?? 'Other').toString();
+          serviceRevenue[serviceName] = (serviceRevenue[serviceName] ?? 0) + price;
+          
+          // Staff performance from top-level fields
+          final staffId = (data['staffId'] ?? '').toString();
+          final staffName = (data['staffName'] ?? '').toString();
+          if (staffId.isNotEmpty && staffName.isNotEmpty && 
+              !staffName.toLowerCase().contains('any')) {
+            if (!staffPerformance.containsKey(staffId)) {
+              staffPerformance[staffId] = {
+                'name': staffName,
+                'revenue': 0.0,
+                'services': 0,
+              };
+            }
+            staffPerformance[staffId]!['revenue'] = 
+                (staffPerformance[staffId]!['revenue'] as double) + price;
+            staffPerformance[staffId]!['services'] = 
+                (staffPerformance[staffId]!['services'] as int) + 1;
+          }
+        }
 
         // Staff IDs for utilization
         final topStaff = data['staffId'];
@@ -150,6 +237,42 @@ class _AdminDashboardState extends State<AdminDashboard> {
         retention = (returningClients / totalClients).clamp(0.0, 1.0);
       }
 
+      // Process revenue by day for chart
+      final List<Map<String, dynamic>> revenueList = [];
+      final sortedDates = revenueByDate.keys.toList()..sort();
+      for (final date in sortedDates) {
+        revenueList.add({
+          'date': date,
+          'revenue': revenueByDate[date] ?? 0,
+        });
+      }
+
+      // Process service breakdown for pie chart
+      final List<Map<String, dynamic>> serviceList = [];
+      final totalServiceRevenue = serviceRevenue.values.fold(0.0, (a, b) => a + b);
+      if (totalServiceRevenue > 0) {
+        final sortedServices = serviceRevenue.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        for (final entry in sortedServices.take(5)) {
+          serviceList.add({
+            'name': entry.key,
+            'revenue': entry.value,
+            'percentage': (entry.value / totalServiceRevenue * 100).round(),
+          });
+        }
+      }
+
+      // Process top performers
+      final List<Map<String, dynamic>> performerList = staffPerformance.entries
+          .map((e) => {
+                'id': e.key,
+                'name': e.value['name'],
+                'revenue': e.value['revenue'],
+                'services': e.value['services'],
+              })
+          .toList()
+        ..sort((a, b) => (b['revenue'] as double).compareTo(a['revenue'] as double));
+
       if (!mounted) return;
       setState(() {
         _totalRevenue = totalRevenue;
@@ -157,6 +280,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
         _avgTicketValue = avgTicket;
         _staffUtilization = utilization;
         _clientRetention = retention;
+        _revenueByDay = revenueList;
+        _serviceBreakdown = serviceList;
+        _topPerformers = performerList.take(5).toList();
         _loadingMetrics = false;
       });
     } catch (e) {
@@ -350,6 +476,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         : '${(_clientRetention * 100).toStringAsFixed(0)}%';
     final avgTicketLabel =
         _loadingMetrics ? '—' : '\$${_avgTicketValue.toStringAsFixed(0)}';
+    final bookingCountLabel = _loadingMetrics ? '—' : '$_bookingCount';
+    
     return Column(
       children: [
         Row(
@@ -361,9 +489,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 icon: FontAwesomeIcons.dollarSign,
                 iconColor: AppColors.green,
                 iconBg: AppColors.green.withOpacity(0.1),
-                trend: '12%',
+                trend: '$_bookingCount bookings',
                 trendUp: true,
                 trendColor: AppColors.green,
+                isPill: true,
               ),
             ),
             const SizedBox(width: 12),
@@ -391,10 +520,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 icon: FontAwesomeIcons.heart,
                 iconColor: AppColors.purple,
                 iconBg: AppColors.purple.withOpacity(0.1),
-                trend: clientRetentionPercent,
-                trendUp: true, // Just showing value as pill
-                trendColor: AppColors.purple,
-                isPill: true,
+                progressBarValue:
+                    _loadingMetrics ? 0.0 : _clientRetention,
+                progressBarColor: AppColors.purple,
               ),
             ),
             const SizedBox(width: 12),
@@ -405,9 +533,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 icon: FontAwesomeIcons.receipt,
                 iconColor: AppColors.primary,
                 iconBg: AppColors.primary.withOpacity(0.1),
-                trend: '8%',
+                trend: 'per booking',
                 trendUp: true,
                 trendColor: AppColors.primary,
+                isPill: true,
               ),
             ),
           ],
@@ -530,6 +659,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildRevenueChartSection() {
+    // Generate chart spots from real data
+    List<FlSpot> spots = [];
+    double maxRevenue = 0;
+    
+    if (_revenueByDay.isNotEmpty) {
+      for (int i = 0; i < _revenueByDay.length; i++) {
+        final revenue = (_revenueByDay[i]['revenue'] as num).toDouble();
+        spots.add(FlSpot(i.toDouble(), revenue / 100)); // Scale down for display
+        if (revenue > maxRevenue) maxRevenue = revenue;
+      }
+    } else {
+      // Default empty state
+      for (int i = 0; i < 7; i++) {
+        spots.add(FlSpot(i.toDouble(), 0));
+      }
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -547,72 +693,176 @@ class _AdminDashboardState extends State<AdminDashboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Revenue Trends',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: AppColors.text,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Revenue Trends',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.text,
+                ),
+              ),
+              Text(
+                'Last 7 Days',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.muted,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 24),
-          SizedBox(
-            height: 250,
-            child: LineChart(
-              LineChartData(
-                gridData: const FlGridData(show: false),
-                titlesData: FlTitlesData(
-                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      getTitlesWidget: (value, meta) {
-                        const titles = ['Nov 1', '5', '10', '15', '20', '25', '30'];
-                        if (value.toInt() >= 0 && value.toInt() < titles.length) {
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: Text(titles[value.toInt()], style: const TextStyle(color: AppColors.muted, fontSize: 10)),
-                          );
-                        }
-                        return const Text('');
-                      },
-                      interval: 1,
+          if (_loadingMetrics)
+            const SizedBox(
+              height: 250,
+              child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+            )
+          else if (maxRevenue == 0)
+            SizedBox(
+              height: 250,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.show_chart, size: 48, color: AppColors.muted.withOpacity(0.5)),
+                    const SizedBox(height: 12),
+                    Text(
+                      'No revenue data yet',
+                      style: TextStyle(color: AppColors.muted, fontSize: 14),
                     ),
-                  ),
+                  ],
                 ),
-                borderData: FlBorderData(show: false),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: const [
-                      FlSpot(0, 8.5),
-                      FlSpot(1, 9.2),
-                      FlSpot(2, 10.8),
-                      FlSpot(3, 12.4),
-                      FlSpot(4, 11.9),
-                      FlSpot(5, 13.2),
-                      FlSpot(6, 12.45),
-                    ],
-                    isCurved: true,
-                    color: AppColors.primary,
-                    barWidth: 3,
-                    dotData: const FlDotData(show: false),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      color: AppColors.primary.withOpacity(0.1),
+              ),
+            )
+          else
+            SizedBox(
+              height: 250,
+              child: LineChart(
+                LineChartData(
+                  gridData: const FlGridData(show: false),
+                  titlesData: FlTitlesData(
+                    leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        getTitlesWidget: (value, meta) {
+                          final index = value.toInt();
+                          if (index >= 0 && index < _revenueByDay.length) {
+                            final date = _revenueByDay[index]['date'] as String;
+                            // Show only day number
+                            final parts = date.split('-');
+                            if (parts.length == 3) {
+                              final day = int.tryParse(parts[2]) ?? 0;
+                              final month = int.tryParse(parts[1]) ?? 0;
+                              const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                                             'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Text(
+                                  index == 0 || index == 6 
+                                      ? '${months[month]} $day' 
+                                      : '$day',
+                                  style: const TextStyle(color: AppColors.muted, fontSize: 10),
+                                ),
+                              );
+                            }
+                          }
+                          return const Text('');
+                        },
+                        interval: 1,
+                      ),
                     ),
                   ),
-                ],
+                  borderData: FlBorderData(show: false),
+                  lineTouchData: LineTouchData(
+                    touchTooltipData: LineTouchTooltipData(
+                      getTooltipItems: (touchedSpots) {
+                        return touchedSpots.map((spot) {
+                          final index = spot.spotIndex;
+                          if (index >= 0 && index < _revenueByDay.length) {
+                            final revenue = _revenueByDay[index]['revenue'] as num;
+                            return LineTooltipItem(
+                              '\$${revenue.toStringAsFixed(0)}',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            );
+                          }
+                          return null;
+                        }).toList();
+                      },
+                    ),
+                  ),
+                  lineBarsData: [
+                    LineChartBarData(
+                      spots: spots,
+                      isCurved: true,
+                      color: AppColors.primary,
+                      barWidth: 3,
+                      dotData: FlDotData(
+                        show: true,
+                        getDotPainter: (spot, percent, barData, index) {
+                          return FlDotCirclePainter(
+                            radius: 4,
+                            color: AppColors.primary,
+                            strokeWidth: 2,
+                            strokeColor: Colors.white,
+                          );
+                        },
+                      ),
+                      belowBarData: BarAreaData(
+                        show: true,
+                        color: AppColors.primary.withOpacity(0.1),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
   }
 
   Widget _buildServiceBreakdownSection() {
+    // Colors for pie chart sections
+    const List<Color> pieColors = [
+      AppColors.primary,
+      AppColors.primaryDark,
+      Color(0xFFF472B6),
+      Color(0xFFF9A8D4),
+      Color(0xFFFBCFE8),
+    ];
+
+    // Generate pie chart sections from real data
+    List<PieChartSectionData> sections = [];
+    List<Widget> legends = [];
+
+    if (_serviceBreakdown.isNotEmpty) {
+      for (int i = 0; i < _serviceBreakdown.length && i < 5; i++) {
+        final service = _serviceBreakdown[i];
+        final name = service['name'] as String;
+        final percentage = service['percentage'] as int;
+        final color = pieColors[i % pieColors.length];
+
+        sections.add(PieChartSectionData(
+          color: color,
+          value: percentage.toDouble(),
+          title: '',
+          radius: 50,
+        ));
+
+        // Truncate long service names
+        String displayName = name.length > 15 ? '${name.substring(0, 12)}...' : name;
+        legends.add(_buildLegendItem(color, '$displayName ($percentage%)'));
+      }
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -639,39 +889,53 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
           ),
           const SizedBox(height: 24),
-          SizedBox(
-            height: 200,
-            child: Row(
-              children: [
-                Expanded(
-                  child: PieChart(
-                    PieChartData(
-                      sectionsSpace: 0,
-                      centerSpaceRadius: 40,
-                      sections: [
-                        PieChartSectionData(color: AppColors.primary, value: 45, title: '', radius: 50),
-                        PieChartSectionData(color: AppColors.primaryDark, value: 30, title: '', radius: 50),
-                        PieChartSectionData(color: const Color(0xFFF472B6), value: 15, title: '', radius: 50),
-                        PieChartSectionData(color: const Color(0xFFF9A8D4), value: 8, title: '', radius: 50),
-                        PieChartSectionData(color: const Color(0xFFFBCFE8), value: 2, title: '', radius: 50),
-                      ],
-                    ),
-                  ),
-                ),
-                Column(
+          if (_loadingMetrics)
+            const SizedBox(
+              height: 200,
+              child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+            )
+          else if (_serviceBreakdown.isEmpty)
+            SizedBox(
+              height: 200,
+              child: Center(
+                child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildLegendItem(AppColors.primary, 'Hair Services (45%)'),
-                    _buildLegendItem(AppColors.primaryDark, 'Nail Care (30%)'),
-                    _buildLegendItem(const Color(0xFFF472B6), 'Massage (15%)'),
-                    _buildLegendItem(const Color(0xFFF9A8D4), 'Facial (8%)'),
-                    _buildLegendItem(const Color(0xFFFBCFE8), 'Retail (2%)'),
+                    Icon(Icons.pie_chart_outline, size: 48, color: AppColors.muted.withOpacity(0.5)),
+                    const SizedBox(height: 12),
+                    Text(
+                      'No service data yet',
+                      style: TextStyle(color: AppColors.muted, fontSize: 14),
+                    ),
                   ],
                 ),
-              ],
+              ),
+            )
+          else
+            SizedBox(
+              height: 200,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: PieChart(
+                      PieChartData(
+                        sectionsSpace: 2,
+                        centerSpaceRadius: 40,
+                        sections: sections,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: legends,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -715,94 +979,196 @@ class _AdminDashboardState extends State<AdminDashboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Top Performers',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: AppColors.text,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildStaffItem('Emma Watson', 'Senior Stylist', '3,420', '45 services', '4.9'),
-          _buildStaffItem('Michael Chen', 'Hair Specialist', '2,890', '38 services', '4.8'),
-          _buildStaffItem('Lisa Rodriguez', 'Nail Technician', '2,650', '52 services', '4.7'),
-          _buildStaffItem('David Kim', 'Massage Therapist', '2,380', '28 services', '4.9'),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStaffItem(String name, String role, String revenue, String services, String rating) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
           Row(
-            children: [
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: Colors.grey.shade200,
-                child: Text(name[0], style: const TextStyle(color: AppColors.text)),
-                // backgroundImage: NetworkImage(...), // Add real images if available
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.text,
-                    ),
-                  ),
-                  Text(
-                    role,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.muted,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '\$$revenue',
+                'Top Performers',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: AppColors.text,
                 ),
               ),
-              Row(
-                children: [
-                  Text(
-                    services,
+              if (_topPerformers.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_topPerformers.length} staff',
                     style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.green,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Icon(FontAwesomeIcons.solidStar, size: 10, color: AppColors.yellow),
-                  const SizedBox(width: 2),
-                  Text(
-                    rating,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.muted,
-                    ),
-                  ),
-                ],
-              ),
+                ),
             ],
+          ),
+          const SizedBox(height: 16),
+          if (_loadingMetrics)
+            const SizedBox(
+              height: 200,
+              child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+            )
+          else if (_topPerformers.isEmpty)
+            SizedBox(
+              height: 150,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.people_outline, size: 48, color: AppColors.muted.withOpacity(0.5)),
+                    const SizedBox(height: 12),
+                    Text(
+                      'No staff performance data yet',
+                      style: TextStyle(color: AppColors.muted, fontSize: 14),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Complete bookings to see staff rankings',
+                      style: TextStyle(color: AppColors.muted.withOpacity(0.7), fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ...List.generate(
+              _topPerformers.length,
+              (index) {
+                final performer = _topPerformers[index];
+                final name = performer['name'] as String;
+                final revenue = (performer['revenue'] as num).toDouble();
+                final services = performer['services'] as int;
+                
+                return _buildStaffItem(
+                  name,
+                  '$services services',
+                  revenue.toStringAsFixed(0),
+                  index + 1, // Rank
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStaffItem(String name, String subtitle, String revenue, int rank) {
+    // Colors for rank badges
+    Color rankColor;
+    Color rankBgColor;
+    IconData? rankIcon;
+    
+    switch (rank) {
+      case 1:
+        rankColor = const Color(0xFFD97706);
+        rankBgColor = const Color(0xFFFEF3C7);
+        rankIcon = FontAwesomeIcons.crown;
+        break;
+      case 2:
+        rankColor = const Color(0xFF6B7280);
+        rankBgColor = const Color(0xFFF3F4F6);
+        break;
+      case 3:
+        rankColor = const Color(0xFFB45309);
+        rankBgColor = const Color(0xFFFED7AA);
+        break;
+      default:
+        rankColor = AppColors.muted;
+        rankBgColor = Colors.grey.shade100;
+    }
+
+    // Get initials from name
+    String initials = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    final nameParts = name.split(' ');
+    if (nameParts.length > 1 && nameParts[1].isNotEmpty) {
+      initials = '${nameParts[0][0]}${nameParts[1][0]}'.toUpperCase();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          // Rank badge
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: rankBgColor,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: rank == 1 && rankIcon != null
+                  ? Icon(rankIcon, size: 12, color: rankColor)
+                  : Text(
+                      '$rank',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: rankColor,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Avatar
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: AppColors.primary.withOpacity(0.1),
+            child: Text(
+              initials,
+              style: const TextStyle(
+                color: AppColors.primary,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Name and subtitle
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.text,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.muted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Revenue
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.green.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '\$$revenue',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: AppColors.green,
+              ),
+            ),
           ),
         ],
       ),
