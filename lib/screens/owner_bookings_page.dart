@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'walk_in_booking_page.dart';
+import '../services/audit_log_service.dart';
 
 class OwnerBookingsPage extends StatefulWidget {
   const OwnerBookingsPage({super.key});
@@ -305,33 +306,55 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         // Delete from bookingRequests
         await db.collection('bookingRequests').doc(booking.id).delete();
         
-        // Send notifications to staff for approval (not customer yet)
-        if (isConfirmingPending) {
-          await _createStaffApprovalNotifications(
-            db: db,
-            bookingId: ref.id,
-            booking: booking,
-            services: servicesForApproval ?? updatedServices ?? [],
-          );
-          
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Booking sent to staff for approval')),
+          // Send notifications to staff for approval (not customer yet)
+          if (isConfirmingPending) {
+            await _createStaffApprovalNotifications(
+              db: db,
+              bookingId: ref.id,
+              booking: booking,
+              services: servicesForApproval ?? updatedServices ?? [],
             );
-          }
-        } else {
-          await _createNotification(
-            bookingId: ref.id,
-            booking: booking,
-            newStatus: 'Confirmed',
-            updatedServices: updatedServices,
-          );
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Booking marked as ${_capitalise(newStatus)}')),
+            
+            // Audit log for sending to staff
+            AuditLogService.logBookingStatusChanged(
+              bookingId: ref.id,
+              bookingCode: booking.rawData['bookingCode'],
+              clientName: booking.rawData['client'] ?? 'Customer',
+              previousStatus: 'pending',
+              newStatus: 'AwaitingStaffApproval',
+              details: 'Booking request sent to staff for approval',
+              branchName: booking.rawData['branchName'],
             );
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Booking sent to staff for approval')),
+              );
+            }
+          } else {
+            await _createNotification(
+              bookingId: ref.id,
+              booking: booking,
+              newStatus: 'Confirmed',
+              updatedServices: updatedServices,
+            );
+            
+            // Audit log for confirmation
+            AuditLogService.logBookingStatusChanged(
+              bookingId: ref.id,
+              bookingCode: booking.rawData['bookingCode'],
+              clientName: booking.rawData['client'] ?? 'Customer',
+              previousStatus: 'pending',
+              newStatus: 'confirmed',
+              branchName: booking.rawData['branchName'],
+            );
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Booking marked as ${_capitalise(newStatus)}')),
+              );
+            }
           }
-        }
 
       } else {
         // Update existing booking
@@ -361,6 +384,17 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             services: servicesForApproval ?? updatedServices ?? [],
           );
           
+          // Audit log for sending to staff
+          AuditLogService.logBookingStatusChanged(
+            bookingId: booking.id,
+            bookingCode: booking.rawData['bookingCode'],
+            clientName: booking.rawData['client'] ?? 'Customer',
+            previousStatus: booking.status,
+            newStatus: 'AwaitingStaffApproval',
+            details: 'Sent to staff for approval',
+            branchName: booking.rawData['branchName'],
+          );
+          
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Booking sent to staff for approval')),
@@ -375,6 +409,16 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             booking: booking,
             newStatus: notifStatus,
             updatedServices: updatedServices,
+          );
+          
+          // Audit log for status change
+          AuditLogService.logBookingStatusChanged(
+            bookingId: booking.id,
+            bookingCode: booking.rawData['bookingCode'],
+            clientName: booking.rawData['client'] ?? 'Customer',
+            previousStatus: booking.status,
+            newStatus: newStatus,
+            branchName: booking.rawData['branchName'],
           );
           
           if (mounted) {

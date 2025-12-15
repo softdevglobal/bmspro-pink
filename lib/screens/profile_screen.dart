@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'edit_profile_page.dart';
 import 'settings_page.dart';
+import '../services/audit_log_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -596,7 +597,13 @@ extension _LogoutDialog on _ProfileScreenState {
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
+                          // Log the logout before signing out
+                          await AuditLogService.logUserLogout();
+                          
+                          // Sign out from Firebase
+                          await FirebaseAuth.instance.signOut();
+                          
                           Navigator.of(context).pop();
                           // Navigate to login and clear the stack
                           Navigator.of(context).pushNamedAndRemoveUntil(

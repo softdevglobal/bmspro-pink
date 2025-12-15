@@ -7,6 +7,7 @@ import 'staff_management_page.dart';
 import 'attendance_page.dart';
 import 'branches_page.dart';
 import 'salon_settings_page.dart';
+import 'audit_logs_page.dart';
 import '../widgets/animated_toggle.dart';
 
 class AppColors {
@@ -201,6 +202,20 @@ class _MorePageState extends State<MorePage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const MySummaryPage()),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              _buildMenuCard(
+                context,
+                icon: FontAwesomeIcons.clipboardList,
+                title: 'Audit Logs',
+                subtitle: 'Track all system activities & changes',
+                gradientColors: [const Color(0xFF475569), const Color(0xFF64748B)],
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AuditLogsPage()),
                   );
                 },
               ),

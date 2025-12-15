@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../routes.dart';
 import 'forgot_password_request.dart';
 import '../widgets/primary_gradient_button.dart';
+import '../services/audit_log_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -91,6 +92,9 @@ class _LoginScreenState extends State<LoginScreen> {
             code: 'permission-denied',
             message: 'Access denied. Role "$userRole" is not authorized.');
       }
+
+      // Log successful login
+      AuditLogService.logUserLogin();
 
       if (mounted) {
         Navigator.pushReplacementNamed(context, AppRoutes.home);
