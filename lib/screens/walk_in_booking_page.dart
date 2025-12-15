@@ -410,9 +410,19 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
     final bookingCode = _generateBookingCode();
     
+    // Determine booking source based on user role
+    String bookingSource = 'AdminBooking';
+    if (_userRole == 'salon_branch_admin') {
+      bookingSource = 'Branch Admin Booking - $_selectedBranchLabel';
+    } else if (_userRole == 'salon_owner') {
+      bookingSource = 'Owner Booking';
+    } else if (_userRole == 'salon_staff') {
+      bookingSource = 'Staff Booking - $_selectedBranchLabel';
+    }
+    
     final bookingData = <String, dynamic>{
       'bookingCode': bookingCode,
-      'bookingSource': 'AdminBooking',
+      'bookingSource': bookingSource,
       'branchId': _selectedBranchId,
       'branchName': _selectedBranchLabel,
       'client': clientName,
