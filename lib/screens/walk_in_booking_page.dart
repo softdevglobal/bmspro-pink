@@ -64,6 +64,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   List<Map<String, dynamic>> _branches = []; // {id, name, address}
   List<Map<String, dynamic>> _services = []; // {id, name, price, duration, branches, staffIds}
   List<Map<String, dynamic>> _staff = []; // {id, name, status, avatar, branchId}
+  List<Map<String, dynamic>> _bookings = []; // Existing bookings for slot blocking
   bool _loadingData = true;
   String? _dataError;
 
@@ -255,6 +256,70 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           .where('ownerUid', isEqualTo: _ownerUid)
           .get();
 
+      // Fetch bookings for time slot blocking (bookings that aren't cancelled/rejected)
+      final bookingsSnap = await db
+          .collection('bookings')
+          .where('ownerUid', isEqualTo: _ownerUid)
+          .get();
+      
+      // Also fetch bookingRequests for time slot blocking (from booking engine)
+      QuerySnapshot? bookingRequestsSnap;
+      try {
+        bookingRequestsSnap = await db
+            .collection('bookingRequests')
+            .where('ownerUid', isEqualTo: _ownerUid)
+            .get();
+      } catch (e) {
+        // bookingRequests may not be accessible - that's okay, just use main bookings
+        debugPrint('[BookingLoad] bookingRequests query failed: $e');
+      }
+
+      // Helper to map booking document to common structure
+      Map<String, dynamic> mapBookingDoc(DocumentSnapshot d, Map<String, dynamic> data) {
+        return {
+          'id': d.id,
+          'date': (data['date'] ?? '').toString(),
+          'time': (data['time'] ?? '').toString(),
+          'duration': (data['duration'] ?? 60),
+          'staffId': (data['staffId'] ?? '').toString(),
+          'staffName': (data['staffName'] ?? '').toString(),
+          'branchId': (data['branchId'] ?? '').toString(),
+          'status': (data['status'] ?? '').toString(),
+          'services': data['services'], // May contain individual service times/staff
+        };
+      }
+      
+      // Helper to check if booking status should be included
+      bool isActiveBookingStatus(String status) {
+        final s = status.toLowerCase();
+        return s != 'cancelled' && 
+               s != 'canceled' && 
+               s != 'staffrejected' &&
+               s != 'completed';
+      }
+
+      final bookings = bookingsSnap.docs
+          .where((d) {
+            final status = (d.data()['status'] ?? '').toString();
+            return isActiveBookingStatus(status);
+          })
+          .map((d) => mapBookingDoc(d, d.data()))
+          .toList();
+      
+      // Add booking requests if available
+      if (bookingRequestsSnap != null) {
+        final existingIds = bookings.map((b) => b['id']).toSet();
+        for (final doc in bookingRequestsSnap.docs) {
+          if (!existingIds.contains(doc.id)) {
+            final data = doc.data() as Map<String, dynamic>;
+            final status = (data['status'] ?? '').toString();
+            if (isActiveBookingStatus(status)) {
+              bookings.add(mapBookingDoc(doc, data));
+            }
+          }
+        }
+      }
+
       final branches = branchesSnap.docs.map((d) {
         final data = d.data();
         debugPrint('[BranchLoad] Branch "${data['name']}" id=${d.id}');
@@ -295,6 +360,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           'status': (data['status'] ?? 'Active').toString(),
           'avatar': data['avatar'] ?? data['photoURL'],
           'branchId': (data['branchId'] ?? '').toString(),
+          'weeklySchedule': data['weeklySchedule'], // Include weekly schedule for branch checks
         };
       }).where((m) {
         final status = (m['status'] ?? 'Active').toString();
@@ -353,6 +419,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       setState(() {
         _branches = filteredBranches;
         _services = filteredServices;
+        _bookings = bookings; // Store bookings for time slot blocking
         
         // For staff, don't show "Any Staff" option - they will be auto-assigned
         if (_userRole == 'salon_staff') {
@@ -917,29 +984,82 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
   // Get staff who can perform a specific service and work at the selected branch
   List<Map<String, dynamic>> _getAvailableStaffForService(String serviceId) {
+    // For salon_staff, they can only book themselves
+    if (_userRole == 'salon_staff' && _currentUserId != null) {
+      final currentStaff = _staff.firstWhere(
+        (s) => s['id'] == _currentUserId,
+        orElse: () => {},
+      );
+      if (currentStaff.isNotEmpty) {
+        return [currentStaff];
+      }
+      return [];
+    }
+    
     final service = _services.firstWhere((s) => s['id'] == serviceId, orElse: () => {});
     if (service.isEmpty) return [];
 
     final List<String> serviceStaffIds = service['staffIds'] != null
         ? (service['staffIds'] as List).map((e) => e.toString()).toList()
         : [];
+    
+    // Get day of week from selected date for schedule check
+    String? dayOfWeek;
+    if (_selectedDate != null) {
+      final days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      dayOfWeek = days[_selectedDate!.weekday % 7];
+    }
 
-    return _staff.where((staff) {
-      // Check if staff is active
-      if (staff['status'] != 'Active') return false;
-
-      // Check if staff works at selected branch
-      if (_selectedBranchId != null && staff['branchId'] != _selectedBranchId) {
+    debugPrint('[StaffFilter] serviceId=$serviceId, serviceStaffIds=$serviceStaffIds, selectedBranch=$_selectedBranchId, dayOfWeek=$dayOfWeek');
+    debugPrint('[StaffFilter] Total staff in list: ${_staff.length}');
+    
+    final filtered = _staff.where((staff) {
+      final staffId = staff['id'];
+      final staffName = staff['name'];
+      
+      // Check if staff is active (not suspended)
+      final status = (staff['status'] ?? 'Active').toString();
+      if (status == 'Suspended' || status == 'suspended') {
+        debugPrint('[StaffFilter] $staffName ($staffId) - REJECTED: suspended');
         return false;
       }
-
+      
       // Check if staff can perform this service (if service has staffIds restriction)
       if (serviceStaffIds.isNotEmpty && !serviceStaffIds.contains(staff['id'])) {
+        debugPrint('[StaffFilter] $staffName ($staffId) - REJECTED: not in service staffIds');
         return false;
       }
-
+      
+      // Check if staff works at selected branch (via branchId or weeklySchedule)
+      if (_selectedBranchId != null && _selectedBranchId!.isNotEmpty) {
+        final staffBranchId = staff['branchId']?.toString() ?? '';
+        bool worksAtBranch = staffBranchId == _selectedBranchId;
+        
+        debugPrint('[StaffFilter] $staffName ($staffId) - branchId=$staffBranchId, worksAtBranch=$worksAtBranch');
+        
+        // Also check weeklySchedule for the selected day
+        if (!worksAtBranch && dayOfWeek != null && staff['weeklySchedule'] is Map) {
+          final weeklySchedule = staff['weeklySchedule'] as Map;
+          final daySchedule = weeklySchedule[dayOfWeek];
+          debugPrint('[StaffFilter] $staffName ($staffId) - checking weeklySchedule[$dayOfWeek]=$daySchedule');
+          if (daySchedule is Map && daySchedule['branchId'] != null) {
+            worksAtBranch = daySchedule['branchId'].toString() == _selectedBranchId;
+            debugPrint('[StaffFilter] $staffName ($staffId) - schedule branchId=${daySchedule['branchId']}, worksAtBranch=$worksAtBranch');
+          }
+        }
+        
+        if (!worksAtBranch) {
+          debugPrint('[StaffFilter] $staffName ($staffId) - REJECTED: not at selected branch');
+          return false;
+        }
+      }
+      
+      debugPrint('[StaffFilter] $staffName ($staffId) - ACCEPTED');
       return true;
     }).toList();
+    
+    debugPrint('[StaffFilter] Filtered result: ${filtered.length} staff');
+    return filtered;
   }
 
   Widget _buildDatePicker() {
@@ -1159,7 +1279,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   }
 
   Widget _buildTimeSlots(String serviceId, int durationMinutes) {
-    // Generate time slots from 9 AM to 6 PM
+    // Generate time slots from 9 AM to 6 PM in 30-minute intervals
     final List<TimeOfDay> slots = [];
     for (int hour = 9; hour < 18; hour++) {
       slots.add(TimeOfDay(hour: hour, minute: 0));
@@ -1167,6 +1287,115 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     }
 
     final selectedTime = _serviceTimeSelections[serviceId];
+    final selectedStaffId = _serviceStaffSelections[serviceId];
+    
+    // Get current staff ID for staff-specific blocking
+    final String? staffIdToCheck = _userRole == 'salon_staff' 
+        ? _currentUserId 
+        : (selectedStaffId != null && selectedStaffId != 'any' ? selectedStaffId : null);
+    
+    // Get the selected date string for comparison
+    final selectedDateStr = _selectedDate != null
+        ? '${_selectedDate!.year.toString().padLeft(4, '0')}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}'
+        : null;
+
+    // Helper function to check if a time slot is OCCUPIED (booking in progress at that time)
+    // Only checks if the slot TIME falls within an existing booking, not duration-based overlap
+    bool isSlotOccupied(TimeOfDay slotTime) {
+      if (selectedDateStr == null) return false;
+      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return false;
+      
+      final slotMinutes = slotTime.hour * 60 + slotTime.minute;
+      
+      for (final booking in _bookings) {
+        // Check if booking is for the same date
+        if (booking['date'] != selectedDateStr) continue;
+        
+        // Check status - skip cancelled bookings
+        final status = (booking['status']?.toString() ?? '').toLowerCase();
+        if (status == 'cancelled' || status == 'canceled' || status == 'staffrejected') continue;
+        
+        // Check if booking has individual services (multi-service booking)
+        if (booking['services'] is List && (booking['services'] as List).isNotEmpty) {
+          for (final svc in (booking['services'] as List)) {
+            if (svc is Map) {
+              final svcStaffId = svc['staffId']?.toString() ?? '';
+              if (svcStaffId != staffIdToCheck) continue;
+              
+              final svcTime = svc['time']?.toString() ?? '';
+              if (svcTime.isEmpty) continue;
+              
+              final svcTimeParts = svcTime.split(':');
+              if (svcTimeParts.length < 2) continue;
+              
+              final svcStartMinutes = (int.tryParse(svcTimeParts[0]) ?? 0) * 60 + (int.tryParse(svcTimeParts[1]) ?? 0);
+              final svcDuration = (svc['duration'] ?? 60) as int;
+              final svcEndMinutes = svcStartMinutes + svcDuration;
+              
+              // Check if slot time falls WITHIN this service's period
+              if (slotMinutes >= svcStartMinutes && slotMinutes < svcEndMinutes) {
+                return true;
+              }
+            }
+          }
+        } else {
+          // Single service booking - check main staffId
+          final bookingStaffId = booking['staffId']?.toString() ?? '';
+          if (bookingStaffId != staffIdToCheck) continue;
+          
+          final bookingTime = booking['time']?.toString() ?? '';
+          if (bookingTime.isEmpty) continue;
+          
+          final timeParts = bookingTime.split(':');
+          if (timeParts.length < 2) continue;
+          
+          final bookingStartMinutes = (int.tryParse(timeParts[0]) ?? 0) * 60 + (int.tryParse(timeParts[1]) ?? 0);
+          final bookingDuration = (booking['duration'] ?? 60) as int;
+          final bookingEndMinutes = bookingStartMinutes + bookingDuration;
+          
+          // Check if slot time falls WITHIN this booking's period
+          if (slotMinutes >= bookingStartMinutes && slotMinutes < bookingEndMinutes) {
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    }
+    
+    // Helper function to check if slot is blocked by OTHER services in current booking session (same staff)
+    bool isSlotBlockedByCurrentSelection(TimeOfDay slotTime) {
+      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return false;
+      
+      final slotMinutes = slotTime.hour * 60 + slotTime.minute;
+      
+      for (final otherServiceId in _selectedServiceIds) {
+        if (otherServiceId == serviceId) continue;
+        
+        final otherStaffId = _serviceStaffSelections[otherServiceId];
+        if (otherStaffId != staffIdToCheck) continue;
+        
+        final otherTime = _serviceTimeSelections[otherServiceId];
+        if (otherTime == null) continue;
+        
+        // Get duration of other service
+        final otherService = _services.firstWhere(
+          (s) => s['id'] == otherServiceId,
+          orElse: () => {},
+        );
+        final otherDuration = (otherService['duration'] ?? 60) as int;
+        
+        final otherStartMinutes = otherTime.hour * 60 + otherTime.minute;
+        final otherEndMinutes = otherStartMinutes + otherDuration;
+        
+        // Check if slot time falls WITHIN the other service's period
+        if (slotMinutes >= otherStartMinutes && slotMinutes < otherEndMinutes) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
 
     return Wrap(
       spacing: 8,
@@ -1176,21 +1405,37 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             selectedTime.hour == time.hour &&
             selectedTime.minute == time.minute;
         final timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+        
+        final isOccupiedByBooking = isSlotOccupied(time);
+        final isBlockedBySelection = isSlotBlockedByCurrentSelection(time);
+        final isDisabled = isOccupiedByBooking || isBlockedBySelection;
 
         return GestureDetector(
-          onTap: () {
+          onTap: isDisabled ? null : () {
             setState(() {
               _serviceTimeSelections = Map.from(_serviceTimeSelections);
               _serviceTimeSelections[serviceId] = time;
             });
           },
-                    child: Container(
+          child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-              color: isSelected ? AppColors.primary : AppColors.background,
+            decoration: BoxDecoration(
+              color: isSelected 
+                  ? AppColors.primary 
+                  : isOccupiedByBooking
+                      ? Colors.red.shade50
+                      : isBlockedBySelection
+                          ? Colors.amber.shade50
+                          : AppColors.background,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: isSelected ? AppColors.primary : AppColors.border,
+                color: isSelected 
+                    ? AppColors.primary 
+                    : isOccupiedByBooking
+                        ? Colors.red.shade200
+                        : isBlockedBySelection
+                            ? Colors.amber.shade200
+                            : AppColors.border,
               ),
             ),
             child: Text(
@@ -1198,7 +1443,14 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : AppColors.text,
+                color: isSelected 
+                    ? Colors.white 
+                    : isOccupiedByBooking
+                        ? Colors.red.shade400
+                        : isBlockedBySelection
+                            ? Colors.amber.shade600
+                            : AppColors.text,
+                decoration: isOccupiedByBooking ? TextDecoration.lineThrough : null,
               ),
             ),
           ),

@@ -165,9 +165,12 @@ class _CalenderScreenState extends State<CalenderScreen> {
   @override
   void dispose() {
     _bookingsSub?.cancel();
+    _bookingRequestsSub?.cancel();
     super.dispose();
   }
 
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingRequestsSub;
+  
   void _startBookingsListener() {
     final ownerUid = _ownerUid;
     if (ownerUid == null || ownerUid.isEmpty) {
@@ -179,22 +182,56 @@ class _CalenderScreenState extends State<CalenderScreen> {
     }
 
     _bookingsSub?.cancel();
+    _bookingRequestsSub?.cancel();
     setState(() {
       _isLoadingBookings = true;
       _bookingsError = null;
       _scheduleData = {};
       _allBookings.clear();
     });
+    
+    final List<Map<String, dynamic>> bookingsData = [];
+    final List<Map<String, dynamic>> bookingRequestsData = [];
+    final Set<String> seenIds = {};
+    
+    void mergeAndRebuild() {
+      _allBookings.clear();
+      seenIds.clear();
+      
+      // Add all bookings first
+      for (final b in bookingsData) {
+        final id = b['id']?.toString() ?? '';
+        if (id.isNotEmpty && !seenIds.contains(id)) {
+          seenIds.add(id);
+          _allBookings.add(b);
+        }
+      }
+      
+      // Add booking requests that aren't duplicates
+      for (final b in bookingRequestsData) {
+        final id = b['id']?.toString() ?? '';
+        if (id.isNotEmpty && !seenIds.contains(id)) {
+          seenIds.add(id);
+          _allBookings.add(b);
+        }
+      }
+      
+      _rebuildScheduleFromBookings();
+    }
 
     _bookingsSub = FirebaseFirestore.instance
         .collection('bookings')
         .where('ownerUid', isEqualTo: ownerUid)
         .snapshots()
         .listen((snap) {
-      _allBookings
+      bookingsData
         ..clear()
-        ..addAll(snap.docs.map((d) => d.data()));
-      _rebuildScheduleFromBookings();
+        ..addAll(snap.docs.map((d) {
+          final data = d.data();
+          data['id'] = d.id;
+          return data;
+        }));
+      mergeAndRebuild();
     }, onError: (e) {
       debugPrint('Error listening to bookings: $e');
       if (mounted) {
@@ -204,6 +241,25 @@ class _CalenderScreenState extends State<CalenderScreen> {
         });
       }
     });
+    
+    // Also listen to bookingRequests (from booking engine)
+    _bookingRequestsSub = FirebaseFirestore.instance
+        .collection('bookingRequests')
+        .where('ownerUid', isEqualTo: ownerUid)
+        .snapshots()
+        .listen((snap) {
+      bookingRequestsData
+        ..clear()
+        ..addAll(snap.docs.map((d) {
+          final data = d.data();
+          data['id'] = d.id;
+          return data;
+        }));
+      mergeAndRebuild();
+    }, onError: (e) {
+      // Silently ignore errors for bookingRequests - may not be accessible
+      debugPrint('Error listening to bookingRequests: $e');
+    });
   }
 
   void _rebuildScheduleFromBookings() {
@@ -211,12 +267,15 @@ class _CalenderScreenState extends State<CalenderScreen> {
     final bool isOwner = _currentUserRole == 'salon_owner';
 
     for (final data in _allBookings) {
-      // Status filter: salon owners see all, others see confirmed only
       final statusRaw = (data['status'] ?? '').toString().toLowerCase();
-      if (!isOwner && statusRaw != 'confirmed') continue;
       
-      // Skip cancelled bookings for everyone
-      if (statusRaw == 'cancelled' || statusRaw == 'canceled') continue;
+      // Skip cancelled/rejected bookings for everyone
+      if (statusRaw == 'cancelled' || 
+          statusRaw == 'canceled' || 
+          statusRaw == 'staffrejected') continue;
+      
+      // All users can see their upcoming bookings regardless of status
+      // (pending, confirmed, awaiting approval, etc.)
 
       final dateStr = (data['date'] ?? '').toString();
       if (dateStr.isEmpty) continue;

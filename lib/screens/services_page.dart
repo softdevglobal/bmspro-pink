@@ -1089,7 +1089,10 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _priceController = TextEditingController();
-  final _durationController = TextEditingController();
+  
+  // Duration dropdown options (30-minute intervals)
+  final List<int> _durationOptions = [30, 60, 90, 120, 150, 180, 210, 240];
+  int? _selectedDuration;
   
   String? _imageUrl;
   File? _imageFile;
@@ -1105,7 +1108,14 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
     if (widget.service != null) {
       _nameController.text = widget.service!.name;
       _priceController.text = widget.service!.price.toStringAsFixed(0);
-      _durationController.text = widget.service!.duration.toString();
+      // Set duration from existing service, or find closest 30-min interval
+      if (_durationOptions.contains(widget.service!.duration)) {
+        _selectedDuration = widget.service!.duration;
+      } else {
+        // Find the closest 30-minute interval
+        _selectedDuration = (_durationOptions.reduce((a, b) =>
+            (a - widget.service!.duration).abs() < (b - widget.service!.duration).abs() ? a : b));
+      }
       _imageUrl = widget.service!.imageUrl;
       _selectedBranches = Set.from(widget.service!.branches);
       _selectedStaff = Set.from(widget.service!.staffIds);
@@ -1116,7 +1126,6 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
-    _durationController.dispose();
     super.dispose();
   }
 
@@ -1171,7 +1180,7 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
       final data = {
         'name': _nameController.text.trim(),
         'price': double.parse(_priceController.text),
-        'duration': int.parse(_durationController.text),
+        'duration': _selectedDuration ?? 60,
         'imageUrl': imageUrl ?? '',
         'branches': _selectedBranches.toList(),
         'staffIds': _selectedStaff.toList(),
@@ -1311,11 +1320,22 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
                       Row(
                         children: [
                           Expanded(
-                            child: TextFormField(
-                              controller: _durationController,
-                              decoration: _inputDecoration('Duration (mins)', '60'),
-                              keyboardType: TextInputType.number,
-                              validator: (v) => v!.isEmpty ? 'Required' : null,
+                            child: DropdownButtonFormField<int>(
+                              value: _selectedDuration,
+                              decoration: _inputDecoration('Duration (mins)', ''),
+                              hint: const Text('Select', style: TextStyle(fontSize: 14)),
+                              items: _durationOptions.map((duration) {
+                                return DropdownMenuItem<int>(
+                                  value: duration,
+                                  child: Text('$duration mins', style: const TextStyle(fontSize: 14)),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  _selectedDuration = value;
+                                });
+                              },
+                              validator: (v) => v == null ? 'Required' : null,
                             ),
                           ),
                           const SizedBox(width: 16),
