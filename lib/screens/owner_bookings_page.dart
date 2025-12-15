@@ -251,18 +251,42 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     try {
       // Check if services need update
       final bool hasServicesUpdate = updatedServices != null && updatedServices.isNotEmpty;
+      
+      // Determine if this is admin confirming a pending booking
+      // In this case, we send to AwaitingStaffApproval for staff to accept (like admin panel)
+      final bool isConfirmingPending = 
+          (booking.status == 'pending' || booking.collection == 'bookingRequests') && 
+          newStatus == 'confirmed';
+      
+      // The actual status to set - AwaitingStaffApproval when confirming pending bookings
+      final String actualStatus = isConfirmingPending ? 'AwaitingStaffApproval' : newStatus;
+      
+      // Prepare services with approval status for staff approval workflow
+      List<Map<String, dynamic>>? servicesForApproval;
+      if (isConfirmingPending && hasServicesUpdate) {
+        servicesForApproval = updatedServices!.map((service) {
+          final s = Map<String, dynamic>.from(service);
+          s['approvalStatus'] = 'pending'; // Each staff needs to approve
+          // Remove any previous response data
+          s.remove('acceptedAt');
+          s.remove('rejectedAt');
+          s.remove('rejectionReason');
+          s.remove('respondedByStaffUid');
+          s.remove('respondedByStaffName');
+          return s;
+        }).toList();
+      }
 
       // If confirming a booking request, move it to 'bookings' collection
-      if (booking.collection == 'bookingRequests' && newStatus == 'confirmed') {
-        // Update services array in the booking request itself first (cleaner logic)
-        // This ensures the object we copy from is up to date, though we construct newData manually below.
-        
+      if (booking.collection == 'bookingRequests' && (newStatus == 'confirmed' || isConfirmingPending)) {
         final newData = Map<String, dynamic>.from(booking.rawData);
-        newData['status'] = 'confirmed';
+        newData['status'] = actualStatus;
         newData['updatedAt'] = FieldValue.serverTimestamp();
         
         // Ensure services are updated in the new booking document
-        if (hasServicesUpdate) {
+        if (servicesForApproval != null) {
+          newData['services'] = servicesForApproval;
+        } else if (hasServicesUpdate) {
           newData['services'] = updatedServices;
         }
 
@@ -271,7 +295,6 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         }
 
         // Remove top-level staff fields if they exist to avoid confusion
-        // Only if we have services list, otherwise keep them for legacy support
         if (hasServicesUpdate || (newData['services'] != null && (newData['services'] as List).isNotEmpty)) {
           newData.remove('staffId');
           newData.remove('staffName');
@@ -282,23 +305,44 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         // Delete from bookingRequests
         await db.collection('bookingRequests').doc(booking.id).delete();
         
-        // Create notification
-        await _createNotification(
-          bookingId: ref.id,
-          booking: booking,
-          newStatus: 'Confirmed',
-          updatedServices: updatedServices,
-        );
+        // Send notifications to staff for approval (not customer yet)
+        if (isConfirmingPending) {
+          await _createStaffApprovalNotifications(
+            db: db,
+            bookingId: ref.id,
+            booking: booking,
+            services: servicesForApproval ?? updatedServices ?? [],
+          );
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Booking sent to staff for approval')),
+            );
+          }
+        } else {
+          await _createNotification(
+            bookingId: ref.id,
+            booking: booking,
+            newStatus: 'Confirmed',
+            updatedServices: updatedServices,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Booking marked as ${_capitalise(newStatus)}')),
+            );
+          }
+        }
 
       } else {
         // Update existing booking
-        final Map<String, dynamic> updateData = {'status': newStatus};
+        final Map<String, dynamic> updateData = {'status': actualStatus};
         
-        // CRITICAL FIX: Also update services array in the existing document if provided
-        if (hasServicesUpdate) {
+        if (servicesForApproval != null) {
+          updateData['services'] = servicesForApproval;
+          updateData['staffId'] = FieldValue.delete();
+          updateData['staffName'] = FieldValue.delete();
+        } else if (hasServicesUpdate) {
           updateData['services'] = updatedServices;
-          
-          // Also clean up top-level fields if they exist
           updateData['staffId'] = FieldValue.delete();
           updateData['staffName'] = FieldValue.delete();
         }
@@ -307,24 +351,38 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             .collection(booking.collection)
             .doc(booking.id)
             .update(updateData);
-            
-        // Create notification
-        // normalize status string for notification function (Capitalized)
-        String notifStatus = _capitalise(newStatus);
-        if (newStatus == 'cancelled') notifStatus = 'Canceled';
         
-        await _createNotification(
-          bookingId: booking.id,
-          booking: booking,
-          newStatus: notifStatus,
-          updatedServices: updatedServices,
-        );
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Booking marked as ${_capitalise(newStatus)}')),
-        );
+        // Send appropriate notifications
+        if (isConfirmingPending) {
+          await _createStaffApprovalNotifications(
+            db: db,
+            bookingId: booking.id,
+            booking: booking,
+            services: servicesForApproval ?? updatedServices ?? [],
+          );
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Booking sent to staff for approval')),
+            );
+          }
+        } else {
+          String notifStatus = _capitalise(newStatus);
+          if (newStatus == 'cancelled') notifStatus = 'Canceled';
+          
+          await _createNotification(
+            bookingId: booking.id,
+            booking: booking,
+            newStatus: notifStatus,
+            updatedServices: updatedServices,
+          );
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Booking marked as ${_capitalise(newStatus)}')),
+            );
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -332,6 +390,62 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
           SnackBar(content: Text('Error: $e')),
         );
       }
+    }
+  }
+  
+  /// Send notifications to each staff member assigned to a service for approval
+  Future<void> _createStaffApprovalNotifications({
+    required FirebaseFirestore db,
+    required String bookingId,
+    required _Booking booking,
+    required List<Map<String, dynamic>> services,
+  }) async {
+    try {
+      final ownerUid = _ownerUid ?? '';
+      final Set<String> notifiedStaffIds = {};
+      
+      for (final service in services) {
+        final staffId = (service['staffId'] ?? '').toString();
+        final staffName = (service['staffName'] ?? 'Staff').toString();
+        final serviceName = (service['name'] ?? service['serviceName'] ?? 'Service').toString();
+        
+        // Skip if no staff assigned or already notified
+        if (staffId.isEmpty || staffId == 'null' || notifiedStaffIds.contains(staffId)) {
+          continue;
+        }
+        notifiedStaffIds.add(staffId);
+        
+        // Get all services assigned to this staff member
+        final staffServices = services
+            .where((s) => s['staffId'] == staffId)
+            .map((s) => s['name'] ?? s['serviceName'] ?? 'Service')
+            .join(', ');
+        
+        final time = booking.rawData['time'] ?? '';
+        
+        await db.collection('notifications').add({
+          'bookingId': bookingId,
+          'type': 'booking_approval_request',
+          'title': 'Booking Approval Required',
+          'message': 'Please review and approve booking for $staffServices with ${booking.customerName} on ${booking.date} at $time.',
+          'status': 'AwaitingStaffApproval',
+          'ownerUid': ownerUid,
+          'staffUid': staffId,
+          'staffName': staffName,
+          'customerName': booking.customerName,
+          'customerEmail': booking.email,
+          'serviceName': staffServices,
+          'date': booking.date,
+          'time': time,
+          'branchId': booking.branchId,
+          'read': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        
+        debugPrint("Sent approval request notification to $staffName ($staffId)");
+      }
+    } catch (e) {
+      debugPrint("Error creating staff approval notifications: $e");
     }
   }
 
@@ -643,7 +757,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Confirm Booking',
+                              'Send for Staff Approval',
                               style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.bold,
@@ -652,7 +766,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                             ),
                             SizedBox(height: 4),
                             Text(
-                              "Assign staff to proceed",
+                              "Assign staff & send for approval",
                               style: TextStyle(
                                 fontSize: 13,
                                 color: Colors.grey,
@@ -931,7 +1045,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                             ),
                           ),
                           child: const Text(
-                            'Confirm Booking',
+                            'Send for Approval',
                             style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -1036,7 +1150,20 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
 
   String _capitalise(String value) {
     if (value.isEmpty) return value;
-    return value[0].toUpperCase() + value.substring(1);
+    
+    // Handle camelCase like "AwaitingStaffApproval" -> "Awaiting Approval"
+    String formatted = value.replaceAllMapped(
+      RegExp(r'([a-z])([A-Z])'),
+      (m) => '${m.group(1)} ${m.group(2)}',
+    );
+    
+    // Return shorter labels for long statuses
+    final lower = formatted.toLowerCase();
+    if (lower.contains('awaiting')) return 'Awaiting';
+    if (lower.contains('partially')) return 'Partial';
+    
+    // Capitalize first letter
+    return formatted[0].toUpperCase() + formatted.substring(1);
   }
 
   @override
@@ -1639,6 +1766,106 @@ class _BookingCard extends StatelessWidget {
     }
   }
 
+  bool _isAwaitingStatus(String status) {
+    final lower = status.toLowerCase();
+    return lower.contains('awaiting') || lower.contains('partially');
+  }
+
+  Widget _buildStaffApprovalSection(List<Map<String, dynamic>> items) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF3C7).withOpacity(0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFCD34D).withOpacity(0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(FontAwesomeIcons.userClock, size: 12, color: Colors.amber.shade700),
+              const SizedBox(width: 6),
+              Text(
+                'Staff Approvals',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.amber.shade800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...items.map((item) {
+            final serviceName = (item['name'] ?? item['serviceName'] ?? 'Service').toString();
+            final staffName = (item['staffName'] ?? 'Any staff').toString();
+            final approvalStatus = (item['approvalStatus'] ?? 'pending').toString().toLowerCase();
+            
+            Color statusColor;
+            IconData statusIcon;
+            String statusLabel;
+            
+            switch (approvalStatus) {
+              case 'accepted':
+                statusColor = const Color(0xFF16A34A);
+                statusIcon = FontAwesomeIcons.circleCheck;
+                statusLabel = 'Approved';
+                break;
+              case 'rejected':
+                statusColor = const Color(0xFFDC2626);
+                statusIcon = FontAwesomeIcons.circleXmark;
+                statusLabel = 'Rejected';
+                break;
+              default:
+                statusColor = const Color(0xFFD97706);
+                statusIcon = FontAwesomeIcons.clock;
+                statusLabel = 'Pending';
+            }
+            
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '$serviceName • $staffName',
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF374151)),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(statusIcon, size: 10, color: statusColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          statusLabel,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: statusColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final statusBg = _statusBg(booking.status);
@@ -1662,45 +1889,45 @@ class _BookingCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 22,
-                    backgroundColor: const Color(0xFFFF2D8F).withOpacity(0.15),
-                    child: Text(
-                      _getInitials(booking.customerName),
-                      style: const TextStyle(
-                        color: Color(0xFFFF2D8F),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: const Color(0xFFFF2D8F).withOpacity(0.15),
+                child: Text(
+                  _getInitials(booking.customerName),
+                  style: const TextStyle(
+                    color: Color(0xFFFF2D8F),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
                   ),
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        booking.customerName,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                          color: Colors.black,
-                        ),
-                      ),
-                      Text(
-                        booking.email,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF6B7280),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      booking.customerName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        color: Colors.black,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      booking.email,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF6B7280),
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1736,6 +1963,11 @@ class _BookingCard extends StatelessWidget {
             icon: FontAwesomeIcons.clock,
             text: booking.duration,
           ),
+          // Show staff-wise approval status for awaiting bookings
+          if (_isAwaitingStatus(booking.status) && booking.items.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildStaffApprovalSection(booking.items),
+          ],
           const SizedBox(height: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1767,9 +1999,9 @@ class _BookingCard extends StatelessWidget {
                     if (booking.status == 'pending') ...[
                       const SizedBox(width: 8),
                       _ActionButton(
-                        label: "Confirm",
-                        background: const Color(0xFFDCFCE7),
-                        color: const Color(0xFF166534),
+                        label: "Send to Staff",
+                        background: const Color(0xFFFEF3C7),
+                        color: const Color(0xFFD97706),
                         onTap: () => onStatusUpdate('confirmed'),
                       ),
                       const SizedBox(width: 8),
@@ -2099,7 +2331,20 @@ class _BookingCard extends StatelessWidget {
 
   String _capitalise(String value) {
     if (value.isEmpty) return value;
-    return value[0].toUpperCase() + value.substring(1);
+    
+    // Handle camelCase like "AwaitingStaffApproval" -> "Awaiting Approval"
+    String formatted = value.replaceAllMapped(
+      RegExp(r'([a-z])([A-Z])'),
+      (m) => '${m.group(1)} ${m.group(2)}',
+    );
+    
+    // Return shorter labels for long statuses
+    final lower = formatted.toLowerCase();
+    if (lower.contains('awaiting')) return 'Awaiting';
+    if (lower.contains('partially')) return 'Partial';
+    
+    // Capitalize first letter
+    return formatted[0].toUpperCase() + formatted.substring(1);
   }
 }
 
