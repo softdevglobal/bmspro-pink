@@ -80,63 +80,73 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
 
       for (final doc in snap.docs) {
         final data = doc.data();
-
-        // Check if this booking is assigned to the current staff
-        bool isAssigned = false;
-        String? serviceName;
-        String? duration;
-
-        // Check staffId at booking level
-        if (data['staffId'] == user.uid) {
-          isAssigned = true;
-        }
-
-        // Check services array for staff assignment
-        if (data['services'] is List) {
-          for (final service in (data['services'] as List)) {
-            if (service is Map) {
-              final serviceStaffId = service['staffId']?.toString();
-              if (serviceStaffId == user.uid) {
-                isAssigned = true;
-                serviceName ??= service['name']?.toString() ?? service['serviceName']?.toString();
-                duration ??= service['duration']?.toString();
-              }
-            }
-          }
-        }
-
-        if (!isAssigned) continue;
-
-        // Get service name from various possible fields
-        if (serviceName == null || serviceName.isEmpty) {
-          if (data['services'] is List && (data['services'] as List).isNotEmpty) {
-            final firstService = (data['services'] as List).first;
-            if (firstService is Map) {
-              serviceName = firstService['name']?.toString() ?? firstService['serviceName']?.toString();
-              duration = firstService['duration']?.toString();
-            }
-          }
-        }
-        serviceName ??= data['serviceName']?.toString() ?? data['service']?.toString() ?? 'Service';
-        duration ??= data['duration']?.toString() ?? '';
-
-        final time = data['time']?.toString() ?? data['startTime']?.toString() ?? '';
         final date = data['date']?.toString() ?? '';
         final status = data['status']?.toString() ?? 'pending';
         final client = data['client']?.toString() ?? data['clientName']?.toString() ?? 'Client';
+        final bookingTime = data['time']?.toString() ?? data['startTime']?.toString() ?? '';
 
-        appointments.add({
-          'id': doc.id,
-          'serviceName': serviceName,
-          'duration': duration,
-          'time': time,
-          'date': date,
-          'status': status,
-          'client': client,
-          'data': data,
-          'isToday': date == todayStr,
-          'isFuture': date.compareTo(todayStr) >= 0,
-        });
+        // Check services array for staff assignment - create separate entry for EACH service assigned to this staff
+        if (data['services'] is List && (data['services'] as List).isNotEmpty) {
+          for (final service in (data['services'] as List)) {
+            if (service is Map) {
+              final serviceStaffId = service['staffId']?.toString();
+              final serviceStaffAuthUid = service['staffAuthUid']?.toString();
+              
+              // Check if this service is assigned to current user
+              if (serviceStaffId == user.uid || serviceStaffAuthUid == user.uid) {
+                final serviceName = service['name']?.toString() ?? service['serviceName']?.toString() ?? 'Service';
+                final duration = service['duration']?.toString() ?? '';
+                final serviceTime = service['time']?.toString() ?? bookingTime;
+                final approvalStatus = service['approvalStatus']?.toString();
+                
+                // Determine display status - use service approval status if booking is awaiting approval
+                String displayStatus = status;
+                if (status.toLowerCase().contains('awaiting') || status.toLowerCase().contains('partially')) {
+                  displayStatus = approvalStatus == 'accepted' ? 'confirmed' : 
+                                  approvalStatus == 'rejected' ? 'rejected' : 'pending';
+                }
+                
+                appointments.add({
+                  'id': doc.id,
+                  'serviceId': service['id']?.toString() ?? '',
+                  'serviceName': serviceName,
+                  'duration': duration,
+                  'time': serviceTime,
+                  'date': date,
+                  'status': displayStatus,
+                  'bookingStatus': status,
+                  'approvalStatus': approvalStatus,
+                  'client': client,
+                  'data': data,
+                  'isToday': date == todayStr,
+                  'isFuture': date.compareTo(todayStr) >= 0,
+                });
+              }
+            }
+          }
+        } else {
+          // Legacy: Check staffId at booking level for single-service bookings
+          final bookingStaffId = data['staffId']?.toString();
+          final bookingStaffAuthUid = data['staffAuthUid']?.toString();
+          
+          if (bookingStaffId == user.uid || bookingStaffAuthUid == user.uid) {
+            final serviceName = data['serviceName']?.toString() ?? data['service']?.toString() ?? 'Service';
+            final duration = data['duration']?.toString() ?? '';
+
+            appointments.add({
+              'id': doc.id,
+              'serviceName': serviceName,
+              'duration': duration,
+              'time': bookingTime,
+              'date': date,
+              'status': status,
+              'client': client,
+              'data': data,
+              'isToday': date == todayStr,
+              'isFuture': date.compareTo(todayStr) >= 0,
+            });
+          }
+        }
       }
 
       // Sort by date and time
@@ -243,7 +253,10 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
       case 'completed':
         return const Color(0xFF3B82F6);
       case 'cancelled':
+      case 'rejected':
         return const Color(0xFFEF4444);
+      case 'awaiting':
+      case 'awaitingstaffapproval':
       case 'pending':
       default:
         return const Color(0xFFF59E0B);

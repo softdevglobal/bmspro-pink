@@ -258,8 +258,57 @@ class _CalenderScreenState extends State<CalenderScreen> {
         totalPrice = double.tryParse(data['totalPrice'].toString()) ?? 0;
       }
       
-      // Parse individual services
-      if (data['services'] is List) {
+      // Format status properly (convert camelCase like "AwaitingStaffApproval" to "Awaiting Staff Approval")
+      String bookingStatus = _formatStatus(statusRaw);
+      final roomLabel = branchName.isNotEmpty ? branchName : 'Salon';
+      final bookingTimeStr = (data['time'] ?? '').toString();
+
+      // Helper to get icon for a service
+      IconData getServiceIcon(String svcName) {
+        final lower = svcName.toLowerCase();
+        if (lower.contains('nail')) return FontAwesomeIcons.handSparkles;
+        if (lower.contains('facial') || lower.contains('spa')) return FontAwesomeIcons.spa;
+        if (lower.contains('massage')) return FontAwesomeIcons.spa;
+        if (lower.contains('extension')) return FontAwesomeIcons.wandMagicSparkles;
+        if (lower.contains('color') || lower.contains('colour')) return FontAwesomeIcons.paintbrush;
+        if (lower.contains('cut') || lower.contains('trim')) return FontAwesomeIcons.scissors;
+        if (lower.contains('wax')) return FontAwesomeIcons.star;
+        return FontAwesomeIcons.scissors;
+      }
+
+      // Helper to format time
+      String formatTime(String timeStr) {
+        if (timeStr.isEmpty) return '';
+        try {
+          final t = DateFormat('HH:mm').parse(timeStr);
+          return DateFormat('h:mm a').format(t);
+        } catch (_) {
+          return timeStr;
+        }
+      }
+
+      // Helper to add appointment to schedule
+      void addAppointmentToDay(Appointment appt) {
+        final existing = byDay[dayKey];
+        if (existing == null) {
+          byDay[dayKey] = DaySchedule(
+            branch: branchName.isNotEmpty ? branchName : null,
+            items: [appt],
+          );
+        } else {
+          final List<Appointment> items = List.of(existing.items)..add(appt);
+          String? mergedBranch = existing.branch;
+          if (mergedBranch == null && branchName.isNotEmpty) {
+            mergedBranch = branchName;
+          } else if (mergedBranch != null && branchName.isNotEmpty && branchName != mergedBranch) {
+            mergedBranch = 'Multiple Branches';
+          }
+          byDay[dayKey] = DaySchedule(branch: mergedBranch, items: items, isOffDay: false);
+        }
+      }
+
+      // Create SEPARATE appointment for EACH service
+      if (data['services'] is List && (data['services'] as List).isNotEmpty) {
         final list = data['services'] as List;
         for (final svc in list) {
           if (svc is Map) {
@@ -268,119 +317,81 @@ class _CalenderScreenState extends State<CalenderScreen> {
             final svcStaffName = (svc['staffName'] ?? '').toString();
             final svcStaffId = (svc['staffId'] ?? '').toString();
             final svcDuration = int.tryParse((svc['duration'] ?? '0').toString()) ?? 0;
+            final svcTime = (svc['time'] ?? bookingTimeStr).toString();
+            final svcApprovalStatus = (svc['approvalStatus'] ?? '').toString();
             
-            serviceDetails.add(ServiceDetail(
+            // Determine status - use service approval status if booking is awaiting
+            String displayStatus = bookingStatus;
+            if (statusRaw.toLowerCase().contains('awaiting') || statusRaw.toLowerCase().contains('partially')) {
+              if (svcApprovalStatus == 'accepted') {
+                displayStatus = 'Confirmed';
+              } else if (svcApprovalStatus == 'rejected') {
+                displayStatus = 'Rejected';
+              } else {
+                displayStatus = 'Awaiting Approval';
+              }
+            }
+            
+            final serviceDetail = ServiceDetail(
               name: svcName,
               price: svcPrice,
               staffName: svcStaffName,
               staffId: svcStaffId,
               duration: svcDuration,
-            ));
-            
-            // Sum prices if not set at top level
-            if (totalPrice == 0) {
-              totalPrice += svcPrice;
-            }
+            );
+
+            final appt = Appointment(
+              time: formatTime(svcTime),
+              client: clientName,
+              service: '$svcName ${svcDuration > 0 ? '${svcDuration}min' : ''}',
+              room: roomLabel,
+              icon: getServiceIcon(svcName),
+              staffId: svcStaffId.isNotEmpty ? svcStaffId : _extractStaffId(data),
+              status: displayStatus,
+              price: svcPrice,
+              staffName: svcStaffName.isNotEmpty ? svcStaffName : (data['staffName'] ?? '').toString(),
+              phone: clientPhone,
+              email: clientEmail,
+              bookingId: bookingId,
+              services: [serviceDetail],
+            );
+
+            addAppointmentToDay(appt);
           }
         }
-        
-        // Set service name from first service or combine names
-        if (serviceDetails.isNotEmpty) {
-          if (serviceDetails.length == 1) {
-            serviceName = serviceDetails.first.name;
-          } else {
-            serviceName = serviceDetails.map((s) => s.name).join(', ');
-          }
-        }
-      }
-      if (serviceName.isEmpty) serviceName = 'Service';
-
-      // Get staff name summary
-      String staffName = (data['staffName'] ?? '').toString();
-      if (staffName.isEmpty && serviceDetails.isNotEmpty) {
-        final Set<String> staffNames = {};
-        for (final svc in serviceDetails) {
-          if (svc.staffName.isNotEmpty) staffNames.add(svc.staffName);
-        }
-        if (staffNames.length == 1) {
-          staffName = staffNames.first;
-        } else if (staffNames.length > 1) {
-          staffName = '${staffNames.length} staff';
-        }
-      }
-
-      // Format status properly (convert camelCase like "AwaitingStaffApproval" to "Awaiting Staff Approval")
-      String status = _formatStatus(statusRaw);
-
-      final timeStr = (data['time'] ?? '').toString();
-      String timeLabel = timeStr;
-      try {
-        if (timeStr.isNotEmpty) {
-          final t = DateFormat('HH:mm').parse(timeStr);
-          timeLabel = DateFormat('h:mm a').format(t);
-        }
-      } catch (_) {}
-
-      // Use branch name as "room" label for now
-      final roomLabel = branchName.isNotEmpty ? branchName : 'Salon';
-
-      // Icon heuristic
-      IconData icon = FontAwesomeIcons.scissors;
-      final lower = serviceName.toLowerCase();
-      if (lower.contains('nail')) {
-        icon = FontAwesomeIcons.handSparkles;
-      } else if (lower.contains('facial') || lower.contains('spa')) {
-        icon = FontAwesomeIcons.spa;
-      } else if (lower.contains('massage')) {
-        icon = FontAwesomeIcons.spa;
-      } else if (lower.contains('extension')) {
-        icon = FontAwesomeIcons.wandMagicSparkles;
-      } else if (lower.contains('color') || lower.contains('colour')) {
-        icon = FontAwesomeIcons.paintbrush;
-      } else if (lower.contains('cut') || lower.contains('trim')) {
-        icon = FontAwesomeIcons.scissors;
-      } else if (lower.contains('wax')) {
-        icon = FontAwesomeIcons.star;
-      }
-
-      final appt = Appointment(
-        time: timeLabel,
-        client: clientName,
-        service: serviceName,
-        room: roomLabel,
-        icon: icon,
-        staffId: _extractStaffId(data),
-        status: status,
-        price: totalPrice,
-        staffName: staffName,
-        phone: clientPhone,
-        email: clientEmail,
-        bookingId: bookingId,
-        services: serviceDetails,
-      );
-
-      final existing = byDay[dayKey];
-      if (existing == null) {
-        byDay[dayKey] = DaySchedule(
-          branch: branchName.isNotEmpty ? branchName : null,
-          items: [appt],
-        );
       } else {
-        // Merge items and handle multiple branches
-        final List<Appointment> items = List.of(existing.items)..add(appt);
-        String? mergedBranch = existing.branch;
-        if (mergedBranch == null && branchName.isNotEmpty) {
-          mergedBranch = branchName;
-        } else if (mergedBranch != null &&
-            branchName.isNotEmpty &&
-            branchName != mergedBranch) {
-          mergedBranch = 'Multiple Branches';
+        // Legacy: single service booking without services array
+        serviceName = (data['serviceName'] ?? 'Service').toString();
+        if (serviceName.isEmpty) serviceName = 'Service';
+        
+        final staffName = (data['staffName'] ?? '').toString();
+        
+        if (totalPrice == 0) {
+          final rawPrice = data['price'];
+          if (rawPrice is num) {
+            totalPrice = rawPrice.toDouble();
+          } else {
+            totalPrice = double.tryParse(rawPrice?.toString() ?? '0') ?? 0;
+          }
         }
-        byDay[dayKey] = DaySchedule(
-          branch: mergedBranch,
-          items: items,
-          isOffDay: false,
+
+        final appt = Appointment(
+          time: formatTime(bookingTimeStr),
+          client: clientName,
+          service: serviceName,
+          room: roomLabel,
+          icon: getServiceIcon(serviceName),
+          staffId: _extractStaffId(data),
+          status: bookingStatus,
+          price: totalPrice,
+          staffName: staffName,
+          phone: clientPhone,
+          email: clientEmail,
+          bookingId: bookingId,
+          services: [],
         );
+
+        addAppointmentToDay(appt);
       }
     }
 
