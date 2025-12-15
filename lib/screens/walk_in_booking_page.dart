@@ -44,6 +44,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   String? _ownerUid;
   String? _userRole;
   String? _userBranchId;
+  String? _currentUserId;  // Current user's document ID (same as auth UID)
+  String? _currentUserName; // Current user's display name
+  Map<String, dynamic>? _currentUserWeeklySchedule; // Staff's weekly schedule
   bool _loadingContext = true;
   String? _selectedBranchId;
 
@@ -185,11 +188,18 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       String? ownerUid = user.uid;
       String? role;
       String? branchId;
+      String? userId = user.uid;
+      String? userName;
+      Map<String, dynamic>? weeklySchedule;
 
       if (snap.exists) {
         final data = snap.data() as Map<String, dynamic>? ?? {};
         role = (data['role'] ?? '').toString();
         branchId = (data['branchId'] ?? '').toString();
+        userName = (data['displayName'] ?? data['name'] ?? '').toString();
+        weeklySchedule = data['weeklySchedule'] is Map 
+            ? Map<String, dynamic>.from(data['weeklySchedule']) 
+            : null;
 
         if (role == 'salon_owner') {
           ownerUid = user.uid;
@@ -204,6 +214,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         _ownerUid = ownerUid;
         _userRole = role;
         _userBranchId = branchId?.isNotEmpty == true ? branchId : null;
+        _currentUserId = userId;
+        _currentUserName = userName?.isNotEmpty == true ? userName : 'Staff';
+        _currentUserWeeklySchedule = weeklySchedule;
       });
 
       await _loadInitialData();
@@ -290,19 +303,66 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
       if (!mounted) return;
       
-      // For branch admins, only show their own branch
+      // Filter branches and services based on user role
       List<Map<String, dynamic>> filteredBranches = branches;
+      List<Map<String, dynamic>> filteredServices = services;
+      
+      // For branch admins, only show their own branch
       if (_userRole == 'salon_branch_admin' && _userBranchId != null) {
         filteredBranches = branches.where((b) => b['id'] == _userBranchId).toList();
       }
       
+      // For staff members, filter by their branches and services they can provide
+      if (_userRole == 'salon_staff' && _currentUserId != null) {
+        // Get branches where staff works (from weeklySchedule or branchId)
+        Set<String> staffBranchIds = {};
+        
+        // Add home branch
+        if (_userBranchId != null && _userBranchId!.isNotEmpty) {
+          staffBranchIds.add(_userBranchId!);
+        }
+        
+        // Add branches from weekly schedule
+        if (_currentUserWeeklySchedule != null) {
+          _currentUserWeeklySchedule!.forEach((day, schedule) {
+            if (schedule is Map && schedule['branchId'] != null) {
+              staffBranchIds.add(schedule['branchId'].toString());
+            }
+          });
+        }
+        
+        // Filter branches to only those where staff works
+        if (staffBranchIds.isNotEmpty) {
+          filteredBranches = branches.where((b) => staffBranchIds.contains(b['id'])).toList();
+        }
+        
+        // Filter services to only those the staff can provide
+        filteredServices = services.where((s) {
+          final staffIds = s['staffIds'] as List<String>? ?? [];
+          // If service has no specific staff, any staff can do it
+          // If service has specific staff, check if current user is in the list
+          return staffIds.isEmpty || staffIds.contains(_currentUserId);
+        }).toList();
+        
+        debugPrint('[StaffBooking] Staff ID: $_currentUserId');
+        debugPrint('[StaffBooking] Staff branches: $staffBranchIds');
+        debugPrint('[StaffBooking] Filtered branches: ${filteredBranches.length}');
+        debugPrint('[StaffBooking] Filtered services: ${filteredServices.length}');
+      }
+      
       setState(() {
         _branches = filteredBranches;
-        _services = services;
-        _staff = [
-          {'id': 'any', 'name': 'Any Staff', 'avatar': null},
-          ...staff,
-        ];
+        _services = filteredServices;
+        
+        // For staff, don't show "Any Staff" option - they will be auto-assigned
+        if (_userRole == 'salon_staff') {
+          _staff = staff; // Just the regular staff list for reference
+        } else {
+          _staff = [
+            {'id': 'any', 'name': 'Any Staff', 'avatar': null},
+            ...staff,
+          ];
+        }
 
         // Auto-select branch for branch admins (they only have one option)
         if (_userRole == 'salon_branch_admin' && _userBranchId != null) {
@@ -313,6 +373,12 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             _selectedBranchId = br['id'] as String;
             _selectedBranchLabel = br['name'] as String;
           }
+        }
+        
+        // Auto-select branch for staff if they only work at one branch
+        if (_userRole == 'salon_staff' && filteredBranches.length == 1) {
+          _selectedBranchId = filteredBranches.first['id'] as String;
+          _selectedBranchLabel = filteredBranches.first['name'] as String;
         }
 
         _loadingContext = false;
@@ -363,18 +429,26 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     final firstTime = _serviceTimeSelections[firstServiceId] ?? TimeOfDay.fromDateTime(now);
     final mainTimeStr = '${firstTime.hour.toString().padLeft(2, '0')}:${firstTime.minute.toString().padLeft(2, '0')}';
 
-    // Determine main staff (if all same, use that; otherwise "Multiple Staff")
-    final uniqueStaffIds = _serviceStaffSelections.values.where((s) => s != 'any').toSet();
+    // Determine main staff
     String? mainStaffId;
     String mainStaffName = 'Any Available';
-    if (uniqueStaffIds.length == 1) {
-      mainStaffId = uniqueStaffIds.first;
-      final match = _staff.firstWhere((s) => s['id'] == mainStaffId, orElse: () => {});
-      if (match.isNotEmpty) {
-        mainStaffName = (match['name'] ?? 'Staff').toString();
+    
+    // For salon_staff, they are always assigned to their own bookings
+    if (_userRole == 'salon_staff' && _currentUserId != null) {
+      mainStaffId = _currentUserId;
+      mainStaffName = _currentUserName ?? 'Staff';
+    } else {
+      // For other roles, determine from selections
+      final uniqueStaffIds = _serviceStaffSelections.values.where((s) => s != 'any').toSet();
+      if (uniqueStaffIds.length == 1) {
+        mainStaffId = uniqueStaffIds.first;
+        final match = _staff.firstWhere((s) => s['id'] == mainStaffId, orElse: () => {});
+        if (match.isNotEmpty) {
+          mainStaffName = (match['name'] ?? 'Staff').toString();
+        }
+      } else if (uniqueStaffIds.length > 1) {
+        mainStaffName = 'Multiple Staff';
       }
-    } else if (uniqueStaffIds.length > 1) {
-      mainStaffName = 'Multiple Staff';
     }
 
     final clientName = _nameController.text.trim();
@@ -387,16 +461,26 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       final svcId = service['id'] as String;
       final svcTime = _serviceTimeSelections[svcId] ?? firstTime;
       final svcTimeStr = '${svcTime.hour.toString().padLeft(2, '0')}:${svcTime.minute.toString().padLeft(2, '0')}';
-      final svcStaffId = _serviceStaffSelections[svcId];
+      
       String? staffId;
       String staffName = 'Any Available';
-      if (svcStaffId != null && svcStaffId != 'any') {
-        staffId = svcStaffId;
-        final match = _staff.firstWhere((s) => s['id'] == svcStaffId, orElse: () => {});
-        if (match.isNotEmpty) {
-          staffName = (match['name'] ?? 'Staff').toString();
+      
+      // For salon_staff, auto-assign themselves to all services
+      if (_userRole == 'salon_staff' && _currentUserId != null) {
+        staffId = _currentUserId;
+        staffName = _currentUserName ?? 'Staff';
+      } else {
+        // For other roles, use the selected staff
+        final svcStaffId = _serviceStaffSelections[svcId];
+        if (svcStaffId != null && svcStaffId != 'any') {
+          staffId = svcStaffId;
+          final match = _staff.firstWhere((s) => s['id'] == svcStaffId, orElse: () => {});
+          if (match.isNotEmpty) {
+            staffName = (match['name'] ?? 'Staff').toString();
+          }
         }
       }
+      
       return {
         'duration': (service['duration'] as num?)?.toInt() ?? 60,
         'id': service['id'],
@@ -417,7 +501,11 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     } else if (_userRole == 'salon_owner') {
       bookingSource = 'Owner Booking';
     } else if (_userRole == 'salon_staff') {
-      bookingSource = 'Staff Booking - $_selectedBranchLabel';
+      // For staff bookings, show the staff member's name (use mainStaffName as it's more reliable)
+      final staffDisplayName = mainStaffName != 'Any Available' && mainStaffName != 'Multiple Staff' 
+          ? mainStaffName 
+          : (_currentUserName ?? 'Staff');
+      bookingSource = 'Staff Booking - $staffDisplayName';
     }
     
     final bookingData = <String, dynamic>{
@@ -497,14 +585,21 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           ),
           Column(
             children: [
-              const Text('Create Booking',
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.text)),
+              Text(
+                _userRole == 'salon_staff' ? 'Create My Booking' : 'Create Booking',
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.text)),
               const SizedBox(height: 4),
               Text(
-                'Step ${_currentStep + 1} of 3',
+                _userRole == 'salon_staff' 
+                    ? (_currentStep == 0 
+                        ? 'Step 1: Date, Branch & Services'
+                        : _currentStep == 1 
+                            ? 'Step 2: Select Times'
+                            : 'Step 3: Customer Details')
+                    : 'Step ${_currentStep + 1} of 3',
                 style: const TextStyle(
                     fontSize: 12, color: AppColors.muted),
               ),
@@ -614,9 +709,12 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     }
 
     if (_services.isEmpty) {
-      return const Text(
-        'No services found. Please add services in the admin panel.',
-        style: TextStyle(fontSize: 13, color: AppColors.muted),
+      return Text(
+        _userRole == 'salon_staff' 
+            ? 'You are not assigned to any services yet.\nPlease contact your manager.'
+            : 'No services found. Please add services in the admin panel.',
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 13, color: AppColors.muted),
       );
     }
 
@@ -640,9 +738,11 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     debugPrint('[ServiceFilter] Total services=${_services.length}, visible=${visibleServices.length}, selectedBranch=$_selectedBranchId');
 
     if (visibleServices.isEmpty) {
-      return const Text(
-        'No services available for this branch.',
-        style: TextStyle(fontSize: 13, color: AppColors.muted),
+      return Text(
+        _userRole == 'salon_staff'
+            ? 'No services you can provide at this branch.'
+            : 'No services available for this branch.',
+        style: const TextStyle(fontSize: 13, color: AppColors.muted),
       );
     }
 
@@ -1017,13 +1117,40 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
               const SizedBox(height: 16),
 
-              // Staff selector
-              const Text(
-                'Select Staff',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted),
-              ),
-              const SizedBox(height: 8),
-              _buildStaffChips(serviceId, availableStaff, selectedStaffId),
+              // Staff selector - hidden for salon_staff (they are auto-assigned)
+              if (_userRole == 'salon_staff') ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.green.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(FontAwesomeIcons.userCheck, size: 16, color: AppColors.green),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'You will be assigned to this service',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.green.withOpacity(0.9),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                const Text(
+                  'Select Staff',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted),
+                ),
+                const SizedBox(height: 8),
+                _buildStaffChips(serviceId, availableStaff, selectedStaffId),
+              ],
             ],
           ),
         );
@@ -1319,6 +1446,75 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   Widget _buildStepContent() {
     switch (_currentStep) {
       case 0:
+        // For salon_staff, show date first because their branch depends on the day
+        if (_userRole == 'salon_staff') {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+              // Step 1: Select Date First (for staff)
+              const Text(
+                "Select Date",
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.text),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "Your working branch depends on the day",
+                style: TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+              const SizedBox(height: 12),
+              _buildDatePicker(),
+              const SizedBox(height: 24),
+              
+              // Step 2: Show Branch (based on selected date)
+              if (_selectedDate != null) ...[
+                _buildStaffBranchForDate(),
+                const SizedBox(height: 24),
+              ],
+              
+              // Step 3: Select Services (only after branch is determined)
+              if (_selectedDate != null && _selectedBranchId != null) ...[
+                Row(
+                  children: [
+                    const Text(
+                      "Select Services",
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.text),
+                    ),
+                    if (_selectedServiceIds.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${_selectedServiceIds.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _buildServiceGrid(),
+              ],
+              const SizedBox(height: 100),
+            ],
+          );
+        }
+        
+        // Default flow for owner and branch admin
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1368,6 +1564,68 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           ],
         );
       case 1:
+        // For salon_staff, date was already selected in Step 0
+        if (_userRole == 'salon_staff') {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+              // Show selected date summary
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(FontAwesomeIcons.calendarCheck, size: 20, color: AppColors.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Selected Date',
+                            style: TextStyle(fontSize: 11, color: AppColors.muted),
+                          ),
+                          Text(
+                            _selectedDate != null 
+                                ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                                : 'No date selected',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.text,
+                            ),
+                          ),
+                          Text(
+                            'at $_selectedBranchLabel',
+                            style: TextStyle(fontSize: 12, color: AppColors.primary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                "Select Time for Each Service",
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.text),
+              ),
+              const SizedBox(height: 16),
+              _buildPerServiceTimeStaffSelector(),
+              const SizedBox(height: 100),
+            ],
+          );
+        }
+        
+        // Default flow for owner and branch admin
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1414,6 +1672,161 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           ],
         );
     }
+  }
+
+  /// For salon_staff: Determine and display the branch they work at on the selected date
+  Widget _buildStaffBranchForDate() {
+    if (_selectedDate == null) {
+      return const SizedBox.shrink();
+    }
+    
+    // Get day name from selected date
+    final dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    final selectedDayName = dayNames[_selectedDate!.weekday % 7];
+    // Note: DateTime.weekday returns 1=Monday...7=Sunday, but our schedule uses Sunday=0
+    final adjustedDayName = dayNames[_selectedDate!.weekday == 7 ? 0 : _selectedDate!.weekday];
+    
+    debugPrint('[StaffBranch] Selected date: $_selectedDate, day: $adjustedDayName');
+    debugPrint('[StaffBranch] Weekly schedule: $_currentUserWeeklySchedule');
+    
+    // Find the branch for this day from weekly schedule
+    String? branchIdForDay;
+    String? branchNameForDay;
+    
+    if (_currentUserWeeklySchedule != null && _currentUserWeeklySchedule!.containsKey(adjustedDayName)) {
+      final daySchedule = _currentUserWeeklySchedule![adjustedDayName];
+      if (daySchedule is Map) {
+        branchIdForDay = daySchedule['branchId']?.toString();
+        branchNameForDay = daySchedule['branchName']?.toString();
+      }
+    }
+    
+    // Fallback to home branch if no schedule for this day
+    if (branchIdForDay == null && _userBranchId != null) {
+      branchIdForDay = _userBranchId;
+      // Find branch name from branches list
+      final homeBranch = _branches.firstWhere(
+        (b) => b['id'] == _userBranchId,
+        orElse: () => {},
+      );
+      branchNameForDay = homeBranch.isNotEmpty ? homeBranch['name']?.toString() : 'Your Branch';
+    }
+    
+    debugPrint('[StaffBranch] Branch for day: $branchIdForDay, $branchNameForDay');
+    
+    // If no branch found for this day, staff is not working
+    if (branchIdForDay == null) {
+      // Clear any previously selected branch
+      if (_selectedBranchId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _selectedBranchId = null;
+              _selectedBranchLabel = null;
+              _selectedServiceIds = {};
+            });
+          }
+        });
+      }
+      
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.orange.shade200),
+        ),
+        child: Row(
+          children: [
+            Icon(FontAwesomeIcons.calendarXmark, size: 24, color: Colors.orange.shade700),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Day Off',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'You are not scheduled to work on $adjustedDayName.\nPlease select another date.',
+                    style: TextStyle(fontSize: 13, color: Colors.orange.shade700),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // Auto-select the branch for this day
+    if (_selectedBranchId != branchIdForDay) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _selectedBranchId = branchIdForDay;
+            _selectedBranchLabel = branchNameForDay;
+            // Clear services when branch changes
+            _selectedServiceIds = {};
+          });
+        }
+      });
+    }
+    
+    // Show the working branch
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.green.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.green.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.green.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(FontAwesomeIcons.building, size: 20, color: AppColors.green),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Working Branch',
+                  style: TextStyle(fontSize: 12, color: AppColors.muted),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  branchNameForDay ?? 'Unknown Branch',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.text,
+                  ),
+                ),
+                Text(
+                  'On $adjustedDayName',
+                  style: TextStyle(fontSize: 12, color: AppColors.green),
+                ),
+              ],
+            ),
+          ),
+          Icon(FontAwesomeIcons.circleCheck, size: 20, color: AppColors.green),
+        ],
+      ),
+    );
   }
 
   Widget _buildBranchSelector() {
