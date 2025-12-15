@@ -5,6 +5,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'profile_screen.dart' as profile_screen;
+import 'appointment_requests_page.dart';
 
 enum ClockStatus { out, clockedIn, onBreak }
 
@@ -37,6 +38,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   bool _loading = true;
   String? _branchId;
   String? _ownerUid;
+  
+  // Pending approval requests
+  int _pendingRequestsCount = 0;
+  StreamSubscription<QuerySnapshot>? _pendingRequestsSub;
 
   // Clock In/Out state
   ClockStatus _clockStatus = ClockStatus.out;
@@ -78,12 +83,14 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     );
     
     _loadData();
+    _listenToPendingRequests();
   }
   
   @override
   void dispose() {
     _pulseController.dispose();
     _workTimer?.cancel();
+    _pendingRequestsSub?.cancel();
     super.dispose();
   }
   
@@ -145,6 +152,71 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     final minutes = (_workedSeconds % 3600) ~/ 60;
     final seconds = _workedSeconds % 60;
     return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+  
+  /// Listen to pending appointment requests for branch admin approval
+  void _listenToPendingRequests() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Wait for data to load to get ownerUid and branchId
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (_ownerUid == null || _ownerUid!.isEmpty) return;
+
+    // Listen for both AwaitingStaffApproval AND PartiallyApproved statuses
+    _pendingRequestsSub = FirebaseFirestore.instance
+        .collection('bookings')
+        .where('ownerUid', isEqualTo: _ownerUid)
+        .where('status', whereIn: ['AwaitingStaffApproval', 'PartiallyApproved'])
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      
+      int count = 0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        
+        // Branch admin sees requests for their branch
+        final bookingBranchId = data['branchId']?.toString();
+        if (_branchId != null && bookingBranchId != _branchId) continue;
+        
+        // Check if assigned to current user (branch admin can also be staff)
+        bool hasPendingService = false;
+        
+        // Single service booking
+        final bookingStaffId = data['staffId']?.toString();
+        final bookingStaffAuthUid = data['staffAuthUid']?.toString();
+        if (bookingStaffId == user.uid || bookingStaffAuthUid == user.uid) {
+          hasPendingService = true;
+        }
+        
+        // Multi-service booking - check for pending services assigned to this staff
+        if (data['services'] is List) {
+          for (final service in (data['services'] as List)) {
+            if (service is Map) {
+              final serviceStaffId = service['staffId']?.toString();
+              final serviceStaffAuthUid = service['staffAuthUid']?.toString();
+              final approvalStatus = service['approvalStatus']?.toString() ?? 'pending';
+              
+              // Only count if assigned to this staff AND status is pending
+              final isMyService = serviceStaffId == user.uid || serviceStaffAuthUid == user.uid;
+              if (isMyService && approvalStatus == 'pending') {
+                hasPendingService = true;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (hasPendingService) count++;
+      }
+      
+      setState(() {
+        _pendingRequestsCount = count;
+      });
+    }, onError: (e) {
+      debugPrint('Error listening to pending requests: $e');
+    });
   }
 
   Future<void> _loadData() async {
@@ -335,6 +407,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               const SizedBox(height: 24),
               _buildClockInCard(),
               const SizedBox(height: 24),
+              if (_pendingRequestsCount > 0) ...[
+                _buildPendingRequestsAlert(),
+                const SizedBox(height: 24),
+              ],
               _buildKpiSection(),
               const SizedBox(height: 24),
               _buildRevenueChartSection(),
@@ -455,6 +531,88 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
           ],
         ),
       ],
+    );
+  }
+
+  Widget _buildPendingRequestsAlert() {
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AppointmentRequestsPage()),
+        );
+      },
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.amber.shade400, Colors.orange.shade500],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.amber.withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Center(
+                child: Icon(
+                  FontAwesomeIcons.bellConcierge,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$_pendingRequestsCount Pending Approval${_pendingRequestsCount > 1 ? 's' : ''}',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Tap to review and approve bookings',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withOpacity(0.9),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                FontAwesomeIcons.chevronRight,
+                color: Colors.white,
+                size: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
