@@ -566,7 +566,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     if (_userRole == 'salon_branch_admin') {
       bookingSource = 'Branch Admin Booking - $_selectedBranchLabel';
     } else if (_userRole == 'salon_owner') {
-      bookingSource = 'Owner Booking';
+      bookingSource = 'Salon Owner Booking';
     } else if (_userRole == 'salon_staff') {
       // For staff bookings, show the staff member's name (use mainStaffName as it's more reliable)
       final staffDisplayName = mainStaffName != 'Any Available' && mainStaffName != 'Multiple Staff' 
