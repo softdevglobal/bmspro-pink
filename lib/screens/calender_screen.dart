@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
@@ -265,6 +266,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
   void _rebuildScheduleFromBookings() {
     final Map<int, DaySchedule> byDay = {};
     final bool isOwner = _currentUserRole == 'salon_owner';
+    final bool isBranchAdmin = _currentUserRole == 'salon_branch_admin';
+    final bool isStaff = _currentUserRole == 'salon_staff';
 
     for (final data in _allBookings) {
       final statusRaw = (data['status'] ?? '').toString().toLowerCase();
@@ -274,8 +277,10 @@ class _CalenderScreenState extends State<CalenderScreen> {
           statusRaw == 'canceled' || 
           statusRaw == 'staffrejected') continue;
       
-      // All users can see their upcoming bookings regardless of status
-      // (pending, confirmed, awaiting approval, etc.)
+      // Staff: only see confirmed bookings assigned to them
+      if (isStaff && statusRaw != 'confirmed') continue;
+      
+      // Owners and branch admins see all statuses (pending, confirmed, awaiting approval, etc.)
 
       final dateStr = (data['date'] ?? '').toString();
       if (dateStr.isEmpty) continue;
@@ -741,18 +746,31 @@ class _CalenderScreenState extends State<CalenderScreen> {
               final day = index - firstDayOffset + 1;
               final currentDt =
                   DateTime(_focusedMonth.year, _focusedMonth.month, day);
+              final today = DateTime.now();
+              final todayStart = DateTime(today.year, today.month, today.day);
+              final isPastDate = currentDt.isBefore(todayStart);
               final isSelected = _selectedDate.year == currentDt.year &&
                   _selectedDate.month == currentDt.month &&
                   _selectedDate.day == currentDt.day;
               final dayData = _scheduleData[day];
               Color? branchColor;
-              if (dayData != null && dayData.branch != null) {
-                // Safe access - only use color if branch exists in config
-                final branchTheme = AppConfig.branches[dayData.branch];
-                branchColor = branchTheme?.color ?? AppConfig.primary;
+              int userBookingCount = 0;
+              if (dayData != null) {
+                // Filter bookings for current user based on role
+                userBookingCount = dayData.items.where((appt) {
+                  if (_currentUserRole == 'salon_owner') return true;
+                  if (_currentUserRole == 'salon_branch_admin' && _isBranchView) return true;
+                  return _currentUserId != null && appt.staffId == _currentUserId;
+                }).length;
+                
+                // Only show branch color if user has bookings
+                if (userBookingCount > 0 && dayData.branch != null) {
+                  final branchTheme = AppConfig.branches[dayData.branch];
+                  branchColor = branchTheme?.color ?? AppConfig.primary;
+                }
               }
               return GestureDetector(
-                onTap: () {
+                onTap: isPastDate ? null : () {
                   setState(() {
                     _selectedDate = currentDt;
                   });
@@ -760,13 +778,13 @@ class _CalenderScreenState extends State<CalenderScreen> {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: isPastDate ? Colors.grey.shade50 : Colors.white,
                     borderRadius: BorderRadius.circular(12),
-                    border: isSelected
+                    border: isSelected && !isPastDate
                         ? Border.all(
                             color: branchColor ?? AppConfig.primary, width: 2)
                         : Border.all(color: Colors.grey.shade100),
-                    boxShadow: isSelected
+                    boxShadow: isSelected && !isPastDate
                         ? [
                             BoxShadow(
                                 color: (branchColor ?? Colors.black)
@@ -782,12 +800,14 @@ class _CalenderScreenState extends State<CalenderScreen> {
                         child: Text(
                           '$day',
                           style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: isSelected
-                                ? (branchColor ?? AppConfig.primary)
-                                : (dayData?.isOffDay == true
-                                    ? AppConfig.muted.withOpacity(0.5)
-                                    : AppConfig.text),
+                            fontWeight: isPastDate ? FontWeight.normal : FontWeight.w600,
+                            color: isPastDate
+                                ? AppConfig.muted.withOpacity(0.4)
+                                : isSelected
+                                    ? (branchColor ?? AppConfig.primary)
+                                    : (dayData?.isOffDay == true
+                                        ? AppConfig.muted.withOpacity(0.5)
+                                        : AppConfig.text),
                           ),
                         ),
                       ),
@@ -803,27 +823,38 @@ class _CalenderScreenState extends State<CalenderScreen> {
                                   fontWeight: FontWeight.bold,
                                   color: AppConfig.muted)),
                         ),
-                      // Show booking count badge for days with multiple bookings
-                      if (dayData != null && dayData.items.length > 1)
-                        Positioned(
-                          top: 2,
-                          right: 2,
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                              color: branchColor ?? AppConfig.primary,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              '${dayData.items.length}',
-                              style: const TextStyle(
-                                fontSize: 8,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                      // Show booking count badge for days with multiple bookings (filtered by role)
+                      if (dayData != null) Builder(
+                        builder: (context) {
+                          final filteredCount = dayData.items.where((appt) {
+                            if (_currentUserRole == 'salon_owner') return true;
+                            if (_currentUserRole == 'salon_branch_admin' && _isBranchView) return true;
+                            return _currentUserId != null && appt.staffId == _currentUserId;
+                          }).length;
+                          if (filteredCount > 1) {
+                            return Positioned(
+                              top: 2,
+                              right: 2,
+                              child: Container(
+                                padding: const EdgeInsets.all(3),
+                                decoration: BoxDecoration(
+                                  color: branchColor ?? AppConfig.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Text(
+                                  '$filteredCount',
+                                  style: const TextStyle(
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        },
+                      ),
                       if (branchColor != null)
                         Positioned(
                           bottom: 6,
@@ -871,9 +902,18 @@ class _CalenderScreenState extends State<CalenderScreen> {
         final theme = _resolveBranchTheme(data.branch);
         gradient = theme.gradient;
       }
-      bookingCount = data.items.length;
-      // Calculate day's total revenue
-      for (final appt in data.items) {
+      
+      // Filter items based on role & view mode (same logic as _buildAppointmentsList)
+      final filteredItems = data.items.where((appt) {
+        if (_currentUserRole == 'salon_owner') return true;
+        if (_currentUserRole == 'salon_branch_admin' && _isBranchView) return true;
+        // Staff or branch admin (My Schedule): only their own appointments
+        return _currentUserId != null && appt.staffId == _currentUserId;
+      }).toList();
+      
+      bookingCount = filteredItems.length;
+      // Calculate day's total revenue for filtered items
+      for (final appt in filteredItems) {
         dayRevenue += appt.price;
       }
     }
@@ -1045,9 +1085,17 @@ class _CalenderScreenState extends State<CalenderScreen> {
     }
 
     final bool isOwner = _currentUserRole == 'salon_owner';
+    final bool isBranchAdmin = _currentUserRole == 'salon_branch_admin';
+    final bool isStaff = _currentUserRole == 'salon_staff';
     
     // Sort by time
     filteredItems.sort((a, b) => a.time.compareTo(b.time));
+    
+    // For staff: always show time slots view
+    // For branch admin: My Schedule = time slots, Branch Schedule = booking list
+    if (isStaff || (isBranchAdmin && !_isBranchView)) {
+      return _buildTimeSlotView(filteredItems, data.branch, isBranchView: false);
+    }
 
     return Column(
       children: filteredItems.map((appt) {
@@ -1198,8 +1246,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
                         ],
                       ),
                       
-                      // Client info section (expanded for owner)
-                      if (isOwner) ...[
+                      // Client info section (expanded for owner and branch admin in branch view)
+                      if (isOwner || (isBranchAdmin && _isBranchView)) ...[
                         const SizedBox(height: 12),
                         Container(
                           padding: const EdgeInsets.all(12),
@@ -1458,9 +1506,10 @@ class _CalenderScreenState extends State<CalenderScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       _infoItem(FontAwesomeIcons.clock, appt.time, theme.color),
-                      if (!isOwner)
-                        _infoItem(FontAwesomeIcons.user, appt.client, theme.color),
-                      if (isOwner && appt.staffName.isEmpty)
+                      // Show staff member who is assigned
+                      if (appt.staffName.isNotEmpty)
+                        _infoItem(FontAwesomeIcons.scissors, appt.staffName, theme.color)
+                      else
                         _infoItem(FontAwesomeIcons.userSlash, 'Unassigned', Colors.orange),
                       _infoItem(FontAwesomeIcons.locationDot, appt.room, theme.color),
                     ],
@@ -1471,6 +1520,323 @@ class _CalenderScreenState extends State<CalenderScreen> {
           ),
         );
       }).toList(),
+    );
+  }
+
+  // Helper to parse time string (handles both "14:00" and "2:00 PM" formats)
+  int _parseTimeToMinutes(String timeStr) {
+    if (timeStr.isEmpty) return 0;
+    
+    // Try parsing as 12-hour format first (e.g., "2:00 PM")
+    try {
+      final t = DateFormat('h:mm a').parse(timeStr);
+      return t.hour * 60 + t.minute;
+    } catch (_) {}
+    
+    // Try parsing as 24-hour format (e.g., "14:00")
+    try {
+      final parts = timeStr.split(':');
+      if (parts.length >= 2) {
+        return (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
+      }
+    } catch (_) {}
+    
+    return 0;
+  }
+  
+  Widget _buildTimeSlotView(List<Appointment> appointments, String? branchName, {bool isBranchView = false}) {
+    final theme = _resolveBranchTheme(branchName);
+    
+    // Generate time slots from 9 AM to 6 PM (in minutes from midnight)
+    final List<int> timeSlotMinutes = [];
+    for (int hour = 9; hour <= 18; hour++) {
+      timeSlotMinutes.add(hour * 60); // :00
+      if (hour < 18) {
+        timeSlotMinutes.add(hour * 60 + 30); // :30
+      }
+    }
+    
+    // Map appointments to their time slots (by minutes)
+    Map<int, Appointment?> slotAppointments = {};
+    Map<int, Appointment> occupiedSlots = {}; // Maps slot to the appointment that occupies it
+    
+    for (final appt in appointments) {
+      final apptMinutes = _parseTimeToMinutes(appt.time);
+      slotAppointments[apptMinutes] = appt;
+      
+      // Calculate duration and mark occupied slots
+      int durationMinutes = 60; // default
+      if (appt.services.isNotEmpty) {
+        durationMinutes = appt.services.first.duration;
+        if (durationMinutes <= 0) durationMinutes = 60;
+      }
+      
+      // Mark slots occupied by this appointment
+      final int startMinutes = apptMinutes;
+      final int endMinutes = apptMinutes + durationMinutes;
+      for (int m = startMinutes; m < endMinutes; m += 30) {
+        if (m != apptMinutes) {
+          occupiedSlots[m] = appt; // Track which appointment owns this slot
+        }
+      }
+    }
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppConfig.primary.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(colors: theme.gradient),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isBranchView ? FontAwesomeIcons.building : FontAwesomeIcons.clock, 
+                  color: Colors.white, 
+                  size: 18
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  isBranchView ? 'Branch Schedule' : 'My Daily Schedule',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${appointments.length} booking${appointments.length == 1 ? '' : 's'}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Time slots
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: timeSlotMinutes.length,
+            itemBuilder: (context, index) {
+              final slotMinutes = timeSlotMinutes[index];
+              final slotHour = slotMinutes ~/ 60;
+              final slotMinute = slotMinutes % 60;
+              final timeSlotStr = '${slotHour.toString().padLeft(2, '0')}:${slotMinute.toString().padLeft(2, '0')}';
+              final appointment = slotAppointments[slotMinutes];
+              final isOccupied = occupiedSlots.containsKey(slotMinutes);
+              final isHourMark = slotMinute == 0;
+              
+              // Skip rendering slots that are occupied by ongoing sessions
+              if (isOccupied && appointment == null) {
+                return const SizedBox.shrink();
+              }
+              
+              return Container(
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: isHourMark ? Colors.grey.shade200 : Colors.grey.shade100,
+                      width: isHourMark ? 1 : 0.5,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Time column
+                    Container(
+                      width: 60,
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: isHourMark ? Colors.grey.shade50 : Colors.transparent,
+                        border: const Border(
+                          right: BorderSide(color: AppConfig.border, width: 1),
+                        ),
+                      ),
+                      child: Text(
+                        timeSlotStr,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: isHourMark ? FontWeight.w600 : FontWeight.normal,
+                          color: isHourMark ? AppConfig.text : AppConfig.muted,
+                        ),
+                      ),
+                    ),
+                    // Appointment slot
+                    Expanded(
+                      child: appointment != null
+                          ? _buildTimeSlotAppointment(appointment, theme)
+                          : Container(
+                                  height: 44,
+                                  margin: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.grey.shade200,
+                                      style: BorderStyle.solid,
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      'Available',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey.shade400,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildTimeSlotAppointment(Appointment appt, BranchTheme theme) {
+    // Calculate height based on duration - minimum 52 pixels per slot
+    int durationMinutes = 60;
+    if (appt.services.isNotEmpty) {
+      durationMinutes = appt.services.first.duration;
+      if (durationMinutes <= 0) durationMinutes = 60;
+    }
+    // Ensure minimum height of 52 for short appointments
+    final slotHeight = math.max((durationMinutes / 30) * 52.0, 52.0);
+    
+    // Status colors
+    Color statusColor;
+    final statusLower = appt.status.toLowerCase();
+    if (statusLower == 'confirmed') {
+      statusColor = Colors.green;
+    } else if (statusLower == 'pending' || statusLower.contains('awaiting')) {
+      statusColor = Colors.amber;
+    } else {
+      statusColor = Colors.grey;
+    }
+    
+    return Container(
+      height: slotHeight,
+      margin: const EdgeInsets.all(4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [theme.lightBg, theme.color.withOpacity(0.15)],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.color.withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: theme.color.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(colors: theme.gradient),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Icon(appt.icon, color: Colors.white, size: 14),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  appt.service,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: AppConfig.text,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+                Text(
+                  appt.client,
+                  style: TextStyle(fontSize: 10, color: AppConfig.muted),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Price
+          if (appt.price > 0)
+            Text(
+              'AU\$${appt.price.toStringAsFixed(0)}',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.green.shade700,
+              ),
+            ),
+          const SizedBox(width: 6),
+          // Status dot
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: statusColor,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: statusColor.withOpacity(0.4),
+                  blurRadius: 4,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
