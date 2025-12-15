@@ -666,36 +666,73 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
       final userData = userDoc.data()!;
       final branchId = (userData['branchId'] ?? '').toString();
       final ownerUid = (userData['ownerUid'] ?? '').toString();
-      _branchName = (userData['branchName'] ?? 'My Branch').toString();
+      
+      debugPrint('Branch Admin Summary - branchId: $branchId, ownerUid: $ownerUid');
+      
+      // Get branch name from branches collection
+      String branchNameForMatching = '';
+      if (branchId.isNotEmpty) {
+        final branchDoc = await FirebaseFirestore.instance
+            .collection('branches')
+            .doc(branchId)
+            .get();
+        if (branchDoc.exists) {
+          _branchName = (branchDoc.data()?['name'] ?? 'My Branch').toString();
+          branchNameForMatching = _branchName.toLowerCase();
+          debugPrint('Branch name from DB: $_branchName');
+        }
+      }
+      
+      // Also check user document for branchName as fallback
+      if (_branchName == 'My Branch') {
+        _branchName = (userData['branchName'] ?? 'My Branch').toString();
+        branchNameForMatching = _branchName.toLowerCase();
+      }
 
-      // Load My Summary - bookings where I am the staff
-      final myBookingsQuery = await FirebaseFirestore.instance
+      // Load ALL bookings for the owner (we'll filter by branch)
+      final allBookingsQuery = await FirebaseFirestore.instance
           .collection('bookings')
           .where('ownerUid', isEqualTo: ownerUid)
           .get();
+      
+      debugPrint('Total bookings for owner: ${allBookingsQuery.docs.length}');
 
       int myCompleted = 0;
       double myRevenue = 0;
       int myTotal = 0;
 
-      for (final doc in myBookingsQuery.docs) {
+      // Load Branch Summary
+      double branchRevenue = 0;
+      int branchBookings = 0;
+      int branchCompleted = 0;
+      int branchPending = 0;
+
+      for (final doc in allBookingsQuery.docs) {
         final data = doc.data();
         final status = (data['status'] ?? '').toString().toLowerCase();
+        final bookingBranchId = (data['branchId'] ?? '').toString();
         
-        // Check if this booking is assigned to me
+        // ============== MY SUMMARY ==============
+        // Check if this booking is assigned to me (staff)
         bool isMyBooking = false;
+        double myServiceRevenue = 0;
         
         // Check top-level staffId
-        if (data['staffId'] == user.uid) {
+        if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
           isMyBooking = true;
+          myServiceRevenue = _getPrice(data['price']);
         }
         
         // Check services array
         if (data['services'] is List) {
           for (final service in (data['services'] as List)) {
-            if (service is Map && service['staffId'] == user.uid) {
-              isMyBooking = true;
-              break;
+            if (service is Map) {
+              final svcStaffId = service['staffId']?.toString();
+              final svcStaffAuthUid = service['staffAuthUid']?.toString();
+              if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
+                isMyBooking = true;
+                myServiceRevenue += _getPrice(service['price']);
+              }
             }
           }
         }
@@ -704,63 +741,94 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
           myTotal++;
           if (status == 'completed') {
             myCompleted++;
-            double price = 0;
-            if (data['price'] is num) {
-              price = (data['price'] as num).toDouble();
-            } else if (data['price'] is String) {
-              price = double.tryParse(data['price']) ?? 0;
-            }
-            myRevenue += price;
+            myRevenue += myServiceRevenue;
           }
         }
-      }
-
-      // Load Branch Summary
-      double branchRevenue = 0;
-      int branchBookings = 0;
-      int branchCompleted = 0;
-      int branchPending = 0;
-
-      for (final doc in myBookingsQuery.docs) {
-        final data = doc.data();
-        final bookingBranchId = (data['branchId'] ?? '').toString();
         
-        if (bookingBranchId == branchId) {
+        // ============== BRANCH SUMMARY ==============
+        // Match by branchId OR by branchName (some bookings might use name)
+        final bookingBranchName = (data['branchName'] ?? '').toString().toLowerCase();
+        final isBranchMatch = bookingBranchId == branchId || 
+                              (branchNameForMatching.isNotEmpty && bookingBranchName == branchNameForMatching);
+        
+        if (isBranchMatch) {
           branchBookings++;
-          final status = (data['status'] ?? '').toString().toLowerCase();
           
+          // Count by status
           if (status == 'completed') {
             branchCompleted++;
-          } else if (status == 'pending') {
+          } else if (status == 'pending' || 
+                     status.contains('awaiting') || 
+                     status.contains('partially')) {
             branchPending++;
           }
           
+          // Revenue for completed and confirmed bookings
           if (status == 'completed' || status == 'confirmed') {
-            double price = 0;
-            if (data['price'] is num) {
-              price = (data['price'] as num).toDouble();
-            } else if (data['price'] is String) {
-              price = double.tryParse(data['price']) ?? 0;
-            }
-            branchRevenue += price;
+            branchRevenue += _getPrice(data['price']);
           }
         }
       }
+      
+      debugPrint('Branch $branchId: bookings=$branchBookings, completed=$branchCompleted, pending=$branchPending, revenue=$branchRevenue');
 
-      // Count branch staff
-      final staffQuery = await FirebaseFirestore.instance
-          .collection('users')
-          .where('ownerUid', isEqualTo: ownerUid)
-          .where('branchId', isEqualTo: branchId)
-          .get();
-
+      // Count branch staff - get from branch document's staffIds array
       int staffCount = 0;
-      for (final doc in staffQuery.docs) {
-        final role = (doc.data()['role'] ?? '').toString();
-        if (role == 'salon_staff' || role == 'salon_branch_admin') {
-          staffCount++;
+      
+      // The branch document has staffIds array with all assigned staff
+      if (branchId.isNotEmpty) {
+        final branchDoc = await FirebaseFirestore.instance
+            .collection('branches')
+            .doc(branchId)
+            .get();
+        
+        if (branchDoc.exists) {
+          final branchData = branchDoc.data();
+          final staffIds = branchData?['staffIds'];
+          if (staffIds is List) {
+            staffCount = staffIds.length;
+            debugPrint('Staff from branch staffIds: $staffCount');
+          }
         }
       }
+      
+      // If no staffIds in branch, count staff who have this branch in their schedule
+      if (staffCount == 0) {
+        final usersQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .where('ownerUid', isEqualTo: ownerUid)
+            .get();
+        
+        for (final doc in usersQuery.docs) {
+          final data = doc.data();
+          final role = (data['role'] ?? '').toString().toLowerCase();
+          
+          if (role != 'salon_staff' && role != 'salon_branch_admin') continue;
+          
+          // Check if user's branchId matches
+          final userBranchId = (data['branchId'] ?? '').toString();
+          if (userBranchId == branchId) {
+            staffCount++;
+            continue;
+          }
+          
+          // Check weeklySchedule for branch assignment
+          final schedule = data['weeklySchedule'];
+          if (schedule is Map) {
+            for (final daySchedule in schedule.values) {
+              if (daySchedule is Map) {
+                final scheduleBranchId = daySchedule['branchId']?.toString();
+                if (scheduleBranchId == branchId) {
+                  staffCount++;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      debugPrint('Final staff count for branch $branchId: $staffCount');
 
       if (!mounted) return;
       setState(() {
@@ -778,6 +846,13 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
       debugPrint('Error loading summary data: $e');
       if (mounted) setState(() => _loading = false);
     }
+  }
+  
+  double _getPrice(dynamic price) {
+    if (price == null) return 0;
+    if (price is num) return price.toDouble();
+    if (price is String) return double.tryParse(price) ?? 0;
+    return 0;
   }
 
   @override
