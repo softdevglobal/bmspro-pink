@@ -309,8 +309,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
         }
       }
 
-      // Format status properly
-      String status = statusRaw.isEmpty ? 'Pending' : statusRaw[0].toUpperCase() + statusRaw.substring(1);
+      // Format status properly (convert camelCase like "AwaitingStaffApproval" to "Awaiting Staff Approval")
+      String status = _formatStatus(statusRaw);
 
       final timeStr = (data['time'] ?? '').toString();
       String timeLabel = timeStr;
@@ -389,6 +389,44 @@ class _CalenderScreenState extends State<CalenderScreen> {
       _scheduleData = byDay;
       _isLoadingBookings = false;
     });
+  }
+
+  /// Converts camelCase/PascalCase status like "AwaitingStaffApproval" to "Awaiting Staff Approval"
+  String _formatStatus(String raw) {
+    if (raw.isEmpty) return 'Pending';
+    
+    // Insert space before each uppercase letter (except the first)
+    final spaced = raw.replaceAllMapped(
+      RegExp(r'([a-z])([A-Z])'),
+      (m) => '${m.group(1)} ${m.group(2)}',
+    );
+    
+    // Capitalize first letter and return
+    return spaced[0].toUpperCase() + spaced.substring(1);
+  }
+
+  /// Format status for display in UI - handles camelCase and provides short labels
+  String _formatStatusDisplay(String status) {
+    // Handle camelCase like "AwaitingStaffApproval" -> "Awaiting Staff Approval"
+    String formatted = status.replaceAllMapped(
+      RegExp(r'([a-z])([A-Z])'),
+      (m) => '${m.group(1)} ${m.group(2)}',
+    );
+    
+    // Also handle fully lowercase versions
+    final lower = formatted.toLowerCase();
+    if (lower == 'awaitingstaffapproval' || lower.contains('awaiting')) {
+      return 'Awaiting Approval';
+    }
+    if (lower.contains('partially')) {
+      return 'Partial';
+    }
+    
+    // Capitalize first letter of each word
+    return formatted.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ');
   }
 
   bool _shouldIncludeBookingForCurrentUser(
@@ -950,26 +988,23 @@ class _CalenderScreenState extends State<CalenderScreen> {
         Color statusTextColor;
         Color statusBorderColor;
         
-        switch (appt.status.toLowerCase()) {
-          case 'pending':
-            statusBgColor = Colors.amber.shade50;
-            statusTextColor = Colors.amber.shade700;
-            statusBorderColor = Colors.amber.shade200;
-            break;
-          case 'confirmed':
-            statusBgColor = Colors.green.shade50;
-            statusTextColor = Colors.green.shade700;
-            statusBorderColor = Colors.green.shade100;
-            break;
-          case 'completed':
-            statusBgColor = Colors.blue.shade50;
-            statusTextColor = Colors.blue.shade700;
-            statusBorderColor = Colors.blue.shade100;
-            break;
-          default:
-            statusBgColor = Colors.grey.shade50;
-            statusTextColor = Colors.grey.shade700;
-            statusBorderColor = Colors.grey.shade200;
+        final statusLower = appt.status.toLowerCase();
+        if (statusLower == 'pending' || statusLower.contains('awaiting') || statusLower.contains('partially')) {
+          statusBgColor = Colors.amber.shade50;
+          statusTextColor = Colors.amber.shade700;
+          statusBorderColor = Colors.amber.shade200;
+        } else if (statusLower == 'confirmed') {
+          statusBgColor = Colors.green.shade50;
+          statusTextColor = Colors.green.shade700;
+          statusBorderColor = Colors.green.shade100;
+        } else if (statusLower == 'completed') {
+          statusBgColor = Colors.blue.shade50;
+          statusTextColor = Colors.blue.shade700;
+          statusBorderColor = Colors.blue.shade100;
+        } else {
+          statusBgColor = Colors.grey.shade50;
+          statusTextColor = Colors.grey.shade700;
+          statusBorderColor = Colors.grey.shade200;
         }
         
         return Container(
@@ -1029,13 +1064,14 @@ class _CalenderScreenState extends State<CalenderScreen> {
                                       color: AppConfig.text),
                                 ),
                                 const SizedBox(height: 6),
-                                Row(
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
                                   children: [
                                     if (data.branch != null)
                                       Container(
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 8, vertical: 2),
-                                        margin: const EdgeInsets.only(right: 8),
                                         decoration: BoxDecoration(
                                           color: theme.lightBg,
                                           borderRadius: BorderRadius.circular(6),
@@ -1069,20 +1105,24 @@ class _CalenderScreenState extends State<CalenderScreen> {
                               ],
                             ),
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: statusBgColor,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: statusBorderColor),
-                            ),
-                            child: Text(
-                              appt.status,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: statusTextColor),
+                          Flexible(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: statusBgColor,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: statusBorderColor),
+                              ),
+                              child: Text(
+                                _formatStatusDisplay(appt.status),
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: statusTextColor),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
                             ),
                           )
                         ],
