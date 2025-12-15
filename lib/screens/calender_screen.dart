@@ -1547,12 +1547,14 @@ class _CalenderScreenState extends State<CalenderScreen> {
   Widget _buildTimeSlotView(List<Appointment> appointments, String? branchName, {bool isBranchView = false}) {
     final theme = _resolveBranchTheme(branchName);
     
-    // Generate time slots from 9 AM to 6 PM (in minutes from midnight)
+    // Generate time slots from 9 AM to 6 PM (in minutes from midnight) - 15 min intervals
     final List<int> timeSlotMinutes = [];
     for (int hour = 9; hour <= 18; hour++) {
       timeSlotMinutes.add(hour * 60); // :00
       if (hour < 18) {
+        timeSlotMinutes.add(hour * 60 + 15); // :15
         timeSlotMinutes.add(hour * 60 + 30); // :30
+        timeSlotMinutes.add(hour * 60 + 45); // :45
       }
     }
     
@@ -1574,7 +1576,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
       // Mark slots occupied by this appointment
       final int startMinutes = apptMinutes;
       final int endMinutes = apptMinutes + durationMinutes;
-      for (int m = startMinutes; m < endMinutes; m += 30) {
+      for (int m = startMinutes; m < endMinutes; m += 15) {
         if (m != apptMinutes) {
           occupiedSlots[m] = appt; // Track which appointment owns this slot
         }
@@ -1728,14 +1730,14 @@ class _CalenderScreenState extends State<CalenderScreen> {
   }
   
   Widget _buildTimeSlotAppointment(Appointment appt, BranchTheme theme) {
-    // Calculate height based on duration - minimum 52 pixels per slot
+    // Calculate height based on duration - minimum 52 pixels per slot (15-min intervals)
     int durationMinutes = 60;
     if (appt.services.isNotEmpty) {
       durationMinutes = appt.services.first.duration;
       if (durationMinutes <= 0) durationMinutes = 60;
     }
-    // Ensure minimum height of 52 for short appointments
-    final slotHeight = math.max((durationMinutes / 30) * 52.0, 52.0);
+    // Ensure minimum height of 52 for short appointments (based on 15-min slot intervals)
+    final slotHeight = math.max((durationMinutes / 15) * 52.0, 52.0);
     
     // Status colors
     Color statusColor;

@@ -1279,11 +1279,13 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   }
 
   Widget _buildTimeSlots(String serviceId, int durationMinutes) {
-    // Generate time slots from 9 AM to 6 PM in 30-minute intervals
+    // Generate time slots from 9 AM to 6 PM in 15-minute intervals
     final List<TimeOfDay> slots = [];
     for (int hour = 9; hour < 18; hour++) {
       slots.add(TimeOfDay(hour: hour, minute: 0));
+      slots.add(TimeOfDay(hour: hour, minute: 15));
       slots.add(TimeOfDay(hour: hour, minute: 30));
+      slots.add(TimeOfDay(hour: hour, minute: 45));
     }
 
     final selectedTime = _serviceTimeSelections[serviceId];
