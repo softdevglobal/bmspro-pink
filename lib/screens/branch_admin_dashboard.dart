@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'profile_screen.dart' as profile_screen;
+
+enum ClockStatus { out, clockedIn, onBreak }
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -30,10 +33,18 @@ class BranchAdminDashboard extends StatefulWidget {
   State<BranchAdminDashboard> createState() => _BranchAdminDashboardState();
 }
 
-class _BranchAdminDashboardState extends State<BranchAdminDashboard> {
+class _BranchAdminDashboardState extends State<BranchAdminDashboard> with TickerProviderStateMixin {
   bool _loading = true;
   String? _branchId;
   String? _ownerUid;
+
+  // Clock In/Out state
+  ClockStatus _clockStatus = ClockStatus.out;
+  Timer? _workTimer;
+  int _workedSeconds = 0;
+  bool _timerRunning = false;
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
 
   // KPI Data
   double _totalRevenue = 0;
@@ -55,7 +66,85 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> {
   @override
   void initState() {
     super.initState();
+    
+    // Setup pulse animation for clock in button
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+    
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+    
     _loadData();
+  }
+  
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    _workTimer?.cancel();
+    super.dispose();
+  }
+  
+  // Clock in/out handlers
+  void _handleClockAction() {
+    if (_clockStatus == ClockStatus.out) {
+      setState(() {
+        _clockStatus = ClockStatus.clockedIn;
+      });
+      _resetWorkTimer();
+      _startWorkTimer();
+    } else if (_clockStatus == ClockStatus.clockedIn) {
+      setState(() {
+        _clockStatus = ClockStatus.out;
+      });
+      _resetWorkTimer();
+    }
+  }
+  
+  void _handleBreakAction() {
+    final next = _clockStatus == ClockStatus.clockedIn
+        ? ClockStatus.onBreak
+        : ClockStatus.clockedIn;
+    setState(() {
+      _clockStatus = next;
+    });
+    if (next == ClockStatus.onBreak) {
+      _pauseWorkTimer();
+    } else if (next == ClockStatus.clockedIn) {
+      _startWorkTimer();
+    }
+  }
+  
+  void _startWorkTimer() {
+    if (_timerRunning) return;
+    _timerRunning = true;
+    _workTimer?.cancel();
+    _workTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_clockStatus == ClockStatus.clockedIn) {
+        setState(() => _workedSeconds += 1);
+      }
+    });
+  }
+  
+  void _pauseWorkTimer() {
+    _workTimer?.cancel();
+    _timerRunning = false;
+  }
+  
+  void _resetWorkTimer() {
+    _workTimer?.cancel();
+    _timerRunning = false;
+    _workedSeconds = 0;
+  }
+  
+  String get _formattedWorkTime {
+    final hours = _workedSeconds ~/ 3600;
+    final minutes = (_workedSeconds % 3600) ~/ 60;
+    final seconds = _workedSeconds % 60;
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   Future<void> _loadData() async {
@@ -244,6 +333,8 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> {
             children: [
               _buildHeader(context),
               const SizedBox(height: 24),
+              _buildClockInCard(),
+              const SizedBox(height: 24),
               _buildKpiSection(),
               const SizedBox(height: 24),
               _buildRevenueChartSection(),
@@ -364,6 +455,179 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> {
           ],
         ),
       ],
+    );
+  }
+
+  Widget _buildClockInCard() {
+    IconData icon;
+    Color iconColor;
+    Color iconBg;
+    String title;
+    String subtitle;
+    Widget mainButton;
+    Widget? secondaryButton;
+
+    switch (_clockStatus) {
+      case ClockStatus.out:
+        icon = FontAwesomeIcons.clock;
+        iconColor = Colors.red;
+        iconBg = Colors.red.shade100;
+        title = 'You are: CLOCKED OUT';
+        subtitle = 'Ready to start your shift?';
+
+        mainButton = ScaleTransition(
+          scale: _pulseAnimation,
+          child: _buildClockButton(
+            text: 'Clock In',
+            icon: FontAwesomeIcons.play,
+            onPressed: _handleClockAction,
+            gradient: const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
+          ),
+        );
+        break;
+
+      case ClockStatus.clockedIn:
+        icon = FontAwesomeIcons.check;
+        iconColor = Colors.green;
+        iconBg = Colors.green.shade100;
+        title = 'Clocked In: ${widget.branchName}';
+        subtitle = 'Time worked: $_formattedWorkTime';
+
+        mainButton = _buildClockButton(
+          text: 'Clock Out',
+          icon: FontAwesomeIcons.stop,
+          onPressed: _handleClockAction,
+          gradient: LinearGradient(colors: [Colors.red.shade500, Colors.red.shade700]),
+        );
+
+        secondaryButton = _buildClockButton(
+          text: 'Take Break',
+          icon: FontAwesomeIcons.mugHot,
+          onPressed: _handleBreakAction,
+          gradient: LinearGradient(colors: [Colors.orange.shade400, Colors.orange.shade600]),
+        );
+        break;
+
+      case ClockStatus.onBreak:
+        icon = FontAwesomeIcons.mugHot;
+        iconColor = Colors.orange;
+        iconBg = Colors.orange.shade100;
+        title = 'On Break';
+        subtitle = 'Time worked: $_formattedWorkTime';
+
+        mainButton = _buildClockButton(
+          text: 'Resume Work',
+          icon: FontAwesomeIcons.play,
+          onPressed: _handleBreakAction,
+          gradient: LinearGradient(colors: [Colors.green.shade500, Colors.green.shade700]),
+        );
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.1),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: iconColor, size: 20),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          mainButton,
+          if (secondaryButton != null) ...[
+            const SizedBox(height: 8),
+            secondaryButton,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClockButton({
+    required String text,
+    required IconData icon,
+    required VoidCallback onPressed,
+    required Gradient gradient,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: gradient,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: (gradient as LinearGradient).colors.first.withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: ElevatedButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 18),
+          label: Text(
+            text,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            foregroundColor: Colors.white,
+            shadowColor: Colors.transparent,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
