@@ -429,7 +429,9 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
     return InkWell(
       onTap: () {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const AppointmentDetailsPage()),
+          MaterialPageRoute(
+            builder: (_) => AppointmentDetailsPage(appointmentData: appt),
+          ),
         );
       },
       borderRadius: BorderRadius.circular(16),

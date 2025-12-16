@@ -1248,7 +1248,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return InkWell(
       onTap: () {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const AppointmentDetailsPage()),
+          MaterialPageRoute(
+            builder: (_) => AppointmentDetailsPage(appointmentData: appointmentData),
+          ),
         );
       },
       borderRadius: BorderRadius.circular(12),
