@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../services/audit_log_service.dart';
+import '../routes.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -1388,13 +1389,45 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
     setState(() => _saving = true);
 
     try {
-      // Create Firebase Auth user
-      final userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
+      // Get current owner's auth token for API call
+      final currentOwner = FirebaseAuth.instance.currentUser;
+      if (currentOwner == null) {
+        widget.onError('You must be logged in to create staff');
+        return;
+      }
+      final ownerToken = await currentOwner.getIdToken();
+
+      // Create Firebase Auth user via API (doesn't sign in automatically)
+      final apiUrl = 'https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/create';
+      final response = await http.post(
+        Uri.parse(apiUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $ownerToken',
+        },
+        body: json.encode({
+          'email': email,
+          'displayName': name,
+          'password': password,
+        }),
       );
-      
-      final uid = userCredential.user!.uid;
+
+      if (response.statusCode != 200) {
+        final errorData = json.decode(response.body);
+        String message = errorData['error'] ?? 'Failed to create staff account';
+        if (message.contains('email-already-in-use') || message.contains('already in use')) {
+          message = 'This email is already in use';
+        } else if (message.contains('weak-password') || message.contains('too weak')) {
+          message = 'Password is too weak';
+        } else if (message.contains('invalid-email')) {
+          message = 'Invalid email address';
+        }
+        widget.onError(message);
+        return;
+      }
+
+      final responseData = json.decode(response.body);
+      final uid = responseData['uid'] as String;
 
       // Build weekly schedule
       Map<String, dynamic> finalSchedule = {};
@@ -1455,39 +1488,35 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
             .update({'adminStaffId': uid});
       }
 
-      // Create audit log
-      final currentUser = FirebaseAuth.instance.currentUser;
-      if (currentUser != null) {
-        final currentUserDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(currentUser.uid)
-            .get();
-        final currentUserData = currentUserDoc.data();
-        final currentUserName = currentUserData?['displayName'] ?? 
-            currentUserData?['name'] ?? 
-            currentUser.email ?? 
-            'Unknown';
-        final currentUserRole = currentUserData?['role'] ?? 'unknown';
+      // Create audit log (using owner's info before we switch users)
+      final currentUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentOwner.uid)
+          .get();
+      final currentUserData = currentUserDoc.data();
+      final currentUserName = currentUserData?['displayName'] ?? 
+          currentUserData?['name'] ?? 
+          currentOwner.email ?? 
+          'Unknown';
+      final currentUserRole = currentUserData?['role'] ?? 'unknown';
 
-        final branchName = _selectedBranchId != null 
-            ? widget.branches.firstWhere((b) => b.id == _selectedBranchId).name 
-            : '';
+      final branchName = _selectedBranchId != null 
+          ? widget.branches.firstWhere((b) => b.id == _selectedBranchId).name 
+          : '';
 
-        await AuditLogService.logStaffCreated(
-          ownerUid: widget.ownerUid,
-          staffId: uid,
-          staffName: name,
-          staffRole: staffRole,
-          branchName: branchName,
-          performedBy: currentUser.uid,
-          performedByName: currentUserName,
-          performedByRole: currentUserRole,
-        );
-      }
+      await AuditLogService.logStaffCreated(
+        ownerUid: widget.ownerUid,
+        staffId: uid,
+        staffName: name,
+        staffRole: staffRole,
+        branchName: branchName,
+        performedBy: currentOwner.uid,
+        performedByName: currentUserName,
+        performedByRole: currentUserRole,
+      );
 
-      // Sign out the newly created user (so owner stays logged in)
-      // The new user will need to sign in separately
-      // Note: This is a workaround - ideally use Admin SDK via Cloud Function
+      // Staff account created successfully - admin stays logged in
+      // The new staff member will need to sign in separately with their credentials
       
       widget.onSuccess();
     } on FirebaseAuthException catch (e) {
@@ -1502,7 +1531,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
       widget.onError(message);
     } catch (e) {
       debugPrint('Error onboarding staff: $e');
-      widget.onError('Failed to onboard staff');
+      widget.onError('Failed to onboard staff: ${e.toString()}');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1684,13 +1713,52 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
                   // Weekly Schedule Section (for regular staff)
                   if (_selectedRole == 'salon_staff') ...[
                     _buildSectionCard(
-                      title: 'Weekly Schedule (Optional)',
+                      title: 'Weekly Schedule',
                       icon: FontAwesomeIcons.calendarWeek,
                       iconColor: const Color(0xFF10B981),
                       children: [
-                        const Text(
-                          'Assign working days and branches',
-                          style: TextStyle(fontSize: 12, color: AppColors.muted),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Assign working days and branches',
+                                style: TextStyle(fontSize: 12, color: AppColors.muted),
+                              ),
+                            ),
+                            if (widget.branches.isNotEmpty)
+                              TextButton.icon(
+                                onPressed: () {
+                                  setState(() {
+                                    final firstBranch = widget.branches.first;
+                                    _weeklySchedule.forEach((day, _) {
+                                      _weeklySchedule[day] = firstBranch.id;
+                                    });
+                                  });
+                                },
+                                icon: const Icon(
+                                  FontAwesomeIcons.wandMagicSparkles,
+                                  size: 12,
+                                  color: Color(0xFF8B5CF6),
+                                ),
+                                label: const Text(
+                                  'Auto',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF8B5CF6),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  backgroundColor: Colors.white,
+                                  side: const BorderSide(color: Color(0xFF8B5CF6), width: 1),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 12),
                         ..._weeklySchedule.keys.map((day) => _buildDayScheduleRow(day)),
