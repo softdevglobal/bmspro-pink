@@ -327,6 +327,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           'id': d.id,
           'name': (data['name'] ?? 'Branch').toString(),
           'address': (data['address'] ?? '').toString(),
+          'hours': data['hours'], // Include branch hours
         };
       }).toList();
 
@@ -1279,13 +1280,97 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   }
 
   Widget _buildTimeSlots(String serviceId, int durationMinutes) {
-    // Generate time slots from 9 AM to 6 PM in 15-minute intervals
+    // Get branch hours for the selected date
+    final selectedBranch = _branches.firstWhere(
+      (b) => b['id'] == _selectedBranchId,
+      orElse: () => <String, dynamic>{},
+    );
+    
+    // Get day of week from selected date
+    String? dayOfWeek;
+    if (_selectedDate != null) {
+      final days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      dayOfWeek = days[_selectedDate!.weekday % 7];
+    }
+    
+    // Get branch hours for this day
+    int startHour = 9; // Default fallback
+    int startMinute = 0;
+    int endHour = 18; // Default fallback
+    int endMinute = 0;
+    bool isClosed = false;
+    
+    if (selectedBranch.isNotEmpty && selectedBranch['hours'] != null) {
+      final hours = selectedBranch['hours'];
+      if (hours is Map && dayOfWeek != null) {
+        final dayHours = hours[dayOfWeek];
+        if (dayHours is Map) {
+          if (dayHours['closed'] == true) {
+            isClosed = true;
+          } else {
+            if (dayHours['open'] != null) {
+              final openTime = dayHours['open'].toString();
+              final openParts = openTime.split(':');
+              if (openParts.length >= 2) {
+                startHour = int.tryParse(openParts[0]) ?? 9;
+                startMinute = int.tryParse(openParts[1]) ?? 0;
+              }
+            }
+            if (dayHours['close'] != null) {
+              final closeTime = dayHours['close'].toString();
+              final closeParts = closeTime.split(':');
+              if (closeParts.length >= 2) {
+                endHour = int.tryParse(closeParts[0]) ?? 18;
+                endMinute = int.tryParse(closeParts[1]) ?? 0;
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    if (isClosed) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.red.shade50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.red.shade200),
+        ),
+        child: const Text(
+          'Branch is closed on this day',
+          style: TextStyle(color: Colors.red, fontSize: 13),
+        ),
+      );
+    }
+    
+    // Calculate the latest possible slot start time
+    // The service must finish by closing time, so: slotStart + duration <= endTime
+    final startMinutes = startHour * 60 + startMinute;
+    final endMinutes = endHour * 60 + endMinute;
+    final latestSlotStart = endMinutes - durationMinutes;
+    
+    // Check if date is today to filter past times
+    final now = DateTime.now();
+    final isToday = _selectedDate != null &&
+        _selectedDate!.year == now.year &&
+        _selectedDate!.month == now.month &&
+        _selectedDate!.day == now.day;
+    final currentMinutes = isToday ? (now.hour * 60 + now.minute) : -1;
+    
+    // Generate time slots using branch hours
     final List<TimeOfDay> slots = [];
-    for (int hour = 9; hour < 18; hour++) {
-      slots.add(TimeOfDay(hour: hour, minute: 0));
-      slots.add(TimeOfDay(hour: hour, minute: 15));
-      slots.add(TimeOfDay(hour: hour, minute: 30));
-      slots.add(TimeOfDay(hour: hour, minute: 45));
+    const interval = 15;
+    
+    for (int slotMinutes = startMinutes; slotMinutes <= latestSlotStart; slotMinutes += interval) {
+      // Skip past times if date is today
+      if (isToday && slotMinutes <= currentMinutes) {
+        continue;
+      }
+      
+      final hour = slotMinutes ~/ 60;
+      final minute = slotMinutes % 60;
+      slots.add(TimeOfDay(hour: hour, minute: minute));
     }
 
     final selectedTime = _serviceTimeSelections[serviceId];
