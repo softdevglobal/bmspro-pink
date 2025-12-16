@@ -24,6 +24,7 @@ class StaffMember {
   final String id;
   final String name;
   final String email;
+  final String? mobile;
   final String role;
   final String staffRole;
   final String status;
@@ -35,6 +36,7 @@ class StaffMember {
     required this.id,
     required this.name,
     required this.email,
+    this.mobile,
     required this.role,
     required this.staffRole,
     required this.status,
@@ -49,6 +51,7 @@ class StaffMember {
       id: doc.id,
       name: data['displayName'] ?? data['name'] ?? '',
       email: data['email'] ?? '',
+      mobile: data['mobile'],
       role: data['role'] ?? '',
       staffRole: data['staffRole'] ?? '',
       status: data['status'] ?? 'Active',
@@ -723,6 +726,26 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
                           color: Colors.grey.shade400,
                         ),
                       ),
+                      if (staff.mobile != null && staff.mobile!.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Icon(
+                              FontAwesomeIcons.phone,
+                              size: 10,
+                              color: Colors.grey.shade400,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              staff.mobile!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade400,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -998,6 +1021,10 @@ class _StaffPreviewSheet extends StatelessWidget {
                       const Divider(height: 24),
                       _buildDetailRow('Email', staff.email),
                       const Divider(height: 24),
+                      if (staff.mobile != null && staff.mobile!.isNotEmpty) ...[
+                        _buildDetailRow('Mobile', staff.mobile!),
+                        const Divider(height: 24),
+                      ],
                       _buildDetailRow('Role', staff.staffRole.isNotEmpty ? staff.staffRole : staff.role),
                       const Divider(height: 24),
                       Row(
@@ -1294,6 +1321,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
+  final _mobileController = TextEditingController();
   final _passwordController = TextEditingController();
   final _roleController = TextEditingController();
   
@@ -1315,6 +1343,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
+    _mobileController.dispose();
     _passwordController.dispose();
     _roleController.dispose();
     super.dispose();
@@ -1325,6 +1354,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
 
     final name = _nameController.text.trim();
     final email = _emailController.text.trim().toLowerCase();
+    final mobile = _mobileController.text.trim();
     final password = _passwordController.text.trim();
     final staffRole = _roleController.text.trim();
 
@@ -1390,6 +1420,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
             : '',
         'weeklySchedule': finalSchedule,
         'training': {'ohs': false, 'prod': false, 'tool': false},
+        'mobile': mobile,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -1514,6 +1545,16 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
                         validator: (v) {
                           if (v!.isEmpty) return 'Required';
                           if (!v.contains('@')) return 'Invalid email';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _mobileController,
+                        decoration: _inputDecoration('Mobile Number', '+1234567890'),
+                        keyboardType: TextInputType.phone,
+                        validator: (v) {
+                          if (v!.isEmpty) return 'Required';
                           return null;
                         },
                       ),
@@ -2016,6 +2057,16 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                       TextFormField(
                         initialValue: widget.staff.email,
                         decoration: _inputDecoration('Email', '').copyWith(
+                          filled: true,
+                          fillColor: Colors.grey.shade100,
+                        ),
+                        enabled: false,
+                      ),
+                      const SizedBox(height: 16),
+                      // Mobile (read-only)
+                      TextFormField(
+                        initialValue: widget.staff.mobile ?? '',
+                        decoration: _inputDecoration('Mobile Number', '').copyWith(
                           filled: true,
                           fillColor: Colors.grey.shade100,
                         ),
