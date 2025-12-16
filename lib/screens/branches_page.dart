@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/audit_log_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -327,12 +328,37 @@ class _BranchesPageState extends State<BranchesPage> {
 
   Future<void> _deleteBranch(BranchModel branch) async {
     try {
-      await FirebaseFirestore.instance
-          .collection('branches')
-          .doc(branch.id)
-          .delete();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final userName = userData?['displayName'] ?? userData?['name'] ?? user.email ?? 'Unknown';
+        final userRole = userData?['role'] ?? 'unknown';
+
+        await FirebaseFirestore.instance
+            .collection('branches')
+            .doc(branch.id)
+            .delete();
+
+        // Create audit log
+        await AuditLogService.logBranchDeleted(
+          ownerUid: _ownerUid!,
+          branchId: branch.id,
+          branchName: branch.name,
+          performedBy: user.uid,
+          performedByName: userName,
+          performedByRole: userRole,
+        );
+      } else {
+        await FirebaseFirestore.instance
+            .collection('branches')
+            .doc(branch.id)
+            .delete();
+      }
+
       _showToast('Branch deleted');
     } catch (e) {
+      debugPrint('Error deleting branch: $e');
       _showToast('Failed to delete branch');
     }
   }
@@ -877,19 +903,122 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
+      final user = FirebaseAuth.instance.currentUser;
+      final userDoc = user != null 
+          ? await FirebaseFirestore.instance.collection('users').doc(user.uid).get()
+          : null;
+      final userData = userDoc?.data();
+      final userName = userData?['displayName'] ?? userData?['name'] ?? user?.email ?? 'Unknown';
+      final userRole = userData?['role'] ?? 'unknown';
+
       if (widget.branch == null) {
         // Create new branch
         data['ownerUid'] = widget.ownerUid;
         data['createdAt'] = FieldValue.serverTimestamp();
         data['staffIds'] = [];
 
-        await FirebaseFirestore.instance.collection('branches').add(data);
+        final docRef = await FirebaseFirestore.instance.collection('branches').add(data);
+        final branchId = docRef.id;
+
+        // Create audit log
+        if (user != null) {
+          await AuditLogService.logBranchCreated(
+            ownerUid: widget.ownerUid,
+            branchId: branchId,
+            branchName: data['name'].toString(),
+            address: data['address'].toString(),
+            performedBy: user.uid,
+            performedByName: userName,
+            performedByRole: userRole,
+          );
+
+          // Log admin assignment if admin was selected
+          if (_selectedAdminStaffId != null && _selectedAdminStaffId!.isNotEmpty) {
+            try {
+              final adminStaff = widget.staff.firstWhere((s) => s.id == _selectedAdminStaffId);
+                await AuditLogService.logBranchAdminAssigned(
+                  ownerUid: widget.ownerUid,
+                  branchId: branchId,
+                  branchName: data['name'].toString(),
+                  adminId: _selectedAdminStaffId!,
+                  adminName: adminStaff.name,
+                  performedBy: user.uid,
+                  performedByName: userName,
+                  performedByRole: userRole,
+                );
+            } catch (e) {
+              debugPrint('Failed to log admin assignment: $e');
+            }
+          }
+        }
       } else {
         // Update existing branch
+        final branchId = widget.branch!.id;
+        final changes = <String>[];
+        
+        if (widget.branch!.name != data['name']) {
+          changes.add('Name: ${widget.branch!.name} → ${data['name']}');
+        }
+        if (widget.branch!.address != data['address']) {
+          changes.add('Address updated');
+        }
+        if (widget.branch!.phone != data['phone']) {
+          changes.add('Phone updated');
+        }
+        if (widget.branch!.status != data['status']) {
+          changes.add('Status: ${widget.branch!.status} → ${data['status']}');
+        }
+        if (widget.branch!.adminStaffId != _selectedAdminStaffId) {
+          if (_selectedAdminStaffId != null && _selectedAdminStaffId!.isNotEmpty) {
+            try {
+              final adminStaff = widget.staff.firstWhere((s) => s.id == _selectedAdminStaffId);
+              changes.add('Admin: ${adminStaff.name}');
+            } catch (e) {
+              changes.add('Admin updated');
+            }
+          } else {
+            changes.add('Admin removed');
+          }
+        }
+
         await FirebaseFirestore.instance
             .collection('branches')
-            .doc(widget.branch!.id)
+            .doc(branchId)
             .update(data);
+
+        // Create audit log
+        if (user != null) {
+          await AuditLogService.logBranchUpdated(
+            ownerUid: widget.ownerUid,
+            branchId: branchId,
+            branchName: data['name'].toString(),
+            performedBy: user.uid,
+            performedByName: userName,
+            performedByRole: userRole,
+            changes: changes.isNotEmpty ? changes.join(', ') : null,
+          );
+
+          // Log admin assignment change if changed
+          if (widget.branch!.adminStaffId != _selectedAdminStaffId) {
+            if (_selectedAdminStaffId != null && _selectedAdminStaffId!.isNotEmpty) {
+              try {
+                final adminStaff = widget.staff.firstWhere((s) => s.id == _selectedAdminStaffId);
+                await AuditLogService.logBranchAdminAssigned(
+                  ownerUid: widget.ownerUid,
+                  branchId: branchId,
+                  branchName: data['name'].toString(),
+                  adminId: _selectedAdminStaffId!,
+                  adminName: adminStaff.name,
+                  performedBy: user.uid,
+                  performedByName: userName,
+                  performedByRole: userRole,
+                );
+              } catch (e) {
+                debugPrint('Failed to log admin assignment: $e');
+              }
+            }
+          }
+        }
       }
 
       widget.onSuccess();

@@ -94,7 +94,14 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // Log successful login
-      AuditLogService.logUserLogin();
+      final ownerUid = userData['ownerUid'] ?? user.uid;
+      final userName = userData['displayName'] ?? userData['name'] ?? user.email ?? 'Unknown';
+      await AuditLogService.logUserLogin(
+        ownerUid: ownerUid.toString(),
+        performedBy: user.uid,
+        performedByName: userName.toString(),
+        performedByRole: userRole,
+      );
 
       if (mounted) {
         Navigator.pushReplacementNamed(context, AppRoutes.home);

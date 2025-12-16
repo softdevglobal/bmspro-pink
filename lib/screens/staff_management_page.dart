@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../services/audit_log_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -205,6 +206,7 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
       builder: (context) => _EditStaffSheet(
         staff: staff,
         branches: _branches,
+        ownerUid: _ownerUid!,
         onSuccess: () {
           Navigator.pop(context);
           _showToast('Staff updated successfully!');
@@ -360,6 +362,26 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
         }
       } catch (e) {
         debugPrint('Failed to update auth status: $e');
+      }
+
+      // Create audit log
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null && _ownerUid != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final userName = userData?['displayName'] ?? userData?['name'] ?? user.email ?? 'Unknown';
+        final userRole = userData?['role'] ?? 'unknown';
+
+        await AuditLogService.logStaffStatusChanged(
+          ownerUid: _ownerUid!,
+          staffId: staff.id,
+          staffName: staff.name,
+          previousStatus: staff.status,
+          newStatus: newStatus,
+          performedBy: user.uid,
+          performedByName: userName,
+          performedByRole: userRole,
+        );
       }
 
       _showToast(isSuspended 
@@ -1433,6 +1455,36 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
             .update({'adminStaffId': uid});
       }
 
+      // Create audit log
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        final currentUserDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
+        final currentUserData = currentUserDoc.data();
+        final currentUserName = currentUserData?['displayName'] ?? 
+            currentUserData?['name'] ?? 
+            currentUser.email ?? 
+            'Unknown';
+        final currentUserRole = currentUserData?['role'] ?? 'unknown';
+
+        final branchName = _selectedBranchId != null 
+            ? widget.branches.firstWhere((b) => b.id == _selectedBranchId).name 
+            : '';
+
+        await AuditLogService.logStaffCreated(
+          ownerUid: widget.ownerUid,
+          staffId: uid,
+          staffName: name,
+          staffRole: staffRole,
+          branchName: branchName,
+          performedBy: currentUser.uid,
+          performedByName: currentUserName,
+          performedByRole: currentUserRole,
+        );
+      }
+
       // Sign out the newly created user (so owner stays logged in)
       // The new user will need to sign in separately
       // Note: This is a workaround - ideally use Admin SDK via Cloud Function
@@ -1857,12 +1909,14 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
 class _EditStaffSheet extends StatefulWidget {
   final StaffMember staff;
   final List<BranchModel> branches;
+  final String ownerUid;
   final VoidCallback onSuccess;
   final Function(String) onError;
 
   const _EditStaffSheet({
     required this.staff,
     required this.branches,
+    required this.ownerUid,
     required this.onSuccess,
     required this.onError,
   });
@@ -1968,6 +2022,55 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
           );
         } catch (e) {
           debugPrint('Failed to update auth status: $e');
+        }
+      }
+
+      // Create audit logs
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        final currentUserDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
+        final currentUserData = currentUserDoc.data();
+        final currentUserName = currentUserData?['displayName'] ?? 
+            currentUserData?['name'] ?? 
+            currentUser.email ?? 
+            'Unknown';
+        final currentUserRole = currentUserData?['role'] ?? 'unknown';
+
+        // Log status change if changed
+        if (statusChanged) {
+          await AuditLogService.logStaffStatusChanged(
+            ownerUid: widget.ownerUid,
+            staffId: widget.staff.id,
+            staffName: _nameController.text.trim(),
+            previousStatus: widget.staff.status,
+            newStatus: _status,
+            performedBy: currentUser.uid,
+            performedByName: currentUserName,
+            performedByRole: currentUserRole,
+          );
+        } else {
+          // Log general update
+          final changes = <String>[];
+          if (widget.staff.name != _nameController.text.trim()) {
+            changes.add('Name: ${widget.staff.name} → ${_nameController.text.trim()}');
+          }
+          if (widget.staff.staffRole != _roleController.text.trim()) {
+            changes.add('Role: ${widget.staff.staffRole} → ${_roleController.text.trim()}');
+          }
+          if (changes.isNotEmpty || finalSchedule.isNotEmpty) {
+            await AuditLogService.logStaffUpdated(
+              ownerUid: widget.ownerUid,
+              staffId: widget.staff.id,
+              staffName: _nameController.text.trim(),
+              performedBy: currentUser.uid,
+              performedByName: currentUserName,
+              performedByRole: currentUserRole,
+              changes: changes.isNotEmpty ? changes.join(', ') : 'Schedule updated',
+            );
+          }
         }
       }
 

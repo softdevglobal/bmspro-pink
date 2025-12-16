@@ -1149,7 +1149,27 @@ class _ProfileScreenState extends State<ProfileScreen>
                     Expanded(
                       child: GestureDetector(
                         onTap: () async {
-                          await AuditLogService.logUserLogout();
+                          final user = FirebaseAuth.instance.currentUser;
+                          if (user != null) {
+                            final userDoc = await FirebaseFirestore.instance
+                                .collection('users')
+                                .doc(user.uid)
+                                .get();
+                            final userData = userDoc.data();
+                            final ownerUid = userData?['ownerUid'] ?? user.uid;
+                            final userName = userData?['displayName'] ?? 
+                                userData?['name'] ?? 
+                                user.email ?? 
+                                'Unknown';
+                            final userRole = userData?['role'] ?? 'unknown';
+                            
+                            await AuditLogService.logUserLogout(
+                              ownerUid: ownerUid.toString(),
+                              performedBy: user.uid,
+                              performedByName: userName.toString(),
+                              performedByRole: userRole.toString(),
+                            );
+                          }
                           await FirebaseAuth.instance.signOut();
                           Navigator.of(context).pop();
                           Navigator.of(context).pushNamedAndRemoveUntil(

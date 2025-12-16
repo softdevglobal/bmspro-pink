@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:io';
+import '../services/audit_log_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -278,8 +279,27 @@ class _ServicesPageState extends State<ServicesPage> {
           .doc(service.id)
           .delete();
 
+      // Create audit log
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null && _ownerUid != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final userName = userData?['displayName'] ?? userData?['name'] ?? user.email ?? 'Unknown';
+        final userRole = userData?['role'] ?? 'unknown';
+
+        await AuditLogService.logServiceDeleted(
+          ownerUid: _ownerUid!,
+          serviceId: service.id,
+          serviceName: service.name,
+          performedBy: user.uid,
+          performedByName: userName,
+          performedByRole: userRole,
+        );
+      }
+
       _showToast('Service deleted');
     } catch (e) {
+      debugPrint('Error deleting service: $e');
       _showToast('Failed to delete service');
     }
   }
@@ -1187,6 +1207,14 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
+      final user = FirebaseAuth.instance.currentUser;
+      final userDoc = user != null 
+          ? await FirebaseFirestore.instance.collection('users').doc(user.uid).get()
+          : null;
+      final userData = userDoc?.data();
+      final userName = userData?['displayName'] ?? userData?['name'] ?? user?.email ?? 'Unknown';
+      final userRole = userData?['role'] ?? 'unknown';
+
       if (widget.service == null) {
         // Create new service
         data['ownerUid'] = widget.ownerUid;
@@ -1197,14 +1225,35 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
             .collection('services')
             .add(data);
 
+        final serviceId = docRef.id;
+
         // Add to branches
         for (String branchId in _selectedBranches) {
           await FirebaseFirestore.instance
               .collection('branches')
               .doc(branchId)
               .update({
-            'serviceIds': FieldValue.arrayUnion([docRef.id]),
+            'serviceIds': FieldValue.arrayUnion([serviceId]),
           });
+        }
+
+        // Create audit log
+        if (user != null) {
+          final branchNames = _selectedBranches
+              .map((id) => widget.branches.firstWhere((b) => b.id == id, orElse: () => BranchModel(id: '', name: 'Unknown')).name)
+              .where((name) => name.isNotEmpty && name != 'Unknown')
+              .toList();
+
+          await AuditLogService.logServiceCreated(
+            ownerUid: widget.ownerUid,
+            serviceId: serviceId,
+            serviceName: data['name'].toString(),
+            price: (data['price'] as num).toDouble(),
+            performedBy: user.uid,
+            performedByName: userName,
+            performedByRole: userRole,
+            branchNames: branchNames.isNotEmpty ? branchNames : null,
+          );
         }
       } else {
         // Update existing service
@@ -1236,6 +1285,37 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
               .update({
             'serviceIds': FieldValue.arrayRemove([widget.service!.id]),
           });
+        }
+
+        // Create audit log
+        if (user != null) {
+          final changes = <String>[];
+          if (widget.service!.name != data['name']) {
+            changes.add('Name: ${widget.service!.name} → ${data['name']}');
+          }
+          if (widget.service!.price != data['price']) {
+            final newPrice = (data['price'] as num).toDouble();
+            changes.add('Price: \$${widget.service!.price.toStringAsFixed(0)} → \$${newPrice.toStringAsFixed(0)}');
+          }
+          if (widget.service!.duration != data['duration']) {
+            changes.add('Duration: ${widget.service!.duration} → ${data['duration']} mins');
+          }
+          if (toAdd.isNotEmpty || toRemove.isNotEmpty) {
+            changes.add('Branches updated');
+          }
+          if (_selectedStaff.length != widget.service!.staffIds.length) {
+            changes.add('Staff updated');
+          }
+
+          await AuditLogService.logServiceUpdated(
+            ownerUid: widget.ownerUid,
+            serviceId: widget.service!.id,
+            serviceName: data['name'].toString(),
+            performedBy: user.uid,
+            performedByName: userName,
+            performedByRole: userRole,
+            changes: changes.isNotEmpty ? changes.join(', ') : null,
+          );
         }
       }
 

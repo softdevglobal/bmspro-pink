@@ -316,15 +316,33 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             );
             
             // Audit log for sending to staff
-            AuditLogService.logBookingStatusChanged(
-              bookingId: ref.id,
-              bookingCode: booking.rawData['bookingCode'],
-              clientName: booking.rawData['client'] ?? 'Customer',
-              previousStatus: 'pending',
-              newStatus: 'AwaitingStaffApproval',
-              details: 'Booking request sent to staff for approval',
-              branchName: booking.rawData['branchName'],
-            );
+            final currentUser = FirebaseAuth.instance.currentUser;
+            if (currentUser != null && _ownerUid != null) {
+              final userDoc = await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(currentUser.uid)
+                  .get();
+              final userData = userDoc.data();
+              final userName = userData?['displayName'] ?? 
+                  userData?['name'] ?? 
+                  currentUser.email ?? 
+                  'Unknown';
+              final userRole = userData?['role'] ?? 'unknown';
+              
+              await AuditLogService.logBookingStatusChanged(
+                ownerUid: _ownerUid!,
+                bookingId: ref.id,
+                bookingCode: booking.rawData['bookingCode']?.toString(),
+                clientName: booking.rawData['client']?.toString() ?? 'Customer',
+                previousStatus: 'pending',
+                newStatus: 'AwaitingStaffApproval',
+                performedBy: currentUser.uid,
+                performedByName: userName.toString(),
+                performedByRole: userRole.toString(),
+                details: 'Booking request sent to staff for approval',
+                branchName: booking.rawData['branchName']?.toString(),
+              );
+            }
             
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -340,14 +358,32 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             );
             
             // Audit log for confirmation
-            AuditLogService.logBookingStatusChanged(
-              bookingId: ref.id,
-              bookingCode: booking.rawData['bookingCode'],
-              clientName: booking.rawData['client'] ?? 'Customer',
-              previousStatus: 'pending',
-              newStatus: 'confirmed',
-              branchName: booking.rawData['branchName'],
-            );
+            final currentUser = FirebaseAuth.instance.currentUser;
+            if (currentUser != null && _ownerUid != null) {
+              final userDoc = await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(currentUser.uid)
+                  .get();
+              final userData = userDoc.data();
+              final userName = userData?['displayName'] ?? 
+                  userData?['name'] ?? 
+                  currentUser.email ?? 
+                  'Unknown';
+              final userRole = userData?['role'] ?? 'unknown';
+              
+              await AuditLogService.logBookingStatusChanged(
+                ownerUid: _ownerUid!,
+                bookingId: ref.id,
+                bookingCode: booking.rawData['bookingCode']?.toString(),
+                clientName: booking.rawData['client']?.toString() ?? 'Customer',
+                previousStatus: 'pending',
+                newStatus: 'confirmed',
+                performedBy: currentUser.uid,
+                performedByName: userName.toString(),
+                performedByRole: userRole.toString(),
+                branchName: booking.rawData['branchName']?.toString(),
+              );
+            }
             
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -385,15 +421,33 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
           );
           
           // Audit log for sending to staff
-          AuditLogService.logBookingStatusChanged(
-            bookingId: booking.id,
-            bookingCode: booking.rawData['bookingCode'],
-            clientName: booking.rawData['client'] ?? 'Customer',
-            previousStatus: booking.status,
-            newStatus: 'AwaitingStaffApproval',
-            details: 'Sent to staff for approval',
-            branchName: booking.rawData['branchName'],
-          );
+          final currentUser = FirebaseAuth.instance.currentUser;
+          if (currentUser != null && _ownerUid != null) {
+            final userDoc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentUser.uid)
+                .get();
+            final userData = userDoc.data();
+            final userName = userData?['displayName'] ?? 
+                userData?['name'] ?? 
+                currentUser.email ?? 
+                'Unknown';
+            final userRole = userData?['role'] ?? 'unknown';
+            
+            await AuditLogService.logBookingStatusChanged(
+              ownerUid: _ownerUid!,
+              bookingId: booking.id,
+              bookingCode: booking.rawData['bookingCode']?.toString(),
+              clientName: booking.rawData['client']?.toString() ?? 'Customer',
+              previousStatus: booking.status,
+              newStatus: 'AwaitingStaffApproval',
+              performedBy: currentUser.uid,
+              performedByName: userName.toString(),
+              performedByRole: userRole.toString(),
+              details: 'Sent to staff for approval',
+              branchName: booking.rawData['branchName']?.toString(),
+            );
+          }
           
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -412,14 +466,32 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
           );
           
           // Audit log for status change
-          AuditLogService.logBookingStatusChanged(
-            bookingId: booking.id,
-            bookingCode: booking.rawData['bookingCode'],
-            clientName: booking.rawData['client'] ?? 'Customer',
-            previousStatus: booking.status,
-            newStatus: newStatus,
-            branchName: booking.rawData['branchName'],
-          );
+          final currentUser = FirebaseAuth.instance.currentUser;
+          if (currentUser != null && _ownerUid != null) {
+            final userDoc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentUser.uid)
+                .get();
+            final userData = userDoc.data();
+            final userName = userData?['displayName'] ?? 
+                userData?['name'] ?? 
+                currentUser.email ?? 
+                'Unknown';
+            final userRole = userData?['role'] ?? 'unknown';
+            
+            await AuditLogService.logBookingStatusChanged(
+              ownerUid: _ownerUid!,
+              bookingId: booking.id,
+              bookingCode: booking.rawData['bookingCode']?.toString(),
+              clientName: booking.rawData['client']?.toString() ?? 'Customer',
+              previousStatus: booking.status,
+              newStatus: newStatus,
+              performedBy: currentUser.uid,
+              performedByName: userName.toString(),
+              performedByRole: userRole.toString(),
+              branchName: booking.rawData['branchName']?.toString(),
+            );
+          }
           
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
