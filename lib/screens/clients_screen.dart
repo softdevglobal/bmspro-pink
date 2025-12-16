@@ -112,6 +112,8 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
           }
           _isLoadingRole = false;
         });
+        debugPrint('User role loaded: $_userRole, ownerUid: $_ownerUid, branchId: $_branchId');
+        debugPrint('Is staff: $_isStaff, Is branch admin: $_isBranchAdmin');
         _listenToClients();
       } else {
         setState(() {
@@ -132,13 +134,15 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
   }
 
   bool get _isBranchAdmin => _userRole == 'salon_branch_admin';
+  bool get _isStaff => _userRole == 'salon_staff';
 
   void _listenToClients() {
     if (_ownerUid == null || _ownerUid!.isEmpty) return;
 
     final currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
-    // Listen to saved customers collection
+    // Listen to saved customers collection (optional - may not have permissions)
+    // If this fails, we'll still get clients from bookings
     FirebaseFirestore.instance
         .collection('customers')
         .where('ownerUid', isEqualTo: _ownerUid)
@@ -187,20 +191,32 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
       });
       _mergeAndFilterClients();
     }, onError: (e) {
-      debugPrint('Error loading saved customers: $e');
+      // Silently handle permission errors - clients will still be loaded from bookings
+      debugPrint('Note: Could not access customers collection (may not have permissions). Clients will be loaded from bookings instead.');
+      // Initialize empty lists if customers collection is not accessible
+      if (!mounted) return;
+      setState(() {
+        _savedMyClients = [];
+        _savedBranchClients = [];
+      });
+      // Still merge and filter with empty saved clients
+      _mergeAndFilterClients();
     });
 
     // Listen to bookings collection
+    debugPrint('Starting to listen to bookings for ownerUid: $_ownerUid');
     FirebaseFirestore.instance
         .collection('bookings')
         .where('ownerUid', isEqualTo: _ownerUid)
         .snapshots()
         .listen((snap) {
+      debugPrint('Received ${snap.docs.length} bookings from Firestore');
       final Map<String, Map<String, dynamic>> allClientsMap = {};
       final Map<String, Map<String, dynamic>> myClientsMap = {};
       final Map<String, Map<String, dynamic>> branchClientsMap = {};
       
       final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      debugPrint('Processing bookings for currentUserId: $currentUserId, role: $_userRole');
 
       for (final doc in snap.docs) {
         final data = doc.data();
@@ -226,18 +242,42 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
         } catch (_) {}
 
         // Check if this booking belongs to current user (staff)
+        // Check both staffId and staffAuthUid at booking level
         bool isMyClient = false;
-        if (data['staffId'] == currentUserId) {
+        final bookingStaffId = data['staffId']?.toString();
+        final bookingStaffAuthUid = data['staffAuthUid']?.toString();
+        
+        debugPrint('Checking booking for client: $name');
+        debugPrint('  currentUserId: $currentUserId');
+        debugPrint('  bookingStaffId: $bookingStaffId');
+        debugPrint('  bookingStaffAuthUid: $bookingStaffAuthUid');
+        
+        if (bookingStaffId == currentUserId || bookingStaffAuthUid == currentUserId) {
           isMyClient = true;
+          debugPrint('  ✓ Matched at booking level');
         }
-        if (data['services'] is List) {
-          for (final service in (data['services'] as List)) {
-            if (service is Map && service['staffId'] == currentUserId) {
-              isMyClient = true;
-              break;
+        
+        // Also check services array for staff assignment
+        if (!isMyClient && data['services'] is List) {
+          final services = data['services'] as List;
+          debugPrint('  Checking ${services.length} services');
+          for (final service in services) {
+            if (service is Map) {
+              final serviceStaffId = service['staffId']?.toString();
+              final serviceStaffAuthUid = service['staffAuthUid']?.toString();
+              
+              debugPrint('    Service staffId: $serviceStaffId, staffAuthUid: $serviceStaffAuthUid');
+              
+              if (serviceStaffId == currentUserId || serviceStaffAuthUid == currentUserId) {
+                isMyClient = true;
+                debugPrint('  ✓ Matched at service level');
+                break;
+              }
             }
           }
         }
+        
+        debugPrint('  Final isMyClient: $isMyClient');
 
         // Check if this booking belongs to current branch
         bool isBranchClient = _branchId != null && 
@@ -324,6 +364,17 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
       final myClients = convertMapToClients(myClientsMap);
       final branchClients = convertMapToClients(branchClientsMap);
 
+      debugPrint('=== Client Summary ===');
+      debugPrint('Total bookings processed: ${snap.docs.length}');
+      debugPrint('All clients count: ${allClients.length}');
+      debugPrint('My clients count: ${myClients.length}');
+      debugPrint('Branch clients count: ${branchClients.length}');
+      debugPrint('Current user role: $_userRole');
+      debugPrint('Is staff: $_isStaff');
+      if (myClients.isNotEmpty) {
+        debugPrint('My clients: ${myClients.map((c) => c.name).join(", ")}');
+      }
+
       if (!mounted) return;
 
       setState(() {
@@ -373,9 +424,14 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
     }
     _staggerControllers.clear();
     
-    final currentList = _isBranchAdmin 
-        ? (_showBranchClients ? mergedBranchClients : mergedMyClients)
-        : _allClients;
+    // For salon_staff, only show clients who worked with them
+    // For branch_admin, show branch clients or my clients based on toggle
+    // For others (owner), show all clients
+    final currentList = _isStaff
+        ? mergedMyClients  // Staff only see their own clients
+        : (_isBranchAdmin 
+            ? (_showBranchClients ? mergedBranchClients : mergedMyClients)
+            : _allClients);
         
     for (int i = 0; i < currentList.length; i++) {
       _staggerControllers.add(
@@ -412,11 +468,21 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
         ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     }
 
+    // For salon_staff, only show clients who worked with them
+    if (_isStaff) {
+      final merged = mergeClients(_myClients, _savedMyClients);
+      debugPrint('Staff client list: ${merged.length} clients');
+      debugPrint('  From bookings: ${_myClients.length}');
+      debugPrint('  From saved: ${_savedMyClients.length}');
+      return merged;
+    }
+    // For branch_admin, show branch clients or my clients based on toggle
     if (_isBranchAdmin) {
       return _showBranchClients 
           ? mergeClients(_branchClients, _savedBranchClients) 
           : mergeClients(_myClients, _savedMyClients);
     }
+    // For others (owner), show all clients
     return _allClients;
   }
 
@@ -829,7 +895,9 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
     final clientCount = activeList.length;
     final label = _isBranchAdmin 
         ? (_showBranchClients ? '$clientCount Branch Clients' : '$clientCount My Clients')
-        : '$clientCount Active Clients';
+        : _isStaff
+            ? '$clientCount My Clients'
+            : '$clientCount Active Clients';
     
     // Show add button only for "My Clients" (branch admin) or always (salon owner)
     final showAddButton = !_isBranchAdmin || !_showBranchClients;
