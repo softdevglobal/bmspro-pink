@@ -76,6 +76,7 @@ class StaffOption {
   final String? role;
   final String? status;
   final String? avatar;
+  final String? email;
   final Map<String, dynamic>? weeklySchedule;
 
   StaffOption({
@@ -84,6 +85,7 @@ class StaffOption {
     this.role,
     this.status,
     this.avatar,
+    this.email,
     this.weeklySchedule,
   });
 }
@@ -204,6 +206,7 @@ class _BranchesPageState extends State<BranchesPage> {
                     role: data['staffRole'],
                     status: data['status'],
                     avatar: data['avatar'],
+                    email: data['email'],
                     weeklySchedule: data['weeklySchedule'] as Map<String, dynamic>?,
                   );
                 })
@@ -228,6 +231,7 @@ class _BranchesPageState extends State<BranchesPage> {
         ownerUid: _ownerUid!,
         services: _services,
         staff: _staff,
+        branches: _branches,
         onSuccess: () {
           Navigator.pop(context);
           _showToast('Branch added successfully!');
@@ -247,6 +251,7 @@ class _BranchesPageState extends State<BranchesPage> {
         branch: branch,
         services: _services,
         staff: _staff,
+        branches: _branches,
         onSuccess: () {
           Navigator.pop(context);
           _showToast('Branch updated successfully!');
@@ -764,6 +769,7 @@ class _BranchFormSheet extends StatefulWidget {
   final BranchModel? branch;
   final List<ServiceOption> services;
   final List<StaffOption> staff;
+  final List<BranchModel> branches;
   final VoidCallback onSuccess;
   final Function(String) onError;
 
@@ -772,6 +778,7 @@ class _BranchFormSheet extends StatefulWidget {
     this.branch,
     required this.services,
     required this.staff,
+    required this.branches,
     required this.onSuccess,
     required this.onError,
   });
@@ -791,7 +798,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
   bool _saving = false;
   late String _status;
   late Map<String, Map<String, dynamic>> _hours;
-  late Set<String> _selectedServices;
+  String? _selectedAdminStaffId;
 
   @override
   void initState() {
@@ -803,7 +810,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     _emailController = TextEditingController(text: branch?.email ?? '');
     _capacityController = TextEditingController(text: branch?.capacity?.toString() ?? '');
     _status = branch?.status ?? 'Active';
-    _selectedServices = Set.from(branch?.serviceIds ?? []);
+    _selectedAdminStaffId = branch?.adminStaffId;
 
     // Initialize hours
     _hours = {
@@ -841,15 +848,32 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     setState(() => _saving = true);
 
     try {
+      // Get admin staff email if selected
+      String? adminEmail;
+      String? managerName;
+      if (_selectedAdminStaffId != null && _selectedAdminStaffId!.isNotEmpty) {
+        try {
+          final adminStaff = widget.staff.firstWhere(
+            (s) => s.id == _selectedAdminStaffId,
+          );
+          adminEmail = adminStaff.email;
+          managerName = adminStaff.name;
+        } catch (e) {
+          debugPrint('Admin staff not found: $e');
+        }
+      }
+
       final data = {
         'name': _nameController.text.trim(),
         'address': _addressController.text.trim(),
         'phone': _phoneController.text.trim(),
-        'email': _emailController.text.trim(),
+        'email': adminEmail ?? _emailController.text.trim(),
         'capacity': int.tryParse(_capacityController.text) ?? 0,
         'status': _status,
         'hours': _hours,
-        'serviceIds': _selectedServices.toList(),
+        'serviceIds': [],
+        'adminStaffId': _selectedAdminStaffId ?? null,
+        'manager': managerName,
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
@@ -986,6 +1010,110 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                   ),
                   const SizedBox(height: 16),
 
+                  // Contact & Admin Section
+                  _buildSectionCard(
+                    title: 'Contact & Admin',
+                    icon: FontAwesomeIcons.addressBook,
+                    iconColor: const Color(0xFF8B5CF6),
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF8B5CF6).withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.2),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  FontAwesomeIcons.userShield,
+                                  size: 14,
+                                  color: const Color(0xFF8B5CF6),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Assign Branch Admin',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.text,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String?>(
+                              value: _selectedAdminStaffId,
+                              decoration: _inputDecoration('Branch Admin', 'Select staff member'),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('-- No Admin Assigned --'),
+                                ),
+                                ...widget.staff.map((staff) {
+                                  // Check if this staff is already a branch admin
+                                  String? branchName;
+                                  try {
+                                    final adminBranch = widget.branches.firstWhere(
+                                      (b) => b.adminStaffId == staff.id && 
+                                             (widget.branch == null || b.id != widget.branch!.id),
+                                    );
+                                    branchName = adminBranch.name;
+                                  } catch (e) {
+                                    // Staff is not a branch admin of any other branch
+                                    branchName = null;
+                                  }
+                                  
+                                  return DropdownMenuItem<String?>(
+                                    value: staff.id,
+                                    child: Text(
+                                      branchName != null 
+                                          ? '${staff.name} ($branchName)'
+                                          : staff.name,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                  );
+                                }),
+                              ],
+                              onChanged: (value) {
+                                setState(() {
+                                  _selectedAdminStaffId = value;
+                                  // Auto-fill email if admin has email
+                                  if (value != null) {
+                                    try {
+                                      final adminStaff = widget.staff.firstWhere(
+                                        (s) => s.id == value,
+                                      );
+                                      if (adminStaff.email != null && adminStaff.email!.isNotEmpty) {
+                                        _emailController.text = adminStaff.email!;
+                                      }
+                                    } catch (e) {
+                                      debugPrint('Admin staff not found: $e');
+                                    }
+                                  }
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'User role will become Branch Admin',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
                   // Status
                   _buildSectionCard(
                     title: 'Status',
@@ -1047,39 +1175,6 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                     iconColor: const Color(0xFF8B5CF6),
                     children: [
                       ..._hours.keys.map((day) => _buildHoursRow(day)),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Services
-                  _buildSectionCard(
-                    title: 'Available Services',
-                    icon: FontAwesomeIcons.scissors,
-                    iconColor: const Color(0xFFEC4899),
-                    children: [
-                      if (widget.services.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text('No services available', style: TextStyle(color: AppColors.muted)),
-                        )
-                      else
-                        ...widget.services.map((service) => CheckboxListTile(
-                          value: _selectedServices.contains(service.id),
-                          onChanged: (v) {
-                            setState(() {
-                              if (v == true) {
-                                _selectedServices.add(service.id);
-                              } else {
-                                _selectedServices.remove(service.id);
-                              }
-                            });
-                          },
-                          title: Text(service.name, style: const TextStyle(fontSize: 14)),
-                          controlAffinity: ListTileControlAffinity.leading,
-                          dense: true,
-                          activeColor: const Color(0xFFEC4899),
-                          contentPadding: EdgeInsets.zero,
-                        )),
                     ],
                   ),
                   const SizedBox(height: 24),
