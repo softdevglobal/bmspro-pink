@@ -6,6 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'profile_screen.dart' as profile_screen;
 import 'appointment_requests_page.dart';
+import 'all_appointments_page.dart';
+import 'appointment_details_page.dart';
 
 enum ClockStatus { out, clockedIn, onBreak }
 
@@ -67,6 +69,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   
   // Revenue by day (last 30 days)
   List<double> _dailyRevenue = [];
+  
+  // Today's appointments
+  List<Map<String, dynamic>> _todayAppointments = [];
+  bool _isLoadingAppointments = true;
 
   @override
   void initState() {
@@ -84,6 +90,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     
     _loadData();
     _listenToPendingRequests();
+    _fetchTodayAppointments();
   }
   
   @override
@@ -217,6 +224,96 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     }, onError: (e) {
       debugPrint('Error listening to pending requests: $e');
     });
+  }
+
+  Future<void> _fetchTodayAppointments() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() => _isLoadingAppointments = false);
+        return;
+      }
+
+      // Wait for data to load to get ownerUid and branchId
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (_ownerUid == null || _ownerUid!.isEmpty || _branchId == null) {
+        setState(() => _isLoadingAppointments = false);
+        return;
+      }
+
+      // Get today's date in YYYY-MM-DD format
+      final now = DateTime.now();
+      final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+      debugPrint('Fetching branch admin appointments for date: $todayStr, branchId: $_branchId');
+
+      // Query bookings for this branch today
+      FirebaseFirestore.instance
+          .collection('bookings')
+          .where('ownerUid', isEqualTo: _ownerUid)
+          .where('branchId', isEqualTo: _branchId)
+          .where('date', isEqualTo: todayStr)
+          .snapshots()
+          .listen((snap) {
+        final List<Map<String, dynamic>> appointments = [];
+        
+        debugPrint('Found ${snap.docs.length} bookings for today in branch');
+        
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          
+          // Get service name from various possible fields
+          String? serviceName;
+          String? duration;
+          
+          if (data['services'] is List && (data['services'] as List).isNotEmpty) {
+            final firstService = (data['services'] as List).first;
+            if (firstService is Map) {
+              serviceName = firstService['name']?.toString() ?? firstService['serviceName']?.toString();
+              duration = firstService['duration']?.toString();
+            }
+          }
+          serviceName ??= data['serviceName']?.toString() ?? data['service']?.toString() ?? 'Service';
+          duration ??= data['duration']?.toString() ?? '';
+          
+          final time = data['time']?.toString() ?? data['startTime']?.toString() ?? '';
+          final status = data['status']?.toString() ?? 'pending';
+          final staffName = data['staffName']?.toString() ?? 'Unassigned';
+          
+          appointments.add({
+            'id': doc.id,
+            'serviceName': serviceName,
+            'duration': duration,
+            'time': time,
+            'status': status,
+            'client': data['client']?.toString() ?? data['clientName']?.toString() ?? 'Client',
+            'staffName': staffName,
+            'data': data,
+          });
+        }
+        
+        // Sort by time
+        appointments.sort((a, b) {
+          final timeA = a['time'] ?? '';
+          final timeB = b['time'] ?? '';
+          return timeA.compareTo(timeB);
+        });
+        
+        debugPrint('Processed ${appointments.length} appointments for branch');
+        
+        if (!mounted) return;
+        setState(() {
+          _todayAppointments = appointments;
+          _isLoadingAppointments = false;
+        });
+      }, onError: (e) {
+        debugPrint('Error fetching appointments: $e');
+        if (mounted) setState(() => _isLoadingAppointments = false);
+      });
+    } catch (e) {
+      debugPrint('Error fetching appointments: $e');
+      if (mounted) setState(() => _isLoadingAppointments = false);
+    }
   }
 
   Future<void> _loadData() async {
@@ -411,6 +508,8 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
                 _buildPendingRequestsAlert(),
                 const SizedBox(height: 24),
               ],
+              _buildAppointmentsSection(),
+              const SizedBox(height: 24),
               _buildKpiSection(),
               const SizedBox(height: 24),
               _buildRevenueChartSection(),
@@ -784,6 +883,325 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               borderRadius: BorderRadius.circular(14),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  // --- Appointments Section Methods ---
+  String _formatTime(String time) {
+    if (time.isEmpty) return '';
+    
+    // If already formatted (contains AM/PM), return as is
+    if (time.toUpperCase().contains('AM') || time.toUpperCase().contains('PM')) {
+      return time;
+    }
+    
+    // Try to parse HH:mm format
+    try {
+      final parts = time.split(':');
+      if (parts.length >= 2) {
+        int hour = int.parse(parts[0]);
+        final minute = parts[1];
+        final period = hour >= 12 ? 'PM' : 'AM';
+        if (hour > 12) hour -= 12;
+        if (hour == 0) hour = 12;
+        return '$hour:$minute $period';
+      }
+    } catch (_) {}
+    
+    return time;
+  }
+
+  IconData _getServiceIcon(String serviceName) {
+    final name = serviceName.toLowerCase();
+    if (name.contains('massage') || name.contains('spa')) {
+      return FontAwesomeIcons.spa;
+    } else if (name.contains('facial') || name.contains('face')) {
+      return FontAwesomeIcons.leaf;
+    } else if (name.contains('nail') || name.contains('manicure') || name.contains('pedicure')) {
+      return FontAwesomeIcons.handSparkles;
+    } else if (name.contains('hair') || name.contains('cut') || name.contains('style')) {
+      return FontAwesomeIcons.scissors;
+    } else if (name.contains('wax') || name.contains('threading')) {
+      return FontAwesomeIcons.feather;
+    } else if (name.contains('makeup') || name.contains('beauty')) {
+      return FontAwesomeIcons.wandMagicSparkles;
+    }
+    return FontAwesomeIcons.calendarCheck;
+  }
+
+  List<Color> _getServiceColors(int index) {
+    final colorSets = [
+      [Colors.purple.shade400, Colors.purple.shade600],
+      [Colors.pink.shade400, Colors.pink.shade600],
+      [AppColors.accent, AppColors.primary],
+      [Colors.blue.shade400, Colors.blue.shade600],
+      [Colors.teal.shade400, Colors.teal.shade600],
+      [Colors.orange.shade400, Colors.orange.shade600],
+    ];
+    return colorSets[index % colorSets.length];
+  }
+
+  Widget _buildAppointmentsSection() {
+    // Get pending/confirmed appointments
+    final upcomingAppointments = _todayAppointments.where((a) {
+      final status = (a['status'] ?? '').toString().toLowerCase();
+      return status == 'pending' || status == 'confirmed' || status == 'awaitingstaffapproval' || status == 'partiallyapproved';
+    }).toList();
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.1),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(FontAwesomeIcons.calendarDay, color: AppColors.primary, size: 16),
+                  const SizedBox(width: 8),
+                  const Text(
+                    "Today's Appointments",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: _isLoadingAppointments
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Text(
+                        '${upcomingAppointments.length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+              )
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_isLoadingAppointments)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(color: AppColors.primary),
+            )
+          else if (upcomingAppointments.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Column(
+                children: [
+                  Icon(
+                    FontAwesomeIcons.calendarCheck,
+                    size: 40,
+                    color: AppColors.muted.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No appointments today',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: AppColors.muted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Your branch schedule is clear!',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.muted.withOpacity(0.7),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...upcomingAppointments.take(5).toList().asMap().entries.map((entry) {
+              final index = entry.key;
+              final appointment = entry.value;
+              final serviceName = appointment['serviceName'] ?? 'Service';
+              final duration = appointment['duration'];
+              final time = appointment['time'] ?? '';
+              final staffName = appointment['staffName'] ?? 'Unassigned';
+              final displayTitle = duration != null && duration.isNotEmpty 
+                  ? '$serviceName ${duration}min' 
+                  : serviceName;
+              
+              // Get icon and colors based on service name
+              final iconData = _getServiceIcon(serviceName);
+              final colors = _getServiceColors(index);
+              
+              return _buildAppointmentItem(
+                displayTitle,
+                _formatTime(time),
+                staffName,
+                iconData,
+                colors,
+                isNext: index == 0,
+                appointmentData: appointment,
+              );
+            }),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AllAppointmentsPage()),
+                );
+              },
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: const BorderSide(color: AppColors.primary),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'View All Appointments',
+                style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
+              ),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppointmentItem(
+    String title,
+    String time,
+    String staffName,
+    IconData icon,
+    List<Color> gradientColors, {
+    bool isNext = false,
+    Map<String, dynamic>? appointmentData,
+  }) {
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => AppointmentDetailsPage(appointmentData: appointmentData),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: gradientColors,
+                ),
+              ),
+              child: Center(child: Icon(icon, color: Colors.white, size: 16)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        time,
+                        style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                      ),
+                      if (appointmentData != null && appointmentData['client'] != null) ...[
+                        const Text(' • ', style: TextStyle(color: AppColors.muted, fontSize: 12)),
+                        Flexible(
+                          child: Text(
+                            appointmentData['client'],
+                            style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (staffName.isNotEmpty && staffName != 'Unassigned')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Row(
+                        children: [
+                          const Icon(FontAwesomeIcons.userTag, size: 10, color: AppColors.muted),
+                          const SizedBox(width: 4),
+                          Text(
+                            staffName,
+                            style: TextStyle(
+                              color: AppColors.muted.withOpacity(0.8),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (isNext)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Next',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
