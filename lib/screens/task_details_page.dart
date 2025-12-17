@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
 
 // --- 1. Theme & Colors ---
 class AppColors {
@@ -29,6 +31,9 @@ class TaskDetailsPage extends StatefulWidget {
 }
 
 class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderStateMixin {
+  // API Base URL - Update this to your admin panel URL
+  static const String _apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+  
   // --- Stopwatch State ---
   Timer? _stopwatchTimer;
   int _elapsedSeconds = 0;
@@ -50,6 +55,10 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
   String _customerName = 'Customer';
   String _serviceType = '';
   String _customerNotes = 'No special notes available.';
+  
+  // Multi-service tracking
+  List<Map<String, dynamic>> _assignedServices = [];
+  String? _currentServiceId; // For multi-service bookings, the service being worked on
 
   // Mock Data from HTML
   final List<Map<String, dynamic>> _tasks = [
@@ -128,10 +137,27 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
                      'Customer';
       
       // Try to get service type from services array or use service name
+      // Also identify services assigned to this staff member
+      final user = FirebaseAuth.instance.currentUser;
       if (_bookingData?['services'] is List && (_bookingData!['services'] as List).isNotEmpty) {
-        final firstService = (_bookingData!['services'] as List).first;
+        final services = _bookingData!['services'] as List;
+        final firstService = services.first;
         if (firstService is Map) {
           _serviceType = firstService['name']?.toString() ?? _serviceName;
+        }
+        
+        // Find services assigned to current staff
+        if (user != null) {
+          _assignedServices = services
+            .where((s) => s is Map && (s['staffId'] == user.uid || s['staffAuthUid'] == user.uid))
+            .map<Map<String, dynamic>>((s) => Map<String, dynamic>.from(s as Map))
+            .toList();
+          
+          // If we found assigned services, use the first one's name
+          if (_assignedServices.isNotEmpty) {
+            _serviceName = _assignedServices.first['name']?.toString() ?? _serviceName;
+            _currentServiceId = _assignedServices.first['id']?.toString();
+          }
         }
       } else {
         _serviceType = _serviceName;
@@ -143,7 +169,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
                       'No special notes available.';
 
       // Try to find customer in customers collection for additional info
-      final user = FirebaseAuth.instance.currentUser;
+      // (user is already defined above on line 141)
       if (user != null) {
         final ownerUid = user.uid;
         final customerEmail = _bookingData?['email']?.toString() ?? 
@@ -326,35 +352,214 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
     _stopStopwatch();
     setState(() => _isFinishing = true);
     
+    final bookingId = widget.appointmentData?['id'] as String?;
+    bool success = false;
+    String message = "Task Completed Successfully!";
+    bool bookingFullyCompleted = false;
+    
     try {
-      // Update booking status to completed if we have booking data
-      final bookingId = widget.appointmentData?['id'] as String?;
       if (bookingId != null) {
-        await FirebaseFirestore.instance
-            .collection('bookings')
-            .doc(bookingId)
-            .update({
-          'status': 'completed',
-          'completedAt': FieldValue.serverTimestamp(),
-          'durationElapsed': _elapsedSeconds,
-        });
+        // Get Firebase auth token
+        final user = FirebaseAuth.instance.currentUser;
+        final token = await user?.getIdToken();
+        
+        if (token != null) {
+          // Call the service-complete API endpoint
+          final uri = Uri.parse('$_apiBaseUrl/api/bookings/$bookingId/service-complete');
+          
+          // Build request body
+          final Map<String, dynamic> requestBody = {};
+          
+          // If this is a multi-service booking, specify which service to complete
+          if (_currentServiceId != null && _assignedServices.length > 1) {
+            requestBody['serviceId'] = _currentServiceId;
+          }
+          
+          debugPrint('Calling service-complete API: $uri');
+          
+          final response = await http.post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(requestBody),
+          );
+          
+          debugPrint('API Response status: ${response.statusCode}');
+          debugPrint('API Response body: ${response.body}');
+          
+          // Check if response body is empty (API endpoint might not be deployed)
+          if (response.body.isEmpty) {
+            debugPrint('Empty response - API endpoint may not be deployed yet');
+            throw Exception('API endpoint returned empty response. Please ensure the admin panel is deployed with the latest changes.');
+          }
+          
+          // Check for 404 (endpoint not found)
+          if (response.statusCode == 404) {
+            debugPrint('API endpoint not found (404) - endpoint may not be deployed');
+            throw Exception('API endpoint not found. Please deploy the admin panel with the new service-complete endpoint.');
+          }
+          
+          final responseData = jsonDecode(response.body);
+          
+          if (response.statusCode == 200 && responseData['ok'] == true) {
+            success = true;
+            bookingFullyCompleted = responseData['bookingCompleted'] ?? false;
+            
+            // Customize message based on response
+            if (bookingFullyCompleted) {
+              message = responseData['message'] ?? "Booking completed! Customer has been notified.";
+            } else {
+              // Multi-service booking, not all services done yet
+              final progress = responseData['progress'];
+              if (progress != null) {
+                message = "Service completed! (${progress['completed']}/${progress['total']} services done)";
+              } else {
+                message = responseData['message'] ?? "Service marked as completed!";
+              }
+            }
+            
+            // Also store elapsed time in Firestore (supplementary data)
+            try {
+              await FirebaseFirestore.instance
+                  .collection('bookings')
+                  .doc(bookingId)
+                  .update({
+                'durationElapsed': _elapsedSeconds,
+              });
+            } catch (e) {
+              debugPrint('Note: Could not update elapsed time: $e');
+            }
+          } else {
+            // API returned an error
+            final errorMessage = responseData['error'] ?? 'Failed to complete service';
+            debugPrint('API Error: $errorMessage');
+            throw Exception(errorMessage);
+          }
+        } else {
+          // No auth token - fallback to direct Firestore update
+          debugPrint('No auth token available, using fallback');
+          await _fallbackDirectCompletion(bookingId);
+          success = true;
+          message = "Task Completed!";
+        }
+      } else {
+        // No booking ID - just show success
+        success = true;
       }
     } catch (e) {
-      debugPrint('Error updating booking status: $e');
+      debugPrint('Error completing service: $e');
+      
+      // Check if this is an API deployment issue
+      final errorString = e.toString();
+      if (errorString.contains('empty response') || 
+          errorString.contains('not found') || 
+          errorString.contains('404') ||
+          errorString.contains('FormatException')) {
+        message = "Service completion API not available. Please ensure the admin panel is deployed with the latest changes.";
+      } else if (errorString.contains('permission')) {
+        message = "Permission denied. Please contact your administrator.";
+      } else {
+        message = "Error completing task: ${e.toString().split(':').last.trim()}";
+      }
+      
+      // Note: Direct Firestore fallback removed as it requires admin privileges
+      // The service-complete API must be deployed for this feature to work
     }
     
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 1));
     if (mounted) {
       setState(() => _isFinishing = false);
-      Navigator.pop(context); // Go back to previous screen
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Task Completed Successfully!"),
-          backgroundColor: AppColors.green,
-        ),
-      );
+      
+      if (success) {
+        Navigator.pop(context); // Go back to previous screen
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  bookingFullyCompleted ? FontAwesomeIcons.circleCheck : FontAwesomeIcons.check,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Text(message)),
+              ],
+            ),
+            backgroundColor: AppColors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(FontAwesomeIcons.triangleExclamation, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Expanded(child: Text(message)),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
+  }
+  
+  /// Fallback method to directly update Firestore if API call fails
+  Future<void> _fallbackDirectCompletion(String bookingId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final updates = <String, dynamic>{
+      'updatedAt': FieldValue.serverTimestamp(),
+      'durationElapsed': _elapsedSeconds,
+    };
+    
+    // Check if it's a multi-service booking
+    if (_bookingData?['services'] is List && (_bookingData!['services'] as List).isNotEmpty) {
+      // Update the specific service's completion status
+      final services = List<Map<String, dynamic>>.from(
+        (_bookingData!['services'] as List).map((s) => Map<String, dynamic>.from(s as Map))
+      );
+      
+      bool allCompleted = true;
+      for (int i = 0; i < services.length; i++) {
+        final service = services[i];
+        // Mark our assigned services as completed
+        if (service['staffId'] == user?.uid || service['staffAuthUid'] == user?.uid) {
+          if (_currentServiceId == null || service['id'].toString() == _currentServiceId) {
+            services[i]['completionStatus'] = 'completed';
+            services[i]['completedAt'] = DateTime.now().toIso8601String();
+            services[i]['completedByStaffUid'] = user?.uid;
+            services[i]['completedByStaffName'] = user?.displayName ?? 'Staff';
+          }
+        }
+        // Check if this service is completed
+        if (services[i]['completionStatus'] != 'completed') {
+          allCompleted = false;
+        }
+      }
+      
+      updates['services'] = services;
+      
+      // If all services are completed, mark booking as completed
+      if (allCompleted) {
+        updates['status'] = 'Completed';
+        updates['completedAt'] = FieldValue.serverTimestamp();
+      }
+    } else {
+      // Single service booking - mark as completed directly
+      updates['status'] = 'Completed';
+      updates['completedAt'] = FieldValue.serverTimestamp();
+      updates['completedByStaffUid'] = user?.uid;
+      updates['completedByStaffName'] = user?.displayName ?? 'Staff';
+    }
+    
+    await FirebaseFirestore.instance
+        .collection('bookings')
+        .doc(bookingId)
+        .update(updates);
   }
 
   // --- UI Construction ---
@@ -686,8 +891,37 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
   }
 
   Widget _buildFinishSection() {
+    // Check if this is a multi-service booking with multiple assigned services
+    final isMultiServiceBooking = _assignedServices.length > 1;
+    final buttonLabel = isMultiServiceBooking ? 'Complete My Service' : 'Finish Task';
+    
     return Column(
       children: [
+        // Show info about multi-service bookings
+        if (isMultiServiceBooking) ...[
+          Container(
+            padding: const EdgeInsets.all(16),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.blue.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(FontAwesomeIcons.circleInfo, color: Colors.blue.shade600, size: 16),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'This booking has ${_assignedServices.length} services. Completing this will mark your service as done.',
+                    style: GoogleFonts.inter(fontSize: 13, color: Colors.blue.shade700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        
         ScaleTransition(
           scale: _pulseAnimation,
           child: Container(
@@ -721,7 +955,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
                             ),
                             const SizedBox(width: 12),
                             Text(
-                              'Finish Task',
+                              buttonLabel,
                               style: GoogleFonts.inter(
                                 fontSize: 18, 
                                 fontWeight: FontWeight.bold, 
@@ -755,7 +989,9 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
               const Icon(FontAwesomeIcons.check, size: 14, color: Colors.green),
               const SizedBox(width: 8),
               Text(
-                'Ready to finish',
+                isMultiServiceBooking 
+                    ? 'Mark your assigned service as complete'
+                    : 'Ready to finish',
                 style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.green),
               ),
             ],
