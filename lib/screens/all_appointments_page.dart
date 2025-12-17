@@ -98,10 +98,15 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
                 final duration = service['duration']?.toString() ?? '';
                 final serviceTime = service['time']?.toString() ?? bookingTime;
                 final approvalStatus = service['approvalStatus']?.toString();
+                final completionStatus = service['completionStatus']?.toString()?.toLowerCase() ?? '';
                 
-                // Determine display status - use service approval status if booking is awaiting approval
+                // Determine display status - prioritize service completion status
                 String displayStatus = status;
-                if (status.toLowerCase().contains('awaiting') || status.toLowerCase().contains('partially')) {
+                if (completionStatus == 'completed') {
+                  // Service is completed - show completed status
+                  displayStatus = 'completed';
+                } else if (status.toLowerCase().contains('awaiting') || status.toLowerCase().contains('partially')) {
+                  // Booking is awaiting approval - use service approval status
                   displayStatus = approvalStatus == 'accepted' ? 'confirmed' : 
                                   approvalStatus == 'rejected' ? 'rejected' : 'pending';
                 }
@@ -116,6 +121,7 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
                   'status': displayStatus,
                   'bookingStatus': status,
                   'approvalStatus': approvalStatus,
+                  'completionStatus': completionStatus,
                   'client': client,
                   'data': data,
                   'isToday': date == todayStr,

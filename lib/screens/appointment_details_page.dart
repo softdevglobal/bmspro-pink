@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'task_details_page.dart';
+import 'completed_appointment_preview_page.dart';
 
 // --- 1. Theme & Colors ---
 class AppColors {
@@ -42,6 +43,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
   bool _isLoading = true;
   String? _customerNotes;
   String _customerPhone = '';
+  
+  // Real-time updates
+  StreamSubscription<DocumentSnapshot>? _bookingSubscription;
+  bool _isServiceCompleted = false;
+  String? _currentServiceId;
 
   @override
   void initState() {
@@ -63,6 +69,64 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
     }
     _fadeController.forward();
     _loadAppointmentData();
+    _setupRealtimeListener();
+  }
+
+  void _setupRealtimeListener() {
+    final bookingId = widget.appointmentData?['id'] as String?;
+    if (bookingId == null) return;
+
+    _bookingSubscription = FirebaseFirestore.instance
+        .collection('bookings')
+        .doc(bookingId)
+        .snapshots()
+        .listen((snapshot) {
+      if (!snapshot.exists || !mounted) return;
+      
+      final data = snapshot.data() as Map<String, dynamic>;
+      final user = FirebaseAuth.instance.currentUser;
+      
+      // Get the serviceId from appointment data (for multi-service bookings)
+      final serviceId = widget.appointmentData?['serviceId']?.toString();
+      _currentServiceId = serviceId;
+      
+      // Check completion status
+      bool isCompleted = false;
+      
+      if (data['services'] is List && serviceId != null && serviceId.isNotEmpty) {
+        // Multi-service booking - check specific service completion status
+        for (final service in (data['services'] as List)) {
+          if (service is Map && service['id']?.toString() == serviceId) {
+            final completionStatus = service['completionStatus']?.toString()?.toLowerCase() ?? '';
+            isCompleted = completionStatus == 'completed';
+            break;
+          }
+        }
+      } else if (data['services'] is List && (data['services'] as List).isNotEmpty) {
+        // Multi-service booking but no specific serviceId - check if staff's service is completed
+        for (final service in (data['services'] as List)) {
+          if (service is Map) {
+            final staffId = service['staffId']?.toString();
+            final staffAuthUid = service['staffAuthUid']?.toString();
+            if (staffId == user?.uid || staffAuthUid == user?.uid) {
+              final completionStatus = service['completionStatus']?.toString()?.toLowerCase() ?? '';
+              isCompleted = completionStatus == 'completed';
+              break;
+            }
+          }
+        }
+      } else {
+        // Single service booking - check booking-level status
+        final status = data['status']?.toString()?.toLowerCase() ?? '';
+        isCompleted = status == 'completed';
+      }
+      
+      // Update booking data and completion status
+      setState(() {
+        _bookingData = data;
+        _isServiceCompleted = isCompleted;
+      });
+    });
   }
 
   Future<void> _loadAppointmentData() async {
@@ -234,6 +298,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
 
   @override
   void dispose() {
+    _bookingSubscription?.cancel();
     _fadeController.dispose();
     super.dispose();
   }
@@ -704,17 +769,70 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
   Widget _buildActionButtons() {
     return Column(
       children: [
-        _GradientButton(
-          text: 'Start Appointment',
-          icon: FontAwesomeIcons.play,
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => TaskDetailsPage(appointmentData: widget.appointmentData),
+        if (_isServiceCompleted) ...[
+          // Show completed badge and view details button for completed services
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+            decoration: BoxDecoration(
+              color: AppColors.green.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.green.withOpacity(0.3)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                Icon(FontAwesomeIcons.circleCheck, color: AppColors.green, size: 20),
+                SizedBox(width: 12),
+                Text(
+                  'Service Completed',
+                  style: TextStyle(
+                    color: AppColors.green,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => CompletedAppointmentPreviewPage(
+                      appointmentData: widget.appointmentData,
+                      bookingData: _bookingData,
+                      serviceId: _currentServiceId,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(FontAwesomeIcons.eye, size: 16, color: AppColors.primary),
+              label: const Text('View Details', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                side: const BorderSide(color: AppColors.primary),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-            );
-          },
-        ),
+            ),
+          ),
+        ] else ...[
+          // Show Start Appointment button for non-completed services
+          _GradientButton(
+            text: 'Start Appointment',
+            icon: FontAwesomeIcons.play,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => TaskDetailsPage(appointmentData: widget.appointmentData),
+                ),
+              );
+            },
+          ),
+        ],
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,

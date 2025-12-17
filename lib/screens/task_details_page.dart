@@ -60,16 +60,6 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
   List<Map<String, dynamic>> _assignedServices = [];
   String? _currentServiceId; // For multi-service bookings, the service being worked on
 
-  // Mock Data from HTML
-  final List<Map<String, dynamic>> _tasks = [
-    {'id': 1, 'title': 'Room sanitization', 'icon': FontAwesomeIcons.sprayCanSparkles, 'completed': false},
-    {'id': 2, 'title': 'Temperature adjustment', 'icon': FontAwesomeIcons.temperatureHalf, 'completed': false},
-    {'id': 3, 'title': 'Lighting setup', 'icon': FontAwesomeIcons.lightbulb, 'completed': false},
-    {'id': 4, 'title': 'Ambient music', 'icon': FontAwesomeIcons.music, 'completed': false},
-    {'id': 5, 'title': 'Essential oils ready', 'icon': FontAwesomeIcons.droplet, 'completed': false},
-    {'id': 6, 'title': 'Towels warmed', 'icon': FontAwesomeIcons.handSparkles, 'completed': false},
-    {'id': 7, 'title': 'Client form reviewed', 'icon': FontAwesomeIcons.clipboardCheck, 'completed': false},
-  ];
 
   // Animations
   late AnimationController _pulseController;
@@ -318,51 +308,8 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
     return "$hrs:$mins:$secs";
   }
 
-  // --- Task Progress Logic ---
-  int get _completedCount => _tasks.where((t) => t['completed']).length;
-  int get _totalCount => _tasks.length;
-  double get _progress => _totalCount == 0 ? 0 : _completedCount / _totalCount;
-  bool get _isComplete => _completedCount == _totalCount;
-  
-  // Check if service type requires task list (services like haircut, cut, trim don't need it)
-  bool get _requiresTaskList {
-    final serviceLower = _serviceName.toLowerCase();
-    // Services that don't need task list: haircut, cut, trim, color, etc.
-    if (serviceLower.contains('hair') && 
-        (serviceLower.contains('cut') || serviceLower.contains('trim'))) {
-      return false;
-    }
-    if (serviceLower.contains('cut') && !serviceLower.contains('nail')) {
-      return false;
-    }
-    if (serviceLower.contains('trim')) {
-      return false;
-    }
-    if (serviceLower.contains('color') || serviceLower.contains('colour')) {
-      return false;
-    }
-    // Services that typically need task list: massage, facial, spa, etc.
-    return true;
-  }
-
-  void _toggleTask(int index) {
-    setState(() {
-      _tasks[index]['completed'] = !_tasks[index]['completed'];
-      // Trigger pulse animation if all done
-      if (_isComplete) {
-        _pulseController.repeat(reverse: true);
-      } else {
-        _pulseController.stop();
-        _pulseController.reset();
-      }
-    });
-  }
 
   void _handleFinish() async {
-    // For services that require task list, check if all tasks are complete
-    // For services that don't require task list (like haircut), allow finishing immediately
-    if (_requiresTaskList && !_isComplete) return;
-    
     // Stop timer on finish
     _stopStopwatch();
     setState(() => _isFinishing = true);
@@ -614,10 +561,6 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
                     _buildServiceHeader(),
                     const SizedBox(height: 24),
                     _buildCustomerInfo(),
-                    if (_requiresTaskList) ...[
-                      const SizedBox(height: 24),
-                      _buildTasksSection(),
-                    ],
                     const SizedBox(height: 24),
                     _buildFinishSection(),
                     const SizedBox(height: 40),
@@ -642,7 +585,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
           Expanded(
             child: Center(
               child: Text(
-                'Task Details',
+                'Service Details',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.text),
               ),
             ),
@@ -833,87 +776,6 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
     );
   }
 
-  Widget _buildTasksSection() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  const Icon(FontAwesomeIcons.listCheck, color: AppColors.primary, size: 16),
-                  const SizedBox(width: 8),
-                  Text('Tasks to Complete', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600)),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-                child: Text('$_completedCount/$_totalCount', style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 12)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Progress Bar
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: LinearProgressIndicator(
-              value: _progress,
-              minHeight: 12,
-              backgroundColor: AppColors.background,
-              valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text('${(_progress * 100).toInt()}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
-          ),
-          const SizedBox(height: 16),
-          // Task List
-          ...List.generate(_tasks.length, (index) {
-            final task = _tasks[index];
-            final isDone = task['completed'];
-            return GestureDetector(
-              onTap: () => _toggleTask(index),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isDone ? AppColors.primary.withOpacity(0.05) : AppColors.background,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: isDone ? AppColors.primary.withOpacity(0.3) : Colors.transparent),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 32, height: 32,
-                      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(8)),
-                      child: Center(child: Icon(task['icon'], size: 14, color: AppColors.muted)),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(task['title'], style: GoogleFonts.inter(fontSize: 14, color: AppColors.text)),
-                    ),
-                    Icon(
-                      isDone ? FontAwesomeIcons.solidCircleCheck : FontAwesomeIcons.circle,
-                      size: 18,
-                      color: isDone ? AppColors.primary : AppColors.border,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
   Widget _buildFinishSection() {
     // Check if this is a multi-service booking with multiple assigned services
     final isMultiServiceBooking = _assignedServices.length > 1;
@@ -931,11 +793,10 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
     
     final buttonLabel = allServicesCompleted 
         ? 'All Services Completed' 
-        : (isMultiServiceBooking ? 'Complete "$_serviceName"' : 'Finish Task');
+        : (isMultiServiceBooking ? 'Complete "$_serviceName"' : 'Complete Service');
     
-    // Determine if button should be enabled
-    // Disabled if: all services completed OR (requires task list AND tasks not complete)
-    final bool canComplete = !allServicesCompleted && (_requiresTaskList ? _isComplete : true);
+    // Button is enabled if not all services are completed
+    final bool canComplete = !allServicesCompleted;
     
     return Column(
       children: [
@@ -1046,7 +907,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              allServicesCompleted ? FontAwesomeIcons.circleCheck : FontAwesomeIcons.circleCheck, 
+                              FontAwesomeIcons.circleCheck, 
                               color: canComplete || allServicesCompleted ? Colors.white : Colors.grey.shade500, 
                               size: 20
                             ),
@@ -1079,18 +940,6 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
               ),
             ],
           )
-        else if (_requiresTaskList)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(_isComplete ? FontAwesomeIcons.check : FontAwesomeIcons.triangleExclamation, size: 14, color: _isComplete ? Colors.green : Colors.orange),
-              const SizedBox(width: 8),
-              Text(
-                _isComplete ? 'All tasks completed! Ready to finish' : 'Complete all tasks to finish',
-                style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: _isComplete ? Colors.green : Colors.orange),
-              ),
-            ],
-          )
         else
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1099,8 +948,8 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
               const SizedBox(width: 8),
               Text(
                 isMultiServiceBooking 
-                    ? 'Mark your assigned service as complete'
-                    : 'Ready to finish',
+                    ? 'Tap to complete this service'
+                    : 'Tap to complete service',
                 style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.green),
               ),
             ],
