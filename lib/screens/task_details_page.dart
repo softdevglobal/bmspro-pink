@@ -153,10 +153,25 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
             .map<Map<String, dynamic>>((s) => Map<String, dynamic>.from(s as Map))
             .toList();
           
-          // If we found assigned services, use the first one's name
+          // If we found assigned services, find the FIRST UNCOMPLETED one
           if (_assignedServices.isNotEmpty) {
-            _serviceName = _assignedServices.first['name']?.toString() ?? _serviceName;
-            _currentServiceId = _assignedServices.first['id']?.toString();
+            // Find the first service that is NOT completed
+            final nextUncompletedService = _assignedServices.firstWhere(
+              (s) => (s['completionStatus'] ?? '').toString().toLowerCase() != 'completed',
+              orElse: () => _assignedServices.first, // Fallback to first if all completed
+            );
+            
+            _serviceName = nextUncompletedService['name']?.toString() ?? _serviceName;
+            _currentServiceId = nextUncompletedService['id']?.toString();
+            _duration = nextUncompletedService['duration']?.toString() ?? _duration;
+            
+            // Also update the appointment time to show this service's time
+            final serviceTime = nextUncompletedService['time']?.toString();
+            if (serviceTime != null && serviceTime.isNotEmpty) {
+              _appointmentTime = _formatTime(serviceTime);
+            }
+            
+            debugPrint('Selected service to complete: $_serviceName (ID: $_currentServiceId)');
           }
         }
       } else {
@@ -435,7 +450,16 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
             // API returned an error
             final errorMessage = responseData['error'] ?? 'Failed to complete service';
             debugPrint('API Error: $errorMessage');
-            throw Exception(errorMessage);
+            
+            // Check if already completed - this is not really an error, just navigate back
+            if (errorMessage.toString().toLowerCase().contains('already') && 
+                errorMessage.toString().toLowerCase().contains('completed')) {
+              success = true;
+              message = "This service was already completed.";
+              bookingFullyCompleted = true;
+            } else {
+              throw Exception(errorMessage);
+            }
           }
         } else {
           // No auth token - fallback to direct Firestore update
@@ -893,7 +917,21 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
   Widget _buildFinishSection() {
     // Check if this is a multi-service booking with multiple assigned services
     final isMultiServiceBooking = _assignedServices.length > 1;
-    final buttonLabel = isMultiServiceBooking ? 'Complete My Service' : 'Finish Task';
+    
+    // Count completed vs pending services
+    final completedServices = _assignedServices.where(
+      (s) => (s['completionStatus'] ?? '').toString().toLowerCase() == 'completed'
+    ).toList();
+    final pendingServices = _assignedServices.where(
+      (s) => (s['completionStatus'] ?? '').toString().toLowerCase() != 'completed'
+    ).toList();
+    
+    // Check if all services are already completed
+    final allServicesCompleted = pendingServices.isEmpty && completedServices.isNotEmpty;
+    
+    final buttonLabel = allServicesCompleted 
+        ? 'All Services Completed' 
+        : (isMultiServiceBooking ? 'Complete "$_serviceName"' : 'Finish Task');
     
     return Column(
       children: [
@@ -903,24 +941,81 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
             padding: const EdgeInsets.all(16),
             margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
-              color: Colors.blue.shade50,
+              color: allServicesCompleted ? Colors.green.shade50 : Colors.blue.shade50,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue.shade200),
+              border: Border.all(color: allServicesCompleted ? Colors.green.shade200 : Colors.blue.shade200),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(FontAwesomeIcons.circleInfo, color: Colors.blue.shade600, size: 16),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'This booking has ${_assignedServices.length} services. Completing this will mark your service as done.',
-                    style: GoogleFonts.inter(fontSize: 13, color: Colors.blue.shade700),
-                  ),
+                Row(
+                  children: [
+                    Icon(
+                      allServicesCompleted ? FontAwesomeIcons.circleCheck : FontAwesomeIcons.circleInfo, 
+                      color: allServicesCompleted ? Colors.green.shade600 : Colors.blue.shade600, 
+                      size: 16
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        allServicesCompleted 
+                            ? 'All your services are completed!'
+                            : 'This booking has ${_assignedServices.length} services assigned to you.',
+                        style: GoogleFonts.inter(
+                          fontSize: 13, 
+                          fontWeight: FontWeight.w600,
+                          color: allServicesCompleted ? Colors.green.shade700 : Colors.blue.shade700
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 12),
+                // Show service completion status
+                ..._assignedServices.map((service) {
+                  final isCompleted = (service['completionStatus'] ?? '').toString().toLowerCase() == 'completed';
+                  final serviceName = service['name']?.toString() ?? 'Service';
+                  return Padding(
+                    padding: const EdgeInsets.only(left: 28, bottom: 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isCompleted ? FontAwesomeIcons.solidCircleCheck : FontAwesomeIcons.circle,
+                          size: 12,
+                          color: isCompleted ? Colors.green.shade600 : Colors.grey.shade400,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            serviceName,
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: isCompleted ? Colors.green.shade700 : Colors.grey.shade600,
+                              decoration: isCompleted ? TextDecoration.lineThrough : null,
+                            ),
+                          ),
+                        ),
+                        if (isCompleted)
+                          Text(
+                            'Done',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              color: Colors.green.shade600,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                }),
               ],
             ),
           ),
         ],
+        
+        // Determine if button should be enabled
+        // Disabled if: all services completed OR (requires task list AND tasks not complete)
+        final bool canComplete = !allServicesCompleted && (_requiresTaskList ? _isComplete : true);
         
         ScaleTransition(
           scale: _pulseAnimation,
@@ -928,19 +1023,21 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
             width: double.infinity,
             height: 56,
             decoration: BoxDecoration(
-              gradient: (_requiresTaskList ? _isComplete : true) 
+              gradient: canComplete 
                   ? const LinearGradient(colors: [AppColors.primary, AppColors.accent]) 
-                  : null,
-              color: (_requiresTaskList ? _isComplete : true) ? null : Colors.grey.shade300,
+                  : (allServicesCompleted 
+                      ? LinearGradient(colors: [Colors.green.shade400, Colors.green.shade600])
+                      : null),
+              color: canComplete || allServicesCompleted ? null : Colors.grey.shade300,
               borderRadius: BorderRadius.circular(16),
-              boxShadow: (_requiresTaskList ? _isComplete : true) 
+              boxShadow: canComplete 
                   ? [BoxShadow(color: AppColors.primary.withOpacity(0.4), blurRadius: 20, spreadRadius: 2)] 
                   : [],
             ),
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: (!_isFinishing && (_requiresTaskList ? _isComplete : true)) ? _handleFinish : null,
+                onTap: (!_isFinishing && canComplete) ? _handleFinish : (allServicesCompleted ? () => Navigator.pop(context) : null),
                 borderRadius: BorderRadius.circular(16),
                 child: Center(
                   child: _isFinishing
@@ -949,17 +1046,17 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              FontAwesomeIcons.circleCheck, 
-                              color: (_requiresTaskList ? _isComplete : true) ? Colors.white : Colors.grey.shade500, 
+                              allServicesCompleted ? FontAwesomeIcons.circleCheck : FontAwesomeIcons.circleCheck, 
+                              color: canComplete || allServicesCompleted ? Colors.white : Colors.grey.shade500, 
                               size: 20
                             ),
                             const SizedBox(width: 12),
                             Text(
-                              buttonLabel,
+                              allServicesCompleted ? 'Go Back' : buttonLabel,
                               style: GoogleFonts.inter(
                                 fontSize: 18, 
                                 fontWeight: FontWeight.bold, 
-                                color: (_requiresTaskList ? _isComplete : true) ? Colors.white : Colors.grey.shade500
+                                color: canComplete || allServicesCompleted ? Colors.white : Colors.grey.shade500
                               ),
                             ),
                           ],
@@ -970,7 +1067,19 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
           ),
         ),
         const SizedBox(height: 12),
-        if (_requiresTaskList)
+        if (allServicesCompleted)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(FontAwesomeIcons.circleCheck, size: 14, color: Colors.green.shade600),
+              const SizedBox(width: 8),
+              Text(
+                'All your assigned services are done!',
+                style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.green.shade600),
+              ),
+            ],
+          )
+        else if (_requiresTaskList)
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

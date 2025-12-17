@@ -1044,10 +1044,55 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildAppointmentsSection() {
-    // Get pending/confirmed appointments
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    
+    // Get pending/confirmed appointments, excluding those where user's services are all completed
     final upcomingAppointments = _todayAppointments.where((a) {
       final status = (a['status'] ?? '').toString().toLowerCase();
-      return status == 'pending' || status == 'confirmed';
+      
+      // Only include pending or confirmed bookings
+      if (status != 'pending' && status != 'confirmed') {
+        return false;
+      }
+      
+      // For confirmed bookings, check if user's assigned services are all completed
+      if (status == 'confirmed' && currentUserId != null) {
+        // Services are stored inside the 'data' field
+        final bookingData = a['data'] as Map<String, dynamic>?;
+        final services = bookingData?['services'];
+        
+        if (services is List && services.isNotEmpty) {
+          // Find services assigned to this user
+          final myServices = services.where((s) {
+            if (s is! Map) return false;
+            return s['staffId'] == currentUserId || s['staffAuthUid'] == currentUserId;
+          }).toList();
+          
+          // If user has assigned services, check if they're all completed
+          if (myServices.isNotEmpty) {
+            final allMyServicesCompleted = myServices.every((s) {
+              return (s['completionStatus'] ?? '').toString().toLowerCase() == 'completed';
+            });
+            // If all my services are completed, exclude this booking from the list
+            if (allMyServicesCompleted) {
+              return false;
+            }
+          }
+        } else {
+          // Single-service booking - check if it's assigned to this user and completed
+          final bookingStaffId = bookingData?['staffId'];
+          final bookingStaffAuthUid = bookingData?['staffAuthUid'];
+          final isMyBooking = bookingStaffId == currentUserId || bookingStaffAuthUid == currentUserId;
+          if (isMyBooking) {
+            final completionStatus = (bookingData?['completionStatus'] ?? '').toString().toLowerCase();
+            if (completionStatus == 'completed') {
+              return false;
+            }
+          }
+        }
+      }
+      
+      return true;
     }).toList();
     
     return Container(
