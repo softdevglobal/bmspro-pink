@@ -933,6 +933,10 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
         ? 'All Services Completed' 
         : (isMultiServiceBooking ? 'Complete "$_serviceName"' : 'Finish Task');
     
+    // Determine if button should be enabled
+    // Disabled if: all services completed OR (requires task list AND tasks not complete)
+    final bool canComplete = !allServicesCompleted && (_requiresTaskList ? _isComplete : true);
+    
     return Column(
       children: [
         // Show info about multi-service bookings
@@ -1012,10 +1016,6 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> with TickerProviderSt
             ),
           ),
         ],
-        
-        // Determine if button should be enabled
-        // Disabled if: all services completed OR (requires task list AND tasks not complete)
-        final bool canComplete = !allServicesCompleted && (_requiresTaskList ? _isComplete : true);
         
         ScaleTransition(
           scale: _pulseAnimation,
