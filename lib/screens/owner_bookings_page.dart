@@ -1181,6 +1181,1095 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     );
   }
 
+  // Show staff assignment dialog for services that need staff
+  void _showStaffAssignmentDialog(BuildContext context, _Booking booking) {
+    // Prepare initial state for services - only show services that need assignment
+    final List<Map<String, dynamic>> servicesToEdit = [];
+    final List<bool> needsAssignment = [];
+
+    if (booking.items.isNotEmpty) {
+      for (var item in booking.items) {
+        final m = Map<String, dynamic>.from(item);
+        final staffName = (m['staffName'] ?? '').toString().toLowerCase();
+        final staffId = (m['staffId'] ?? '').toString();
+        final approvalStatus = (m['approvalStatus'] ?? '').toString().toLowerCase();
+        
+        // Check if this service needs staff assignment
+        final needsStaff = approvalStatus == 'needs_assignment' ||
+            staffName.contains('any staff') ||
+            staffName.contains('any available') ||
+            staffId.isEmpty ||
+            staffId == 'null';
+        
+        servicesToEdit.add(m);
+        needsAssignment.add(needsStaff);
+      }
+    } else {
+      // Single service booking
+      servicesToEdit.add({
+        'name': booking.service,
+        'staffName': booking.staff,
+        'staffId': booking.rawData['staffId'],
+        'price': booking.priceValue,
+        'duration': booking.duration,
+        'approvalStatus': 'pending',
+      });
+      final staffName = booking.staff.toLowerCase();
+      needsAssignment.add(
+        staffName.isEmpty ||
+        staffName.contains('any staff') ||
+        staffName.contains('any available')
+      );
+    }
+
+    // Pre-calculate available staff for each service
+    String dayName = '';
+    try {
+      final parts = booking.date.split('-');
+      if (parts.length == 3) {
+        final dt = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        dayName = days[dt.weekday - 1];
+      }
+    } catch (_) {}
+
+    List<List<Map<String, dynamic>>> availableStaffPerService = [];
+    for (var service in servicesToEdit) {
+      final sName = (service['name'] ?? '').toString();
+      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName));
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (context, setState) {
+          // Check if all services that need assignment have staff selected
+          bool canAssign = true;
+          for (int i = 0; i < servicesToEdit.length; i++) {
+            if (needsAssignment[i]) {
+              final staffName = (servicesToEdit[i]['staffName'] ?? '').toString().toLowerCase();
+              final staffId = (servicesToEdit[i]['staffId'] ?? '').toString();
+              if (staffName.isEmpty ||
+                  staffName.contains('any staff') ||
+                  staffName.contains('any available') ||
+                  staffId.isEmpty ||
+                  staffId == 'null') {
+                canAssign = false;
+                break;
+              }
+            }
+          }
+
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.all(16),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3E8FF),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          FontAwesomeIcons.userPlus,
+                          color: Color(0xFF7C3AED),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Assign Staff',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              "Assign staff to services",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: servicesToEdit.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final service = entry.value;
+                          final needsStaff = needsAssignment[index];
+                          final currentStaffId = service['staffId'];
+                          final availableStaff = availableStaffPerService[index];
+                          final approvalStatus = (service['approvalStatus'] ?? '').toString().toLowerCase();
+                          final isAccepted = approvalStatus == 'accepted';
+                          
+                          // Check if service has staff assigned and is pending (locked until staff responds)
+                          final hasStaffAssigned = currentStaffId != null && 
+                              currentStaffId.toString().isNotEmpty && 
+                              currentStaffId != 'null';
+                          final isPendingWithStaff = approvalStatus == 'pending' && hasStaffAssigned && !needsStaff;
+                          final isLocked = isAccepted || isPendingWithStaff;
+
+                          // Ensure current staff is in the list
+                          List<Map<String, dynamic>> dropdownStaff = [...availableStaff];
+                          if (currentStaffId != null && 
+                              currentStaffId.toString().isNotEmpty &&
+                              currentStaffId != 'null' &&
+                              !dropdownStaff.any((s) => s['id'] == currentStaffId)) {
+                            final found = _staffList.firstWhere((s) => s['id'] == currentStaffId, orElse: () => {});
+                            if (found.isNotEmpty) dropdownStaff.add(found);
+                          }
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: needsStaff 
+                                  ? const Color(0xFFFEF3F2) 
+                                  : (isAccepted 
+                                      ? const Color(0xFFECFDF5) 
+                                      : (isPendingWithStaff 
+                                          ? const Color(0xFFFEF3C7).withOpacity(0.3) 
+                                          : Colors.white)),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: needsStaff 
+                                    ? const Color(0xFFFCA5A5) 
+                                    : (isAccepted 
+                                        ? const Color(0xFF10B981) 
+                                        : (isPendingWithStaff 
+                                            ? const Color(0xFFD97706) 
+                                            : const Color(0xFFF3F4F6))),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.02),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        service['name'] ?? 'Service',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                    ),
+                                    if (needsStaff)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF7C3AED).withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Row(
+                                          children: [
+                                            Icon(FontAwesomeIcons.userPlus, size: 10, color: Color(0xFF7C3AED)),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              "Needs Staff",
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF7C3AED),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    else if (isAccepted)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFECFDF5),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Row(
+                                          children: [
+                                            Icon(FontAwesomeIcons.circleCheck, size: 10, color: Color(0xFF059669)),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              "Accepted",
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF059669),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    else if (isPendingWithStaff)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFEF3C7),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Row(
+                                          children: [
+                                            Icon(FontAwesomeIcons.clock, size: 10, color: Color(0xFFD97706)),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              "Pending",
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFFD97706),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    else
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFEF3C7),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Row(
+                                          children: [
+                                            Icon(FontAwesomeIcons.clock, size: 10, color: Color(0xFFD97706)),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              "Pending",
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFFD97706),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                // Show locked view if accepted or pending with staff assigned
+                                if (isLocked)
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: isAccepted 
+                                          ? const Color(0xFFF9FAFB) 
+                                          : const Color(0xFFFEF9C3).withOpacity(0.5),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: isAccepted 
+                                            ? const Color(0xFFE5E7EB) 
+                                            : const Color(0xFFD97706).withOpacity(0.3),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          FontAwesomeIcons.userTie,
+                                          size: 14,
+                                          color: isAccepted 
+                                              ? const Color(0xFF6B7280) 
+                                              : const Color(0xFFD97706),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            service['staffName'] ?? 'Staff',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                              color: isAccepted 
+                                                  ? Colors.black87 
+                                                  : const Color(0xFFD97706),
+                                            ),
+                                          ),
+                                        ),
+                                        if (isPendingWithStaff)
+                                          const Tooltip(
+                                            message: 'Waiting for staff to accept or reject',
+                                            child: Icon(Icons.hourglass_empty,
+                                                size: 16, color: Color(0xFFD97706)),
+                                          )
+                                        else
+                                          const Icon(Icons.lock_outline,
+                                              size: 16, color: Color(0xFF9CA3AF)),
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: needsStaff ? const Color(0xFFFEE2E2) : const Color(0xFFE5E7EB),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: DropdownButtonHideUnderline(
+                                      child: DropdownButton<String>(
+                                        isExpanded: true,
+                                        icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                                        hint: const Row(
+                                          children: [
+                                            Icon(FontAwesomeIcons.user, size: 14, color: Color(0xFF9CA3AF)),
+                                            SizedBox(width: 12),
+                                            Text("Select Staff Member"),
+                                          ],
+                                        ),
+                                        value: (currentStaffId != null && 
+                                                currentStaffId.toString().isNotEmpty && 
+                                                currentStaffId != 'null' &&
+                                                dropdownStaff.any((s) => s['id'] == currentStaffId)) 
+                                            ? currentStaffId 
+                                            : null,
+                                        items: dropdownStaff.map((staff) {
+                                          final String avatar = (staff['avatarUrl'] ?? '').toString();
+                                          final String name = staff['name'];
+                                          final String url = (avatar.isNotEmpty && avatar != 'null')
+                                              ? avatar
+                                              : 'https://ui-avatars.com/api/?background=random&color=fff&name=${Uri.encodeComponent(name)}';
+
+                                          return DropdownMenuItem<String>(
+                                            value: staff['id'],
+                                            child: Row(
+                                              children: [
+                                                CircleAvatar(
+                                                  radius: 12,
+                                                  backgroundImage: NetworkImage(url),
+                                                  backgroundColor: Colors.grey.shade200,
+                                                ),
+                                                const SizedBox(width: 10),
+                                                Text(
+                                                  name,
+                                                  style: const TextStyle(
+                                                    fontSize: 14,
+                                                    color: Colors.black87,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        }).toList(),
+                                        onChanged: (val) {
+                                          if (val != null) {
+                                            final selectedStaff = _staffList.firstWhere((s) => s['id'] == val);
+                                            setState(() {
+                                              service['staffId'] = selectedStaff['id'];
+                                              service['staffName'] = selectedStaff['name'];
+                                            });
+                                          }
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                if (needsStaff && 
+                                    ((service['staffId'] ?? '').toString().isEmpty || 
+                                     service['staffId'] == 'null'))
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 6, left: 4),
+                                    child: Row(
+                                      children: const [
+                                        Icon(Icons.info_outline, size: 12, color: Color(0xFFEF4444)),
+                                        SizedBox(width: 4),
+                                        Text(
+                                          "Staff assignment required",
+                                          style: TextStyle(
+                                            color: Color(0xFFEF4444),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: canAssign
+                              ? () {
+                                  Navigator.pop(ctx);
+                                  _assignStaffToServices(booking, servicesToEdit);
+                                }
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF7C3AED),
+                            disabledBackgroundColor: const Color(0xFF7C3AED).withOpacity(0.5),
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(FontAwesomeIcons.userPlus, size: 14, color: Colors.white),
+                              SizedBox(width: 8),
+                              Text(
+                                'Assign & Notify Staff',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
+  // Assign staff to services that need assignment
+  Future<void> _assignStaffToServices(_Booking booking, List<Map<String, dynamic>> updatedServices) async {
+    final db = FirebaseFirestore.instance;
+    try {
+      // Update services with staff assignment and reset pending status
+      final List<Map<String, dynamic>> finalServices = updatedServices.map((service) {
+        final s = Map<String, dynamic>.from(service);
+        final approvalStatus = (s['approvalStatus'] ?? '').toString().toLowerCase();
+        
+        // Only reset status for services that were needs_assignment
+        if (approvalStatus == 'needs_assignment' || approvalStatus.isEmpty) {
+          s['approvalStatus'] = 'pending';
+        }
+        return s;
+      }).toList();
+
+      // Determine status based on services
+      final hasAccepted = finalServices.any((s) => (s['approvalStatus'] ?? '').toString().toLowerCase() == 'accepted');
+      final allPending = finalServices.every((s) => (s['approvalStatus'] ?? '').toString().toLowerCase() == 'pending');
+      
+      String newStatus;
+      if (allPending) {
+        newStatus = 'AwaitingStaffApproval';
+      } else if (hasAccepted) {
+        newStatus = 'PartiallyApproved';
+      } else {
+        newStatus = 'AwaitingStaffApproval';
+      }
+
+      // Update the booking
+      await db.collection('bookings').doc(booking.id).update({
+        'services': finalServices,
+        'status': newStatus,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Get services that had staff newly assigned
+      final List<Map<String, dynamic>> newlyAssignedServices = [];
+      for (int i = 0; i < finalServices.length; i++) {
+        final originalItem = booking.items.isNotEmpty && i < booking.items.length ? booking.items[i] : null;
+        final updatedItem = finalServices[i];
+        
+        final originalStaffId = (originalItem?['staffId'] ?? '').toString();
+        final originalStaffName = (originalItem?['staffName'] ?? '').toString().toLowerCase();
+        final updatedStaffId = (updatedItem['staffId'] ?? '').toString();
+        
+        // Check if staff was newly assigned
+        final wasUnassigned = originalStaffId.isEmpty || 
+                              originalStaffId == 'null' ||
+                              originalStaffName.contains('any staff') ||
+                              originalStaffName.contains('any available');
+        final isNowAssigned = updatedStaffId.isNotEmpty && updatedStaffId != 'null';
+        
+        if (wasUnassigned && isNowAssigned) {
+          newlyAssignedServices.add(updatedItem);
+        }
+      }
+
+      // Send notifications to newly assigned staff
+      if (newlyAssignedServices.isNotEmpty) {
+        await _createStaffApprovalNotifications(
+          db: db,
+          bookingId: booking.id,
+          booking: booking,
+          services: newlyAssignedServices,
+        );
+      }
+      
+      // Audit log
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null && _ownerUid != null) {
+        final userDoc = await db.collection('users').doc(currentUser.uid).get();
+        final userData = userDoc.data();
+        final userName = userData?['displayName'] ?? userData?['name'] ?? currentUser.email ?? 'Unknown';
+        final userRole = userData?['role'] ?? 'unknown';
+        
+        await AuditLogService.logBookingStatusChanged(
+          ownerUid: _ownerUid!,
+          bookingId: booking.id,
+          bookingCode: booking.rawData['bookingCode']?.toString(),
+          clientName: booking.rawData['client']?.toString() ?? 'Customer',
+          previousStatus: booking.status,
+          newStatus: newStatus,
+          performedBy: currentUser.uid,
+          performedByName: userName.toString(),
+          performedByRole: userRole.toString(),
+          details: 'Staff assigned: ${newlyAssignedServices.map((s) => '${s['name']} → ${s['staffName']}').join(', ')}',
+          branchName: booking.rawData['branchName']?.toString(),
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Staff assigned! ${newlyAssignedServices.length} staff member(s) have been notified.'),
+            backgroundColor: const Color(0xFF7C3AED),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error assigning staff: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error assigning staff: $e')),
+        );
+      }
+    }
+  }
+
+  // Show reassignment dialog for staff-rejected bookings
+  void _showReassignmentDialog(BuildContext context, _Booking booking) {
+    // Prepare initial state for services - only show rejected or pending services
+    final List<Map<String, dynamic>> servicesToEdit = [];
+    final List<bool> wasRejected = [];
+
+    if (booking.items.isNotEmpty) {
+      for (var item in booking.items) {
+        final m = Map<String, dynamic>.from(item);
+        final approvalStatus = (m['approvalStatus'] ?? 'pending').toString().toLowerCase();
+        
+        // Only include rejected services or services without assignment
+        if (approvalStatus == 'rejected' || approvalStatus == 'needs_assignment' || approvalStatus == 'pending') {
+          // Reset approval status for reassignment
+          m['approvalStatus'] = 'pending';
+          m.remove('acceptedAt');
+          m.remove('rejectedAt');
+          m.remove('rejectionReason');
+          m.remove('respondedByStaffUid');
+          m.remove('respondedByStaffName');
+          servicesToEdit.add(m);
+          wasRejected.add(approvalStatus == 'rejected');
+        }
+      }
+    } else {
+      // Single service booking
+      servicesToEdit.add({
+        'name': booking.service,
+        'staffName': booking.staff,
+        'staffId': booking.rawData['staffId'],
+        'price': booking.priceValue,
+        'duration': booking.duration,
+        'approvalStatus': 'pending',
+      });
+      wasRejected.add(true);
+    }
+
+    // Pre-calculate available staff for each service
+    String dayName = '';
+    try {
+      final parts = booking.date.split('-');
+      if (parts.length == 3) {
+        final dt = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        dayName = days[dt.weekday - 1];
+      }
+    } catch (_) {}
+
+    List<List<Map<String, dynamic>>> availableStaffPerService = [];
+    for (var service in servicesToEdit) {
+      final sName = (service['name'] ?? '').toString();
+      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName));
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (context, setState) {
+          bool canReassign = true;
+          for (var service in servicesToEdit) {
+            final staffName = (service['staffName'] ?? '').toString().toLowerCase();
+            if (staffName.isEmpty ||
+                staffName.contains('any staff') ||
+                staffName.contains('any available')) {
+              canReassign = false;
+              break;
+            }
+          }
+
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.all(16),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFED7AA),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          FontAwesomeIcons.userPlus,
+                          color: Color(0xFFEA580C),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Reassign Staff',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              "Select new staff for rejected services",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: servicesToEdit.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final service = entry.value;
+                          final currentStaffId = service['staffId'];
+                          final availableStaff = availableStaffPerService[index];
+                          final rejected = wasRejected[index];
+
+                          // Ensure current staff is in the list
+                          List<Map<String, dynamic>> dropdownStaff = [...availableStaff];
+                          if (currentStaffId != null && 
+                              !dropdownStaff.any((s) => s['id'] == currentStaffId)) {
+                            final found = _staffList.firstWhere((s) => s['id'] == currentStaffId, orElse: () => {});
+                            if (found.isNotEmpty) dropdownStaff.add(found);
+                          }
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: rejected ? const Color(0xFFFEF2F2) : Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: rejected ? const Color(0xFFFCA5A5) : const Color(0xFFF3F4F6),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.02),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        service['name'] ?? 'Service',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                    ),
+                                    if (rejected)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFDC2626).withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Row(
+                                          children: [
+                                            Icon(FontAwesomeIcons.circleXmark, size: 12, color: Color(0xFFDC2626)),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              "Rejected",
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFFDC2626),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: canReassign ? const Color(0xFFE5E7EB) : const Color(0xFFFEE2E2),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<String>(
+                                      isExpanded: true,
+                                      icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                                      hint: const Row(
+                                        children: [
+                                          Icon(FontAwesomeIcons.user, size: 14, color: Color(0xFF9CA3AF)),
+                                          SizedBox(width: 12),
+                                          Text("Select Staff Member"),
+                                        ],
+                                      ),
+                                      value: dropdownStaff.any((s) => s['id'] == currentStaffId) ? currentStaffId : null,
+                                      items: dropdownStaff.map((staff) {
+                                        final String avatar = (staff['avatarUrl'] ?? '').toString();
+                                        final String name = staff['name'];
+                                        final String url = (avatar.isNotEmpty && avatar != 'null')
+                                            ? avatar
+                                            : 'https://ui-avatars.com/api/?background=random&color=fff&name=${Uri.encodeComponent(name)}';
+
+                                        return DropdownMenuItem<String>(
+                                          value: staff['id'],
+                                          child: Row(
+                                            children: [
+                                              CircleAvatar(
+                                                radius: 12,
+                                                backgroundImage: NetworkImage(url),
+                                                backgroundColor: Colors.grey.shade200,
+                                              ),
+                                              const SizedBox(width: 10),
+                                              Text(
+                                                name,
+                                                style: const TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.black87,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      }).toList(),
+                                      onChanged: (val) {
+                                        if (val != null) {
+                                          final selectedStaff = _staffList.firstWhere((s) => s['id'] == val);
+                                          setState(() {
+                                            service['staffId'] = selectedStaff['id'];
+                                            service['staffName'] = selectedStaff['name'];
+                                          });
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                ),
+                                if ((service['staffName'] ?? '').toString().toLowerCase().contains('any staff') ||
+                                    (service['staffName'] ?? '').toString().toLowerCase().contains('any available'))
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 6, left: 4),
+                                    child: Row(
+                                      children: const [
+                                        Icon(Icons.info_outline, size: 12, color: Color(0xFFEF4444)),
+                                        SizedBox(width: 4),
+                                        Text(
+                                          "Staff assignment required",
+                                          style: TextStyle(
+                                            color: Color(0xFFEF4444),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: canReassign
+                              ? () {
+                                  Navigator.pop(ctx);
+                                  _reassignBooking(booking, servicesToEdit);
+                                }
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF1D4ED8),
+                            disabledBackgroundColor: const Color(0xFF1D4ED8).withOpacity(0.5),
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(FontAwesomeIcons.userPlus, size: 14, color: Colors.white),
+                              SizedBox(width: 8),
+                              Text(
+                                'Reassign Staff',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
+  // Reassign a booking via API
+  Future<void> _reassignBooking(_Booking booking, List<Map<String, dynamic>> updatedServices) async {
+    final db = FirebaseFirestore.instance;
+    try {
+      // Build updated services array preserving accepted services
+      final List<Map<String, dynamic>> allServices = [];
+      
+      // Get all original services
+      if (booking.items.isNotEmpty) {
+        for (var originalService in booking.items) {
+          final originalId = originalService['id']?.toString() ?? originalService['name']?.toString();
+          final approvalStatus = (originalService['approvalStatus'] ?? 'pending').toString().toLowerCase();
+          
+          // Check if this service was updated in reassignment
+          final updatedService = updatedServices.firstWhere(
+            (s) => (s['id']?.toString() ?? s['name']?.toString()) == originalId,
+            orElse: () => {},
+          );
+          
+          if (updatedService.isNotEmpty) {
+            // Use the updated service (reassigned)
+            allServices.add(updatedService);
+          } else if (approvalStatus == 'accepted') {
+            // Keep accepted services as-is
+            allServices.add(Map<String, dynamic>.from(originalService));
+          } else {
+            // Keep other services as-is
+            allServices.add(Map<String, dynamic>.from(originalService));
+          }
+        }
+      } else {
+        // Single service booking
+        allServices.addAll(updatedServices);
+      }
+
+      // Determine new status - could be AwaitingStaffApproval or PartiallyApproved
+      final hasAccepted = allServices.any((s) => (s['approvalStatus'] ?? '').toString().toLowerCase() == 'accepted');
+      final newStatus = hasAccepted ? 'PartiallyApproved' : 'AwaitingStaffApproval';
+
+      // Update the booking
+      await db.collection('bookings').doc(booking.id).update({
+        'services': allServices,
+        'status': newStatus,
+        'updatedAt': FieldValue.serverTimestamp(),
+        // Clear rejection info
+        'lastRejectedByStaffUid': FieldValue.delete(),
+        'lastRejectedByStaffName': FieldValue.delete(),
+        'lastRejectionReason': FieldValue.delete(),
+        'lastRejectedAt': FieldValue.delete(),
+        'rejectedByStaffUid': FieldValue.delete(),
+        'rejectedByStaffName': FieldValue.delete(),
+        'rejectionReason': FieldValue.delete(),
+        'rejectedAt': FieldValue.delete(),
+      });
+
+      // Send notifications to newly assigned staff
+      await _createStaffApprovalNotifications(
+        db: db,
+        bookingId: booking.id,
+        booking: booking,
+        services: updatedServices,
+      );
+      
+      // Audit log
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null && _ownerUid != null) {
+        final userDoc = await db.collection('users').doc(currentUser.uid).get();
+        final userData = userDoc.data();
+        final userName = userData?['displayName'] ?? userData?['name'] ?? currentUser.email ?? 'Unknown';
+        final userRole = userData?['role'] ?? 'unknown';
+        
+        await AuditLogService.logBookingStatusChanged(
+          ownerUid: _ownerUid!,
+          bookingId: booking.id,
+          bookingCode: booking.rawData['bookingCode']?.toString(),
+          clientName: booking.rawData['client']?.toString() ?? 'Customer',
+          previousStatus: 'StaffRejected',
+          newStatus: newStatus,
+          performedBy: currentUser.uid,
+          performedByName: userName.toString(),
+          performedByRole: userRole.toString(),
+          details: 'Booking reassigned to new staff: ${updatedServices.map((s) => s['staffName']).join(', ')}',
+          branchName: booking.rawData['branchName']?.toString(),
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Booking reassigned to new staff. They have been notified.')),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error reassigning booking: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error reassigning booking: $e')),
+        );
+      }
+    }
+  }
+
   List<Map<String, dynamic>> _getAvailableStaffForService(
       String serviceName, String branchId, String dayName) {
     // 1. Find service definition
@@ -1292,6 +2381,10 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     final confirmedCount =
         _bookings.where((b) => b.status == 'confirmed').length;
     final pendingCount = _bookings.where((b) => b.status == 'pending').length;
+    final awaitingStaffCount =
+        _bookings.where((b) => b.status == 'awaitingstaffapproval' || b.status == 'partiallyapproved').length;
+    final staffRejectedCount =
+        _bookings.where((b) => b.status == 'staffrejected').length;
     final completedCount =
         _bookings.where((b) => b.status == 'completed').length;
 
@@ -1416,8 +2509,8 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                       children: [
                         Expanded(
                           child: _StatCard(
-                            label: 'Completed Bookings',
-                            value: '$completedCount',
+                            label: 'Awaiting Staff',
+                            value: '$awaitingStaffCount',
                             color: const Color(0xFF1D4ED8),
                             background: const Color(0xFFDBEAFE),
                           ),
@@ -1425,10 +2518,32 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: _StatCard(
-                            label: 'Revenue',
-                            value: revenueLabel,
+                            label: 'Staff Rejected',
+                            value: '$staffRejectedCount',
+                            color: const Color(0xFFEA580C),
+                            background: const Color(0xFFFED7AA),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _StatCard(
+                            label: 'Completed',
+                            value: '$completedCount',
                             color: const Color(0xFF5B21B6),
                             background: const Color(0xFFEDE9FE),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _StatCard(
+                            label: 'Revenue',
+                            value: revenueLabel,
+                            color: const Color(0xFF059669),
+                            background: const Color(0xFFD1FAE5),
                           ),
                         ),
                       ],
@@ -1531,6 +2646,39 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                             ),
                           ),
                           DropdownMenuItem(
+                            value: 'awaitingstaffapproval',
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.userClock,
+                                    size: 14, color: Color(0xFF2563EB)),
+                                SizedBox(width: 12),
+                                Text('Awaiting Staff'),
+                              ],
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'partiallyapproved',
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.userCheck,
+                                    size: 14, color: Color(0xFF0891B2)),
+                                SizedBox(width: 12),
+                                Text('Partially Approved'),
+                              ],
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'staffrejected',
+                            child: Row(
+                              children: [
+                                Icon(FontAwesomeIcons.userXmark,
+                                    size: 14, color: Color(0xFFEA580C)),
+                                SizedBox(width: 12),
+                                Text('Staff Rejected'),
+                              ],
+                            ),
+                          ),
+                          DropdownMenuItem(
                             value: 'confirmed',
                             child: Row(
                               children: [
@@ -1589,6 +2737,12 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                                 if (status == 'confirmed') {
                                   // Show detailed service-wise staff assignment dialog
                                   _showConfirmationWithDetailsDialog(context, b);
+                                } else if (status == 'reassign') {
+                                  // Show reassignment dialog for staff-rejected bookings
+                                  _showReassignmentDialog(context, b);
+                                } else if (status == 'assign') {
+                                  // Show assignment dialog for services that need staff
+                                  _showStaffAssignmentDialog(context, b);
                                 } else {
                                   _showConfirmDialog(
                                     context,
@@ -1683,7 +2837,7 @@ class _Booking {
   final String customerName;
   final String email;
   final String avatarUrl;
-  final String status; // confirmed, pending, completed, cancelled
+  final String status; // confirmed, pending, completed, cancelled, awaitingstaffapproval, partiallyapproved, staffrejected
   final String service;
   final String staff;
   final String branchId;
@@ -1716,6 +2870,30 @@ class _Booking {
     required this.icon,
     required this.items,
   });
+
+  /// Normalize booking status to lowercase without underscores
+  static String _normalizeStatus(String status) {
+    final v = status.toLowerCase().replaceAll(RegExp(r'[_\s-]'), '');
+    switch (v) {
+      case 'pending':
+        return 'pending';
+      case 'awaitingstaffapproval':
+        return 'awaitingstaffapproval';
+      case 'partiallyapproved':
+        return 'partiallyapproved';
+      case 'staffrejected':
+        return 'staffrejected';
+      case 'confirmed':
+        return 'confirmed';
+      case 'completed':
+        return 'completed';
+      case 'canceled':
+      case 'cancelled':
+        return 'cancelled';
+      default:
+        return 'pending';
+    }
+  }
 
   // Build a booking model from a Firestore document
   static _Booking fromDoc(DocumentSnapshot<Map<String, dynamic>> doc,
@@ -1789,9 +2967,7 @@ class _Booking {
     final priceLabel =
         priceValue > 0 ? '\$${priceValue.toStringAsFixed(0)}' : '\$0';
 
-    String status =
-        (data['status'] ?? 'pending').toString().toLowerCase();
-    if (status == 'canceled') status = 'cancelled';
+    String status = _normalizeStatus((data['status'] ?? 'pending').toString());
 
     final avatarUrl = (data['avatarUrl'] ??
             'https://ui-avatars.com/api/?background=FF2D8F&color=fff&name=${Uri.encodeComponent(client)}')
@@ -1853,14 +3029,22 @@ class _BookingCard extends StatelessWidget {
   }
 
   Color _statusBg(String status) {
-    switch (status) {
+    final normalizedStatus = status.toLowerCase().replaceAll('_', '');
+    switch (normalizedStatus) {
       case 'confirmed':
         return const Color(0xFFD1FAE5);
       case 'pending':
         return const Color(0xFFFEF3C7);
-      case 'completed':
+      case 'awaitingstaffapproval':
         return const Color(0xFFDBEAFE);
+      case 'partiallyapproved':
+        return const Color(0xFFCFFAFE);
+      case 'staffrejected':
+        return const Color(0xFFFED7AA);
+      case 'completed':
+        return const Color(0xFFEDE9FE);
       case 'cancelled':
+      case 'canceled':
         return const Color(0xFFFEE2E2);
       default:
         return const Color(0xFFE5E7EB);
@@ -1868,14 +3052,22 @@ class _BookingCard extends StatelessWidget {
   }
 
   Color _statusColor(String status) {
-    switch (status) {
+    final normalizedStatus = status.toLowerCase().replaceAll('_', '');
+    switch (normalizedStatus) {
       case 'confirmed':
         return const Color(0xFF166534);
       case 'pending':
         return const Color(0xFF92400E);
-      case 'completed':
+      case 'awaitingstaffapproval':
         return const Color(0xFF1D4ED8);
+      case 'partiallyapproved':
+        return const Color(0xFF0891B2);
+      case 'staffrejected':
+        return const Color(0xFFEA580C);
+      case 'completed':
+        return const Color(0xFF5B21B6);
       case 'cancelled':
+      case 'canceled':
         return const Color(0xFFB91C1C);
       default:
         return const Color(0xFF4B5563);
@@ -1883,8 +3075,39 @@ class _BookingCard extends StatelessWidget {
   }
 
   bool _isAwaitingStatus(String status) {
-    final lower = status.toLowerCase();
-    return lower.contains('awaiting') || lower.contains('partially');
+    final normalized = status.toLowerCase().replaceAll('_', '');
+    return normalized == 'awaitingstaffapproval' || normalized == 'partiallyapproved';
+  }
+
+  bool _isStaffRejectedStatus(String status) {
+    final normalized = status.toLowerCase().replaceAll('_', '');
+    return normalized == 'staffrejected';
+  }
+
+  /// Check if booking has services that need staff assignment
+  bool _hasServicesNeedingAssignment(_Booking booking) {
+    if (booking.items.isEmpty) {
+      // Single service booking - check staff name
+      final staffName = booking.staff.toLowerCase();
+      return staffName.isEmpty || 
+             staffName.contains('any staff') || 
+             staffName.contains('any available');
+    }
+    // Multi-service booking - check each service
+    for (final item in booking.items) {
+      final staffName = (item['staffName'] ?? '').toString().toLowerCase();
+      final staffId = (item['staffId'] ?? '').toString();
+      final approvalStatus = (item['approvalStatus'] ?? '').toString().toLowerCase();
+      
+      // Service needs assignment if:
+      // - approvalStatus is 'needs_assignment'
+      // - staffName contains 'any staff' or 'any available'
+      // - staffId is empty or null
+      if (approvalStatus == 'needs_assignment') return true;
+      if (staffName.contains('any staff') || staffName.contains('any available')) return true;
+      if (staffId.isEmpty || staffId == 'null') return true;
+    }
+    return false;
   }
 
   Widget _buildStaffApprovalSection(List<Map<String, dynamic>> items) {
@@ -1933,6 +3156,11 @@ class _BookingCard extends StatelessWidget {
                 statusIcon = FontAwesomeIcons.circleXmark;
                 statusLabel = 'Rejected';
                 break;
+              case 'needs_assignment':
+                statusColor = const Color(0xFF7C3AED);
+                statusIcon = FontAwesomeIcons.userPlus;
+                statusLabel = 'Needs Staff';
+                break;
               default:
                 statusColor = const Color(0xFFD97706);
                 statusIcon = FontAwesomeIcons.clock;
@@ -1977,6 +3205,169 @@ class _BookingCard extends StatelessWidget {
               ),
             );
           }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStaffRejectionSection(_Booking booking) {
+    // Get rejection details from rawData
+    final rejectedByStaffName = (booking.rawData['lastRejectedByStaffName'] ?? 
+                                  booking.rawData['rejectedByStaffName'] ?? 'Staff').toString();
+    final rejectionReason = (booking.rawData['lastRejectionReason'] ?? 
+                             booking.rawData['rejectionReason'] ?? 'No reason provided').toString();
+    
+    // Also check for rejected services in items
+    final rejectedServices = booking.items.where((item) {
+      final status = (item['approvalStatus'] ?? '').toString().toLowerCase();
+      return status == 'rejected';
+    }).toList();
+    
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFED7AA).withOpacity(0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFB923C).withOpacity(0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(FontAwesomeIcons.circleExclamation, size: 12, color: Color(0xFFEA580C)),
+              const SizedBox(width: 6),
+              const Text(
+                'Staff Rejected',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFEA580C),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEA580C).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Action Required',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFFEA580C),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Show rejected services if available
+          if (rejectedServices.isNotEmpty) ...[
+            ...rejectedServices.map((service) {
+              final serviceName = (service['name'] ?? service['serviceName'] ?? 'Service').toString();
+              final staffName = (service['staffName'] ?? 'Staff').toString();
+              final reason = (service['rejectionReason'] ?? 'No reason provided').toString();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(FontAwesomeIcons.xmark, size: 10, color: Color(0xFFDC2626)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            '$serviceName rejected by $staffName',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF374151),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16, top: 4),
+                      child: Text(
+                        '"$reason"',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ] else ...[
+            // Show general rejection info
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(FontAwesomeIcons.user, size: 10, color: Color(0xFF6B7280)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Rejected by: $rejectedByStaffName',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF374151),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(FontAwesomeIcons.comment, size: 10, color: Color(0xFF6B7280)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '"$rejectionReason"',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFFB923C).withOpacity(0.3)),
+            ),
+            child: Row(
+              children: const [
+                Icon(FontAwesomeIcons.circleInfo, size: 12, color: Color(0xFF6B7280)),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Tap "Reassign" to assign this booking to another staff member.',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -2084,6 +3475,11 @@ class _BookingCard extends StatelessWidget {
             const SizedBox(height: 12),
             _buildStaffApprovalSection(booking.items),
           ],
+          // Show staff rejection details for rejected bookings
+          if (_isStaffRejectedStatus(booking.status)) ...[
+            const SizedBox(height: 12),
+            _buildStaffRejectionSection(booking),
+          ],
           const SizedBox(height: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2123,6 +3519,65 @@ class _BookingCard extends StatelessWidget {
                       const SizedBox(width: 8),
                       _ActionButton(
                         label: "Decline",
+                        background: const Color(0xFFFEE2E2),
+                        color: const Color(0xFFB91C1C),
+                        onTap: () => onStatusUpdate('cancelled'),
+                      ),
+                    ] else if (_isAwaitingStatus(booking.status)) ...[
+                      // Show "Assign Staff" button if any services need assignment
+                      if (_hasServicesNeedingAssignment(booking)) ...[
+                        const SizedBox(width: 8),
+                        _ActionButton(
+                          label: "Assign Staff",
+                          background: const Color(0xFFF3E8FF),
+                          color: const Color(0xFF7C3AED),
+                          icon: FontAwesomeIcons.userPlus,
+                          onTap: () => onStatusUpdate('assign'),
+                        ),
+                      ] else ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDBEAFE),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(FontAwesomeIcons.userClock, size: 12, color: Color(0xFF1D4ED8)),
+                              SizedBox(width: 6),
+                              Text(
+                                "Awaiting Staff",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF1D4ED8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        label: "Cancel",
+                        background: const Color(0xFFFEE2E2),
+                        color: const Color(0xFFB91C1C),
+                        onTap: () => onStatusUpdate('cancelled'),
+                      ),
+                    ] else if (_isStaffRejectedStatus(booking.status)) ...[
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        label: "Reassign",
+                        background: const Color(0xFFDBEAFE),
+                        color: const Color(0xFF1D4ED8),
+                        icon: FontAwesomeIcons.userPlus,
+                        onTap: () => onStatusUpdate('reassign'),
+                      ),
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        label: "Cancel",
                         background: const Color(0xFFFEE2E2),
                         color: const Color(0xFFB91C1C),
                         onTap: () => onStatusUpdate('cancelled'),
@@ -2448,19 +3903,35 @@ class _BookingCard extends StatelessWidget {
   String _capitalise(String value) {
     if (value.isEmpty) return value;
     
-    // Handle camelCase like "AwaitingStaffApproval" -> "Awaiting Approval"
-    String formatted = value.replaceAllMapped(
-      RegExp(r'([a-z])([A-Z])'),
-      (m) => '${m.group(1)} ${m.group(2)}',
-    );
+    // Normalize the status
+    final normalized = value.toLowerCase().replaceAll('_', '');
     
-    // Return shorter labels for long statuses
-    final lower = formatted.toLowerCase();
-    if (lower.contains('awaiting')) return 'Awaiting';
-    if (lower.contains('partially')) return 'Partial';
-    
-    // Capitalize first letter
-    return formatted[0].toUpperCase() + formatted.substring(1);
+    // Return user-friendly labels for statuses
+    switch (normalized) {
+      case 'awaitingstaffapproval':
+        return 'Awaiting Staff';
+      case 'partiallyapproved':
+        return 'Partial';
+      case 'staffrejected':
+        return 'Staff Rejected';
+      case 'confirmed':
+        return 'Confirmed';
+      case 'pending':
+        return 'Pending';
+      case 'completed':
+        return 'Completed';
+      case 'cancelled':
+      case 'canceled':
+        return 'Cancelled';
+      default:
+        // Handle camelCase like "AwaitingStaffApproval" -> "Awaiting Staff Approval"
+        String formatted = value.replaceAllMapped(
+          RegExp(r'([a-z])([A-Z])'),
+          (m) => '${m.group(1)} ${m.group(2)}',
+        );
+        // Capitalize first letter
+        return formatted[0].toUpperCase() + formatted.substring(1);
+    }
   }
 }
 
@@ -2501,12 +3972,14 @@ class _ActionButton extends StatelessWidget {
   final Color background;
   final Color color;
   final VoidCallback? onTap;
+  final IconData? icon;
 
   const _ActionButton({
     required this.label,
     required this.background,
     required this.color,
     this.onTap,
+    this.icon,
   });
 
   @override
@@ -2519,13 +3992,22 @@ class _ActionButton extends StatelessWidget {
           color: background,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: color,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 12, color: color),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
         ),
       ),
     );
