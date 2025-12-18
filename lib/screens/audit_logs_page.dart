@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import '../utils/timezone_helper.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -25,6 +26,7 @@ class AuditLogsPage extends StatefulWidget {
 class _AuditLogsPageState extends State<AuditLogsPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   String? _ownerUid;
+  String _adminTimezone = 'Australia/Sydney';
   bool _isLoading = true;
   List<Map<String, dynamic>> _logs = [];
   String _filterActionType = 'all';
@@ -77,9 +79,13 @@ class _AuditLogsPageState extends State<AuditLogsPage> {
           return;
         }
         
+        // Get admin's timezone from their profile
+        final timezone = data?['timezone'] as String? ?? 'Australia/Sydney';
+        
         if (mounted) {
           setState(() {
             _ownerUid = user.uid;
+            _adminTimezone = timezone;
           });
           _listenToLogs();
         }
@@ -178,15 +184,17 @@ class _AuditLogsPageState extends State<AuditLogsPage> {
       return 'Unknown';
     }
     
-    final now = DateTime.now();
-    final diff = now.difference(date);
+    // Convert to admin's timezone
+    final localDate = TimezoneHelper.utcToLocal(date.toUtc(), _adminTimezone);
+    final now = TimezoneHelper.nowInTimezone(_adminTimezone);
+    final diff = now.difference(localDate);
     
     if (diff.inMinutes < 1) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
     
-    return DateFormat('MMM d, yyyy').format(date);
+    return DateFormat('MMM d, yyyy').format(localDate);
   }
 
   String _formatFullTimestamp(dynamic timestamp) {
@@ -199,7 +207,9 @@ class _AuditLogsPageState extends State<AuditLogsPage> {
       return 'Unknown';
     }
     
-    return DateFormat('EEEE, MMMM d, yyyy • h:mm a').format(date);
+    // Convert to admin's timezone
+    final localDate = TimezoneHelper.utcToLocal(date.toUtc(), _adminTimezone);
+    return DateFormat('EEEE, MMMM d, yyyy • h:mm a').format(localDate);
   }
 
   Map<String, dynamic> _getActionConfig(String? type) {
@@ -692,9 +702,25 @@ class _AuditLogsPageState extends State<AuditLogsPage> {
                   _buildDetailCard(
                     title: 'Timestamp',
                     icon: FontAwesomeIcons.clock,
-                    child: Text(
-                      _formatFullTimestamp(log['timestamp']),
-                      style: const TextStyle(fontSize: 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _formatFullTimestamp(log['timestamp']),
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(FontAwesomeIcons.globe, size: 10, color: AppColors.muted),
+                            const SizedBox(width: 4),
+                            Text(
+                              TimezoneHelper.getTimezoneLabel(_adminTimezone),
+                              style: TextStyle(fontSize: 11, color: AppColors.muted),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                   

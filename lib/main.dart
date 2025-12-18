@@ -4,9 +4,14 @@ import 'firebase_options.dart';
 import 'routes.dart';
 import 'screens/splash_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'utils/timezone_helper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize timezone data for proper timezone conversions
+  TimezoneHelper.initialize();
+  
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );

@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import '../utils/timezone_helper.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -41,6 +42,7 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
   String _state = '';
   String _plan = '';
   String _price = '';
+  String _selectedTimezone = 'Australia/Sydney';
   bool _gstRegistered = false;
   bool _loading = true;
   bool _savingProfile = false;
@@ -108,6 +110,7 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
           _state = data['state'] ?? '';
           _plan = data['plan'] ?? '';
           _price = data['price'] ?? '';
+          _selectedTimezone = data['timezone'] ?? 'Australia/Sydney';
           _gstRegistered = data['gstRegistered'] ?? false;
           _loading = false;
         });
@@ -139,6 +142,7 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
         'abn': _abnController.text.trim(),
         'contactPhone': _phoneController.text.trim(),
         'locationText': _addressController.text.trim(),
+        'timezone': _selectedTimezone,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -292,15 +296,24 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
             Icon(
               isError ? Icons.error_outline : Icons.check_circle,
               color: Colors.white,
+              size: 20,
             ),
             const SizedBox(width: 8),
-            Text(message),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(fontSize: 14),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         backgroundColor: isError ? Colors.red.shade600 : Colors.green.shade600,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         duration: const Duration(seconds: 2),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       ),
     );
   }
@@ -815,6 +828,8 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
             icon: FontAwesomeIcons.locationDot,
             maxLines: 2,
           ),
+          const SizedBox(height: 16),
+          _buildTimezoneSelector(),
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
@@ -946,6 +961,224 @@ class _SalonSettingsPageState extends State<SalonSettingsPage> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTimezoneSelector() {
+    return GestureDetector(
+      onTap: _showTimezoneSheet,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            Icon(FontAwesomeIcons.clock, size: 16, color: AppColors.muted),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Time Zone',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    TimezoneHelper.getTimezoneLabel(_selectedTimezone),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(FontAwesomeIcons.chevronDown, size: 12, color: AppColors.muted),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showTimezoneSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: AppColors.border),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.muted.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [AppColors.primary, AppColors.accent],
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Center(
+                          child: Icon(FontAwesomeIcons.clock, color: Colors.white, size: 14),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'Select Time Zone',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700, 
+                          color: AppColors.text, 
+                          fontSize: 16,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(FontAwesomeIcons.xmark, size: 18),
+                        color: AppColors.muted,
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            
+            // Timezone List
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: [
+                  // Australia Section
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: Text(
+                      '🇦🇺 AUSTRALIA',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  ...TimezoneHelper.australianTimezones.entries.map((entry) => 
+                    _buildTimezoneItem(entry.key, '🇦🇺 ${entry.value}'),
+                  ),
+                  
+                  const Divider(height: 24),
+                  
+                  // Other Timezones Section
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: Text(
+                      '🌍 OTHER TIME ZONES',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.muted,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  ...TimezoneHelper.otherTimezones.entries.map((entry) => 
+                    _buildTimezoneItem(entry.key, entry.value),
+                  ),
+                  
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimezoneItem(String value, String label) {
+    final isSelected = _selectedTimezone == value;
+    return InkWell(
+      onTap: () {
+        setState(() => _selectedTimezone = value);
+        Navigator.pop(context);
+        // Get just the city name from the label (e.g., "Sydney (NSW)" from "🇦🇺 Sydney (NSW) - AEST/AEDT")
+        final label = TimezoneHelper.getTimezoneLabel(value);
+        final cityName = label.contains('(') 
+            ? label.substring(0, label.indexOf('(')).replaceAll('🇦🇺', '').trim()
+            : label.split('-').first.trim();
+        _showSnackBar('Timezone set to $cityName');
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary.withOpacity(0.08) : Colors.transparent,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? FontAwesomeIcons.solidCircleCheck : FontAwesomeIcons.circle,
+              size: 16,
+              color: isSelected ? AppColors.primary : AppColors.muted.withOpacity(0.4),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      color: isSelected ? AppColors.primary : AppColors.text,
+                    ),
+                  ),
+                  Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Icon(FontAwesomeIcons.check, size: 14, color: AppColors.primary),
+          ],
+        ),
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/timezone_helper.dart';
 
 // --- 1. Theme & Colors (Matching HTML/Tailwind) ---
 class AppColors {
@@ -49,6 +50,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   Map<String, dynamic>? _currentUserWeeklySchedule; // Staff's weekly schedule
   bool _loadingContext = true;
   String? _selectedBranchId;
+  String? _selectedBranchTimezone; // Timezone of the selected branch
 
   // Controllers
   final TextEditingController _nameController = TextEditingController();
@@ -322,12 +324,13 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
       final branches = branchesSnap.docs.map((d) {
         final data = d.data();
-        debugPrint('[BranchLoad] Branch "${data['name']}" id=${d.id}');
+        debugPrint('[BranchLoad] Branch "${data['name']}" id=${d.id} timezone=${data['timezone']}');
         return {
           'id': d.id,
           'name': (data['name'] ?? 'Branch').toString(),
           'address': (data['address'] ?? '').toString(),
           'hours': data['hours'], // Include branch hours
+          'timezone': (data['timezone'] ?? 'Australia/Sydney').toString(), // Include timezone
         };
       }).toList();
 
@@ -440,6 +443,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           if (br.isNotEmpty) {
             _selectedBranchId = br['id'] as String;
             _selectedBranchLabel = br['name'] as String;
+            _selectedBranchTimezone = (br['timezone'] ?? 'Australia/Sydney').toString();
           }
         }
         
@@ -447,6 +451,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         if (_userRole == 'salon_staff' && filteredBranches.length == 1) {
           _selectedBranchId = filteredBranches.first['id'] as String;
           _selectedBranchLabel = filteredBranches.first['name'] as String;
+          _selectedBranchTimezone = (filteredBranches.first['timezone'] ?? 'Australia/Sydney').toString();
         }
 
         _loadingContext = false;
@@ -576,17 +581,40 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       bookingSource = 'Staff Booking - $staffDisplayName';
     }
     
+    // Get branch timezone (fallback to Australia/Sydney if not set)
+    final branchTimezone = _selectedBranchTimezone ?? 'Australia/Sydney';
+    
+    // Create UTC timestamp from local date/time for consistent storage
+    String? dateTimeUtc;
+    try {
+      // Parse the local date and time
+      final year = _selectedDate!.year;
+      final month = _selectedDate!.month;
+      final day = _selectedDate!.day;
+      final hour = firstTime.hour;
+      final minute = firstTime.minute;
+      final localDateTime = DateTime(year, month, day, hour, minute);
+      
+      // Convert to UTC for storage
+      final utcDateTime = TimezoneHelper.localToUtc(localDateTime, branchTimezone);
+      dateTimeUtc = utcDateTime.toIso8601String();
+    } catch (e) {
+      debugPrint('Error converting to UTC: $e');
+    }
+    
     final bookingData = <String, dynamic>{
       'bookingCode': bookingCode,
       'bookingSource': bookingSource,
       'branchId': _selectedBranchId,
       'branchName': _selectedBranchLabel,
+      'branchTimezone': branchTimezone, // Store branch timezone
       'client': clientName,
       'clientEmail': email.isNotEmpty ? email : null,
       'clientPhone': phone.isNotEmpty ? phone : null,
       'createdAt': FieldValue.serverTimestamp(),
       'customerUid': null, // Walk-in customers don't have UID
-      'date': dateStr,
+      'date': dateStr, // Local date for backward compatibility
+      'dateTimeUtc': dateTimeUtc, // UTC timestamp for accurate storage
       'duration': _totalDuration,
       'notes': notes.isNotEmpty ? notes : null,
       'ownerUid': _ownerUid,
@@ -597,7 +625,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       'staffId': mainStaffId,
       'staffName': mainStaffName,
       'status': 'Pending',
-      'time': mainTimeStr,
+      'time': mainTimeStr, // Local time for backward compatibility
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -2062,6 +2090,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             setState(() {
               _selectedBranchId = null;
               _selectedBranchLabel = null;
+              _selectedBranchTimezone = null;
               _selectedServiceIds = {};
             });
           }
@@ -2108,9 +2137,19 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     if (_selectedBranchId != branchIdForDay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
+          // Find branch timezone
+          final branchData = _branches.firstWhere(
+            (b) => b['id'] == branchIdForDay,
+            orElse: () => {},
+          );
+          final branchTimezoneForDay = branchData.isNotEmpty
+              ? (branchData['timezone'] ?? 'Australia/Sydney').toString()
+              : 'Australia/Sydney';
+          
           setState(() {
             _selectedBranchId = branchIdForDay;
             _selectedBranchLabel = branchNameForDay;
+            _selectedBranchTimezone = branchTimezoneForDay;
             // Clear services when branch changes
             _selectedServiceIds = {};
           });
@@ -2184,10 +2223,11 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           padding: const EdgeInsets.only(bottom: 8),
           child: GestureDetector(
             onTap: () {
-              debugPrint('[BranchSelect] Selected branch id=${branch['id']}, name=$name');
+              debugPrint('[BranchSelect] Selected branch id=${branch['id']}, name=$name, timezone=${branch['timezone']}');
               setState(() {
                 _selectedBranchId = branch['id'] as String;
                 _selectedBranchLabel = name;
+                _selectedBranchTimezone = (branch['timezone'] ?? 'Australia/Sydney').toString();
                 // Clear service selection when branch changes
                 _selectedServiceIds = {};
               });

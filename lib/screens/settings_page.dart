@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'change_password_page.dart';
+import '../utils/timezone_helper.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -31,6 +34,69 @@ class _SettingsPageState extends State<SettingsPage> {
   bool autoUpdate = true;
   bool twoFactor = false;
   String language = 'English';
+  String _selectedTimezone = 'Australia/Sydney';
+  bool _isLoadingTimezone = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserTimezone();
+  }
+
+  Future<void> _loadUserTimezone() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        final data = doc.data();
+        if (data != null && data['timezone'] != null) {
+          setState(() {
+            _selectedTimezone = data['timezone'] as String;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading timezone: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingTimezone = false);
+      }
+    }
+  }
+
+  Future<void> _saveTimezone(String timezone) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .update({'timezone': timezone});
+        setState(() => _selectedTimezone = timezone);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Timezone updated to ${TimezoneHelper.getTimezoneLabel(timezone)}'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error saving timezone: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save timezone'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +164,24 @@ class _SettingsPageState extends State<SettingsPage> {
                         );
                         if (selected != null) {
                           setState(() => language = selected);
+                        }
+                      },
+                    ),
+                    _SettingNavRow(
+                      icon: FontAwesomeIcons.clock,
+                      title: 'Time Zone',
+                      trailingText: _isLoadingTimezone 
+                          ? 'Loading...' 
+                          : _selectedTimezone.split('/').last.replaceAll('_', ' '),
+                      onTap: () async {
+                        final String? selected = await showModalBottomSheet(
+                          context: context,
+                          backgroundColor: Colors.transparent,
+                          isScrollControlled: true,
+                          builder: (_) => _TimezoneSheet(current: _selectedTimezone),
+                        );
+                        if (selected != null && selected != _selectedTimezone) {
+                          _saveTimezone(selected);
                         }
                       },
                     ),
@@ -215,7 +299,10 @@ class _SettingsPageState extends State<SettingsPage> {
       autoUpdate = true;
       twoFactor = false;
       language = 'English';
+      _selectedTimezone = 'Australia/Sydney';
     });
+    // Also reset timezone in Firestore
+    _saveTimezone('Australia/Sydney');
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Settings reset'),
@@ -521,6 +608,155 @@ class _LanguageSheet extends StatelessWidget {
               )),
           const SizedBox(height: 8),
         ],
+      ),
+    );
+  }
+}
+
+class _TimezoneSheet extends StatelessWidget {
+  final String current;
+  const _TimezoneSheet({required this.current});
+  
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: AppColors.border),
+              ),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  width: 48,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.muted.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Icon(FontAwesomeIcons.clock, size: 18, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Select Time Zone',
+                      style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.text, fontSize: 16),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(FontAwesomeIcons.xmark, size: 18),
+                      color: AppColors.muted,
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          
+          // Timezone List
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [
+                // Australia Section
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    '🇦🇺 AUSTRALIA',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                ...TimezoneHelper.australianTimezones.entries.map((entry) => 
+                  _buildTimezoneItem(context, entry.key, '🇦🇺 ${entry.value}', current == entry.key),
+                ),
+                
+                const Divider(height: 24),
+                
+                // Other Timezones Section
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    '🌍 OTHER TIME ZONES',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.muted,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                ...TimezoneHelper.otherTimezones.entries.map((entry) => 
+                  _buildTimezoneItem(context, entry.key, entry.value, current == entry.key),
+                ),
+                
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildTimezoneItem(BuildContext context, String value, String label, bool isSelected) {
+    return InkWell(
+      onTap: () => Navigator.pop(context, value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary.withOpacity(0.08) : Colors.transparent,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? FontAwesomeIcons.solidCircleCheck : FontAwesomeIcons.circle,
+              size: 16,
+              color: isSelected ? AppColors.primary : AppColors.muted.withOpacity(0.4),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      color: isSelected ? AppColors.primary : AppColors.text,
+                    ),
+                  ),
+                  Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Icon(FontAwesomeIcons.check, size: 14, color: AppColors.primary),
+          ],
+        ),
       ),
     );
   }
