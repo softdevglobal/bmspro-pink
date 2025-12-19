@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -51,6 +52,10 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
   bool _loadingContext = true;
   String? _selectedBranchId;
   String? _selectedBranchTimezone; // Timezone of the selected branch
+  
+  // Branch current time (updates every minute for accurate slot availability)
+  DateTime _branchCurrentTime = DateTime.now();
+  Timer? _branchTimeTimer;
 
   // Controllers
   final TextEditingController _nameController = TextEditingController();
@@ -81,10 +86,33 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     _fadeController.forward();
 
     _loadUserContext();
+    
+    // Start timer to update branch time every minute
+    _startBranchTimeTimer();
+  }
+  
+  void _startBranchTimeTimer() {
+    // Update immediately
+    _updateBranchTime();
+    
+    // Update every minute
+    _branchTimeTimer?.cancel();
+    _branchTimeTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      _updateBranchTime();
+    });
+  }
+  
+  void _updateBranchTime() {
+    if (!mounted) return;
+    final timezone = _selectedBranchTimezone ?? 'Australia/Sydney';
+    setState(() {
+      _branchCurrentTime = TimezoneHelper.nowInTimezone(timezone);
+    });
   }
 
   @override
   void dispose() {
+    _branchTimeTimer?.cancel();
     _nameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
@@ -1143,6 +1171,100 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     );
   }
 
+  /// Build timezone indicator showing branch's current time
+  Widget _buildTimezoneIndicator() {
+    final timezone = _selectedBranchTimezone ?? 'Australia/Sydney';
+    final branchNow = TimezoneHelper.nowInTimezone(timezone);
+    final timeStr = DateFormat('HH:mm').format(branchNow);
+    
+    // Get timezone display name (last part of IANA timezone)
+    final tzLabel = timezone.split('/').last.replaceAll('_', ' ');
+    
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.blue.withOpacity(0.1),
+            AppColors.purple.withOpacity(0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.blue.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(FontAwesomeIcons.globe, size: 14, color: AppColors.blue),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Branch Time Zone: ',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.blue.withOpacity(0.8),
+                    ),
+                  ),
+                  Text(
+                    tzLabel,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.blue,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.blue.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(FontAwesomeIcons.clock, size: 10, color: AppColors.blue),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Current: $timeStr',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.blue,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(FontAwesomeIcons.circleInfo, size: 10, color: AppColors.blue.withOpacity(0.6)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Times are in branch\'s local timezone. Past slots are hidden.',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.blue.withOpacity(0.7),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPerServiceTimeStaffSelector() {
     if (_selectedDate == null) {
       return Container(
@@ -1180,30 +1302,34 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     }
 
     return Column(
-      children: selectedServices.map((service) {
-        final serviceId = service['id'] as String;
-        final serviceName = service['name'] ?? 'Service';
-        final duration = (service['duration'] as num?)?.toInt() ?? 60;
-        final selectedTime = _serviceTimeSelections[serviceId];
-        final selectedStaffId = _serviceStaffSelections[serviceId] ?? 'any';
-        final availableStaff = _getAvailableStaffForService(serviceId);
+      children: [
+        // Branch Timezone Indicator
+        if (_selectedBranchId != null) _buildTimezoneIndicator(),
+        const SizedBox(height: 16),
+        ...selectedServices.map((service) {
+          final serviceId = service['id'] as String;
+          final serviceName = service['name'] ?? 'Service';
+          final duration = (service['duration'] as num?)?.toInt() ?? 60;
+          final selectedTime = _serviceTimeSelections[serviceId];
+          final selectedStaffId = _serviceStaffSelections[serviceId] ?? 'any';
+          final availableStaff = _getAvailableStaffForService(serviceId);
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.border),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Service header
@@ -1304,6 +1430,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           ),
         );
       }).toList(),
+      ],
     );
   }
 
@@ -1378,13 +1505,20 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     final endMinutes = endHour * 60 + endMinute;
     final latestSlotStart = endMinutes - durationMinutes;
     
-    // Check if date is today to filter past times
-    final now = DateTime.now();
-    final isToday = _selectedDate != null &&
-        _selectedDate!.year == now.year &&
-        _selectedDate!.month == now.month &&
-        _selectedDate!.day == now.day;
-    final currentMinutes = isToday ? (now.hour * 60 + now.minute) : -1;
+    // Use BRANCH timezone to check if date is today (not user's local time)
+    // This ensures Sri Lankan users booking Perth branch see correct available slots
+    final branchTimezone = _selectedBranchTimezone ?? 'Australia/Sydney';
+    final branchNow = TimezoneHelper.nowInTimezone(branchTimezone);
+    final branchTodayDateStr = DateFormat('yyyy-MM-dd').format(branchNow);
+    
+    // Check if selected date is today IN THE BRANCH'S TIMEZONE
+    final selectedDateStr = _selectedDate != null
+        ? DateFormat('yyyy-MM-dd').format(_selectedDate!)
+        : '';
+    final isToday = selectedDateStr == branchTodayDateStr;
+    
+    // Calculate current minutes based on branch's local time
+    final currentMinutes = isToday ? (branchNow.hour * 60 + branchNow.minute) : -1;
     
     // Generate time slots using branch hours
     final List<TimeOfDay> slots = [];
@@ -1409,22 +1543,22 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         ? _currentUserId 
         : (selectedStaffId != null && selectedStaffId != 'any' ? selectedStaffId : null);
     
-    // Get the selected date string for comparison
-    final selectedDateStr = _selectedDate != null
+    // Get the selected date string for comparison (for booking filtering)
+    final bookingDateStr = _selectedDate != null
         ? '${_selectedDate!.year.toString().padLeft(4, '0')}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}'
         : null;
 
     // Helper function to check if a time slot is OCCUPIED (booking in progress at that time)
     // Only checks if the slot TIME falls within an existing booking, not duration-based overlap
     bool isSlotOccupied(TimeOfDay slotTime) {
-      if (selectedDateStr == null) return false;
+      if (bookingDateStr == null) return false;
       if (staffIdToCheck == null || staffIdToCheck.isEmpty) return false;
       
       final slotMinutes = slotTime.hour * 60 + slotTime.minute;
       
       for (final booking in _bookings) {
         // Check if booking is for the same date
-        if (booking['date'] != selectedDateStr) continue;
+        if (booking['date'] != bookingDateStr) continue;
         
         // Check status - skip cancelled bookings
         final status = (booking['status']?.toString() ?? '').toLowerCase();
@@ -2231,6 +2365,8 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
                 // Clear service selection when branch changes
                 _selectedServiceIds = {};
               });
+              // Update branch time immediately when branch changes
+              _updateBranchTime();
             },
             child: Container(
               width: double.infinity,
