@@ -1503,7 +1503,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
 // BRANCH PREVIEW SHEET
 // ============================================================================
 
-class _BranchPreviewSheet extends StatelessWidget {
+class _BranchPreviewSheet extends StatefulWidget {
   final BranchModel branch;
   final List<ServiceOption> services;
   final List<StaffOption> staff;
@@ -1519,21 +1519,44 @@ class _BranchPreviewSheet extends StatelessWidget {
   });
 
   @override
+  State<_BranchPreviewSheet> createState() => _BranchPreviewSheetState();
+}
+
+class _BranchPreviewSheetState extends State<_BranchPreviewSheet> {
+  DateTime _focusedMonth = DateTime.now();
+  DateTime? _selectedDate;
+
+  @override
   Widget build(BuildContext context) {
-    final branchServices = services.where((s) => branch.serviceIds.contains(s.id)).toList();
+    final branchServices = widget.services.where((s) => widget.branch.serviceIds.contains(s.id)).toList();
     
     // Filter staff who work at this branch based on their weeklySchedule
-    final branchStaff = staff.where((s) {
+    final branchStaff = widget.staff.where((s) {
       final schedule = s.weeklySchedule;
       if (schedule == null) return false;
       // Check if any day in their schedule is for this branch
       return schedule.values.any((day) {
         if (day is Map) {
-          return day['branchId'] == branch.id;
+          return day['branchId'] == widget.branch.id;
         }
         return false;
       });
     }).toList();
+    
+    // Filter staff for selected date
+    final filteredStaff = _selectedDate == null
+        ? branchStaff
+        : branchStaff.where((s) {
+            final schedule = s.weeklySchedule;
+            if (schedule == null) return false;
+            final dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            final dayName = dayNames[_selectedDate!.weekday % 7];
+            final daySchedule = schedule[dayName];
+            if (daySchedule is Map) {
+              return daySchedule['branchId'] == widget.branch.id;
+            }
+            return false;
+          }).toList();
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.9,
@@ -1593,20 +1616,20 @@ class _BranchPreviewSheet extends StatelessWidget {
                   iconColor: const Color(0xFF10B981),
                   child: Column(
                     children: [
-                      _buildDetailRow('Name', branch.name),
+                      _buildDetailRow('Name', widget.branch.name),
                       const Divider(height: 20),
-                      _buildDetailRow('Address', branch.address),
-                      if (branch.phone != null && branch.phone!.isNotEmpty) ...[
+                      _buildDetailRow('Address', widget.branch.address),
+                      if (widget.branch.phone != null && widget.branch.phone!.isNotEmpty) ...[
                         const Divider(height: 20),
-                        _buildDetailRow('Phone', branch.phone!),
+                        _buildDetailRow('Phone', widget.branch.phone!),
                       ],
-                      if (branch.email != null && branch.email!.isNotEmpty) ...[
+                      if (widget.branch.email != null && widget.branch.email!.isNotEmpty) ...[
                         const Divider(height: 20),
-                        _buildDetailRow('Email', branch.email!),
+                        _buildDetailRow('Email', widget.branch.email!),
                       ],
-                      if (branch.capacity != null) ...[
+                      if (widget.branch.capacity != null) ...[
                         const Divider(height: 20),
-                        _buildDetailRow('Capacity', '${branch.capacity} seats'),
+                        _buildDetailRow('Capacity', '${widget.branch.capacity} seats'),
                       ],
                       const Divider(height: 20),
                       Row(
@@ -1616,15 +1639,15 @@ class _BranchPreviewSheet extends StatelessWidget {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                             decoration: BoxDecoration(
-                              color: _getStatusColor(branch.status).withOpacity(0.1),
+                              color: _getStatusColor(widget.branch.status).withOpacity(0.1),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
-                              branch.status,
+                              widget.branch.status,
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: _getStatusColor(branch.status),
+                                color: _getStatusColor(widget.branch.status),
                               ),
                             ),
                           ),
@@ -1673,7 +1696,7 @@ class _BranchPreviewSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
-                // Staff
+                // Staff with Calendar
                 _buildSectionCard(
                   title: 'Staff (${branchStaff.length})',
                   icon: FontAwesomeIcons.users,
@@ -1683,6 +1706,63 @@ class _BranchPreviewSheet extends StatelessWidget {
                       : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // Calendar for selecting day
+                            _buildStaffCalendar(branchStaff),
+                            const SizedBox(height: 16),
+                            
+                            // Selected date info
+                            if (_selectedDate != null)
+                              Container(
+                                width: double.infinity,
+                                margin: const EdgeInsets.only(bottom: 12),
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      const Color(0xFF3B82F6).withOpacity(0.1),
+                                      const Color(0xFF3B82F6).withOpacity(0.05),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: const Color(0xFF3B82F6).withOpacity(0.3)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(FontAwesomeIcons.calendarDay, size: 14, color: Color(0xFF3B82F6)),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        '${_getDayName(_selectedDate!.weekday)}, ${_selectedDate!.day} ${_getMonthName(_selectedDate!.month)} ${_selectedDate!.year}',
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF3B82F6),
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      '${filteredStaff.length} staff working',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    GestureDetector(
+                                      onTap: () => setState(() => _selectedDate = null),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade200,
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Icon(Icons.close, size: 14, color: AppColors.muted),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            
                             // Legend
                             Row(
                               children: [
@@ -1720,15 +1800,49 @@ class _BranchPreviewSheet extends StatelessWidget {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            // Staff list - show admin first
-                            ...branchStaff
-                                .where((s) => s.id == branch.adminStaffId)
-                                .map((s) => _buildStaffWithDays(s, branch.id, isAdmin: true))
-                                .toList(),
-                            ...branchStaff
-                                .where((s) => s.id != branch.adminStaffId)
-                                .map((s) => _buildStaffWithDays(s, branch.id, isAdmin: false))
-                                .toList(),
+                            
+                            // Staff list - filtered by selected date
+                            if (filteredStaff.isEmpty && _selectedDate != null)
+                              Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Icon(FontAwesomeIcons.userSlash, size: 32, color: Colors.grey.shade400),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'No staff working on this day',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Tap another date or clear selection',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else ...[
+                              // Staff list - show admin first
+                              ...filteredStaff
+                                  .where((s) => s.id == widget.branch.adminStaffId)
+                                  .map((s) => _buildStaffWithDays(s, widget.branch.id, isAdmin: true))
+                                  .toList(),
+                              ...filteredStaff
+                                  .where((s) => s.id != widget.branch.adminStaffId)
+                                  .map((s) => _buildStaffWithDays(s, widget.branch.id, isAdmin: false))
+                                  .toList(),
+                            ],
                           ],
                         ),
                 ),
@@ -1752,9 +1866,9 @@ class _BranchPreviewSheet extends StatelessWidget {
             child: SizedBox(
               width: double.infinity,
               height: 52,
-              child: canEdit
+              child: widget.canEdit
                   ? ElevatedButton.icon(
-                      onPressed: onEdit,
+                      onPressed: widget.onEdit,
                       icon: const Icon(FontAwesomeIcons.penToSquare, size: 14),
                       label: const Text('Edit Branch', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                       style: ElevatedButton.styleFrom(
@@ -1818,6 +1932,268 @@ class _BranchPreviewSheet extends StatelessWidget {
     );
   }
 
+  // Calendar widget for staff schedule
+  Widget _buildStaffCalendar(List<StaffOption> branchStaff) {
+    final daysInMonth = DateTime(_focusedMonth.year, _focusedMonth.month + 1, 0).day;
+    final firstDayOfMonth = DateTime(_focusedMonth.year, _focusedMonth.month, 1);
+    final startingWeekday = firstDayOfMonth.weekday % 7; // Sunday = 0
+    final today = DateTime.now();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF3B82F6).withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF3B82F6).withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Month header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  const Color(0xFF3B82F6).withOpacity(0.1),
+                  const Color(0xFF3B82F6).withOpacity(0.05),
+                ],
+              ),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _focusedMonth = DateTime(_focusedMonth.year, _focusedMonth.month - 1);
+                    });
+                  },
+                  icon: const Icon(FontAwesomeIcons.chevronLeft, size: 14),
+                  color: const Color(0xFF3B82F6),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                ),
+                Text(
+                  '${_getMonthName(_focusedMonth.month)} ${_focusedMonth.year}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF3B82F6),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _focusedMonth = DateTime(_focusedMonth.year, _focusedMonth.month + 1);
+                    });
+                  },
+                  icon: const Icon(FontAwesomeIcons.chevronRight, size: 14),
+                  color: const Color(0xFF3B82F6),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                ),
+              ],
+            ),
+          ),
+          
+          // Day headers
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              children: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                  .map((day) => Expanded(
+                        child: Center(
+                          child: Text(
+                            day,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: day == 'Sun' || day == 'Sat'
+                                  ? Colors.red.shade400
+                                  : Colors.grey.shade600,
+                            ),
+                          ),
+                        ),
+                      ))
+                  .toList(),
+            ),
+          ),
+          
+          // Calendar grid
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+            child: Column(
+              children: List.generate(6, (weekIndex) {
+                return Row(
+                  children: List.generate(7, (dayIndex) {
+                    final dayNumber = weekIndex * 7 + dayIndex - startingWeekday + 1;
+                    if (dayNumber < 1 || dayNumber > daysInMonth) {
+                      return Expanded(child: Container(height: 40));
+                    }
+                    
+                    final date = DateTime(_focusedMonth.year, _focusedMonth.month, dayNumber);
+                    final isSelected = _selectedDate != null &&
+                        _selectedDate!.year == date.year &&
+                        _selectedDate!.month == date.month &&
+                        _selectedDate!.day == date.day;
+                    final isToday = date.year == today.year &&
+                        date.month == today.month &&
+                        date.day == today.day;
+                    
+                    // Count staff working on this day
+                    final dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                    final dayName = dayNames[date.weekday % 7];
+                    final staffWorkingCount = branchStaff.where((s) {
+                      final schedule = s.weeklySchedule;
+                      if (schedule == null) return false;
+                      final daySchedule = schedule[dayName];
+                      if (daySchedule is Map) {
+                        return daySchedule['branchId'] == widget.branch.id;
+                      }
+                      return false;
+                    }).length;
+                    
+                    final hasStaff = staffWorkingCount > 0;
+                    
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            if (isSelected) {
+                              _selectedDate = null;
+                            } else {
+                              _selectedDate = date;
+                            }
+                          });
+                        },
+                        child: Container(
+                          height: 40,
+                          margin: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? const Color(0xFF3B82F6)
+                                : isToday
+                                    ? const Color(0xFF3B82F6).withOpacity(0.1)
+                                    : hasStaff
+                                        ? const Color(0xFF10B981).withOpacity(0.1)
+                                        : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            border: isToday && !isSelected
+                                ? Border.all(color: const Color(0xFF3B82F6), width: 1.5)
+                                : null,
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                '$dayNumber',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: isSelected || isToday
+                                      ? FontWeight.bold
+                                      : FontWeight.w500,
+                                  color: isSelected
+                                      ? Colors.white
+                                      : dayIndex == 0 || dayIndex == 6
+                                          ? Colors.red.shade400
+                                          : AppColors.text,
+                                ),
+                              ),
+                              if (hasStaff && !isSelected)
+                                Container(
+                                  margin: const EdgeInsets.only(top: 2),
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF10B981),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              if (isSelected && hasStaff)
+                                Text(
+                                  '$staffWorkingCount',
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                );
+              }),
+            ),
+          ),
+          
+          // Legend
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF10B981),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text('Staff working', style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                  ],
+                ),
+                const SizedBox(width: 16),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: const Color(0xFF3B82F6), width: 1.5),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text('Today', style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getMonthName(int month) {
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return months[month - 1];
+  }
+
+  String _getDayName(int weekday) {
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    return days[weekday - 1];
+  }
+
   Widget _buildDetailRow(String label, String value) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1837,7 +2213,7 @@ class _BranchPreviewSheet extends StatelessWidget {
   }
 
   Widget _buildHoursDisplay() {
-    if (branch.hours == null) {
+    if (widget.branch.hours == null) {
       return const Text('No hours configured', style: TextStyle(color: AppColors.muted));
     }
 
@@ -1847,7 +2223,7 @@ class _BranchPreviewSheet extends StatelessWidget {
     return Column(
       children: List.generate(days.length, (index) {
         final day = days[index];
-        final dayHours = branch.hours![day];
+        final dayHours = widget.branch.hours![day];
         final isClosed = dayHours == null || dayHours['closed'] == true;
         final open = dayHours?['open'] ?? '';
         final close = dayHours?['close'] ?? '';
