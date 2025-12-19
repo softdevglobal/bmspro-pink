@@ -1520,11 +1520,18 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     // Calculate current minutes based on branch's local time
     final currentMinutes = isToday ? (branchNow.hour * 60 + branchNow.minute) : -1;
     
-    // Generate time slots using branch hours
-    final List<TimeOfDay> slots = [];
+    // Generate time slots using branch hours (including slots that exceed closing time for display purposes)
+    final List<Map<String, dynamic>> slotsWithStatus = [];
     const interval = 15;
     
-    for (int slotMinutes = startMinutes; slotMinutes <= latestSlotStart; slotMinutes += interval) {
+    // Helper to format closing time
+    String formatClosingTime() {
+      final h = endHour.toString().padLeft(2, '0');
+      final m = endMinute.toString().padLeft(2, '0');
+      return '$h:$m';
+    }
+    
+    for (int slotMinutes = startMinutes; slotMinutes < endMinutes; slotMinutes += interval) {
       // Skip past times if date is today
       if (isToday && slotMinutes <= currentMinutes) {
         continue;
@@ -1532,7 +1539,22 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       
       final hour = slotMinutes ~/ 60;
       final minute = slotMinutes % 60;
-      slots.add(TimeOfDay(hour: hour, minute: minute));
+      final time = TimeOfDay(hour: hour, minute: minute);
+      
+      // Check if service would extend past closing time
+      if (slotMinutes + durationMinutes > endMinutes) {
+        slotsWithStatus.add({
+          'time': time,
+          'available': false,
+          'reason': 'closes_before_finish',
+          'message': 'Service ends after closing (${formatClosingTime()})',
+        });
+      } else {
+        slotsWithStatus.add({
+          'time': time,
+          'available': true,
+        });
+      }
     }
 
     final selectedTime = _serviceTimeSelections[serviceId];
@@ -1549,12 +1571,15 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         : null;
 
     // Helper function to check if a time slot is OCCUPIED (booking in progress at that time)
-    // Only checks if the slot TIME falls within an existing booking, not duration-based overlap
-    bool isSlotOccupied(TimeOfDay slotTime) {
-      if (bookingDateStr == null) return false;
-      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return false;
+    // Also checks if the NEW service would OVERLAP with any existing booking
+    // Returns: {'occupied': bool, 'reason': String?}
+    Map<String, dynamic> isSlotOccupied(TimeOfDay slotTime) {
+      if (bookingDateStr == null) return {'occupied': false};
+      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return {'occupied': false};
       
       final slotMinutes = slotTime.hour * 60 + slotTime.minute;
+      // Calculate when this new service would END
+      final newServiceEndMinutes = slotMinutes + durationMinutes;
       
       for (final booking in _bookings) {
         // Check if booking is for the same date
@@ -1581,9 +1606,15 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
               final svcDuration = (svc['duration'] ?? 60) as int;
               final svcEndMinutes = svcStartMinutes + svcDuration;
               
-              // Check if slot time falls WITHIN this service's period
-              if (slotMinutes >= svcStartMinutes && slotMinutes < svcEndMinutes) {
-                return true;
+              // Check for ANY overlap between new service and existing service
+              // Overlap occurs if: newStart < existingEnd AND existingStart < newEnd
+              if (slotMinutes < svcEndMinutes && svcStartMinutes < newServiceEndMinutes) {
+                // Determine the reason for the conflict
+                if (slotMinutes >= svcStartMinutes && slotMinutes < svcEndMinutes) {
+                  return {'occupied': true, 'reason': 'booked'}; // Slot starts during existing booking
+                } else {
+                  return {'occupied': true, 'reason': 'insufficient_time'}; // Service would extend into existing booking
+                }
               }
             }
           }
@@ -1602,21 +1633,31 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           final bookingDuration = (booking['duration'] ?? 60) as int;
           final bookingEndMinutes = bookingStartMinutes + bookingDuration;
           
-          // Check if slot time falls WITHIN this booking's period
-          if (slotMinutes >= bookingStartMinutes && slotMinutes < bookingEndMinutes) {
-            return true;
+          // Check for ANY overlap between new service and existing booking
+          // Overlap occurs if: newStart < existingEnd AND existingStart < newEnd
+          if (slotMinutes < bookingEndMinutes && bookingStartMinutes < newServiceEndMinutes) {
+            // Determine the reason for the conflict
+            if (slotMinutes >= bookingStartMinutes && slotMinutes < bookingEndMinutes) {
+              return {'occupied': true, 'reason': 'booked'}; // Slot starts during existing booking
+            } else {
+              return {'occupied': true, 'reason': 'insufficient_time'}; // Service would extend into existing booking
+            }
           }
         }
       }
       
-      return false;
+      return {'occupied': false};
     }
     
     // Helper function to check if slot is blocked by OTHER services in current booking session (same staff)
-    bool isSlotBlockedByCurrentSelection(TimeOfDay slotTime) {
-      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return false;
+    // Also checks if the NEW service would OVERLAP with other selected services
+    // Returns: {'blocked': bool, 'reason': String?}
+    Map<String, dynamic> isSlotBlockedByCurrentSelection(TimeOfDay slotTime) {
+      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return {'blocked': false};
       
       final slotMinutes = slotTime.hour * 60 + slotTime.minute;
+      // Calculate when this new service would END
+      final newServiceEndMinutes = slotMinutes + durationMinutes;
       
       for (final otherServiceId in _selectedServiceIds) {
         if (otherServiceId == serviceId) continue;
@@ -1637,74 +1678,193 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         final otherStartMinutes = otherTime.hour * 60 + otherTime.minute;
         final otherEndMinutes = otherStartMinutes + otherDuration;
         
-        // Check if slot time falls WITHIN the other service's period
-        if (slotMinutes >= otherStartMinutes && slotMinutes < otherEndMinutes) {
-          return true;
+        // Check for ANY overlap between new service and other selected service
+        // Overlap occurs if: newStart < otherEnd AND otherStart < newEnd
+        if (slotMinutes < otherEndMinutes && otherStartMinutes < newServiceEndMinutes) {
+          // Determine the reason for the conflict
+          if (slotMinutes >= otherStartMinutes && slotMinutes < otherEndMinutes) {
+            return {'blocked': true, 'reason': 'selected'}; // Slot starts during other selected service
+          } else {
+            return {'blocked': true, 'reason': 'insufficient_time_selected'}; // Would extend into other service
+          }
         }
       }
       
-      return false;
+      return {'blocked': false};
     }
 
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: slots.map((time) {
-        final isSelected = selectedTime != null &&
-            selectedTime.hour == time.hour &&
-            selectedTime.minute == time.minute;
-        final timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-        
-        final isOccupiedByBooking = isSlotOccupied(time);
-        final isBlockedBySelection = isSlotBlockedByCurrentSelection(time);
-        final isDisabled = isOccupiedByBooking || isBlockedBySelection;
+    // Check if any slots have duration constraint issues (for showing legend)
+    final hasClosingTimeIssue = slotsWithStatus.any((s) => s['reason'] == 'closes_before_finish');
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: slotsWithStatus.map((slotData) {
+            final time = slotData['time'] as TimeOfDay;
+            final isPreDisabled = slotData['available'] == false;
+            final preReason = slotData['reason'] as String?;
+            
+            final isSelected = selectedTime != null &&
+                selectedTime.hour == time.hour &&
+                selectedTime.minute == time.minute;
+            final timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+            
+            // Check booking and selection conflicts
+            final occupiedResult = isSlotOccupied(time);
+            final blockedResult = isSlotBlockedByCurrentSelection(time);
+            
+            final isOccupiedByBooking = occupiedResult['occupied'] == true;
+            final isBlockedBySelection = blockedResult['blocked'] == true;
+            final isClosesBeforeFinish = preReason == 'closes_before_finish';
+            final isInsufficientTime = occupiedResult['reason'] == 'insufficient_time' || 
+                                        blockedResult['reason'] == 'insufficient_time_selected';
+            
+            final isDisabled = isPreDisabled || isOccupiedByBooking || isBlockedBySelection;
+            
+            // Determine colors based on reason
+            Color bgColor;
+            Color borderColor;
+            Color textColor;
+            
+            if (isSelected) {
+              bgColor = AppColors.primary;
+              borderColor = AppColors.primary;
+              textColor = Colors.white;
+            } else if (isClosesBeforeFinish) {
+              bgColor = Colors.orange.shade50;
+              borderColor = Colors.orange.shade200;
+              textColor = Colors.orange.shade400;
+            } else if (isInsufficientTime) {
+              bgColor = Colors.yellow.shade50;
+              borderColor = Colors.yellow.shade300;
+              textColor = Colors.yellow.shade700;
+            } else if (isOccupiedByBooking) {
+              bgColor = Colors.red.shade50;
+              borderColor = Colors.red.shade200;
+              textColor = Colors.red.shade400;
+            } else if (isBlockedBySelection) {
+              bgColor = Colors.amber.shade50;
+              borderColor = Colors.amber.shade200;
+              textColor = Colors.amber.shade600;
+            } else {
+              bgColor = AppColors.background;
+              borderColor = AppColors.border;
+              textColor = AppColors.text;
+            }
 
-        return GestureDetector(
-          onTap: isDisabled ? null : () {
-            setState(() {
-              _serviceTimeSelections = Map.from(_serviceTimeSelections);
-              _serviceTimeSelections[serviceId] = time;
-            });
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: isSelected 
-                  ? AppColors.primary 
-                  : isOccupiedByBooking
-                      ? Colors.red.shade50
-                      : isBlockedBySelection
-                          ? Colors.amber.shade50
-                          : AppColors.background,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: isSelected 
-                    ? AppColors.primary 
-                    : isOccupiedByBooking
-                        ? Colors.red.shade200
-                        : isBlockedBySelection
-                            ? Colors.amber.shade200
-                            : AppColors.border,
+            return GestureDetector(
+              onTap: isDisabled ? null : () {
+                setState(() {
+                  _serviceTimeSelections = Map.from(_serviceTimeSelections);
+                  _serviceTimeSelections[serviceId] = time;
+                });
+              },
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: bgColor,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: borderColor),
+                    ),
+                    child: Text(
+                      timeStr,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: textColor,
+                        decoration: isOccupiedByBooking && occupiedResult['reason'] == 'booked' 
+                            ? TextDecoration.lineThrough 
+                            : null,
+                      ),
+                    ),
+                  ),
+                  // Warning badge for time constraint issues
+                  if (isClosesBeforeFinish || isInsufficientTime)
+                    Positioned(
+                      top: -4,
+                      right: -4,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: Colors.orange,
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            '!',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            ),
-            child: Text(
-              timeStr,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: isSelected 
-                    ? Colors.white 
-                    : isOccupiedByBooking
-                        ? Colors.red.shade400
-                        : isBlockedBySelection
-                            ? Colors.amber.shade600
-                            : AppColors.text,
-                decoration: isOccupiedByBooking ? TextDecoration.lineThrough : null,
-              ),
+            );
+          }).toList(),
+        ),
+        // Legend for unavailable slot reasons
+        if (hasClosingTimeIssue || slotsWithStatus.any((s) {
+          final time = s['time'] as TimeOfDay;
+          final result = isSlotOccupied(time);
+          return result['reason'] == 'insufficient_time';
+        }))
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade300,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Closes before service ends',
+                      style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: Colors.yellow.shade300,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Overlaps with next booking',
+                      style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-        );
-      }).toList(),
+      ],
     );
   }
 
