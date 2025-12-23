@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'services_page.dart';
 import 'staff_management_page.dart';
 import 'attendance_page.dart';
@@ -9,6 +10,7 @@ import 'branches_page.dart';
 import 'salon_settings_page.dart';
 import 'audit_logs_page.dart';
 import '../widgets/animated_toggle.dart';
+import '../services/staff_check_in_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -644,6 +646,8 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
   int _myCompletedServices = 0;
   double _myRevenue = 0;
   int _myTotalBookings = 0;
+  Map<String, int> _dailyWorkingHours = {}; // Day-wise working hours in seconds
+  int _totalWeeklyHours = 0; // Total weekly hours in seconds
 
   // Branch Summary data
   double _branchRevenue = 0;
@@ -845,6 +849,9 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
       
       debugPrint('Final staff count for branch $branchId: $staffCount');
 
+      // Calculate weekly working hours (day-wise)
+      await _calculateWeeklyWorkingHours(user.uid);
+
       if (!mounted) return;
       setState(() {
         _myCompletedServices = myCompleted;
@@ -868,6 +875,225 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
     if (price is num) return price.toDouble();
     if (price is String) return double.tryParse(price) ?? 0;
     return 0;
+  }
+
+  Future<void> _calculateWeeklyWorkingHours(String userId) async {
+    try {
+      // Get the start of the current week (Monday)
+      final now = DateTime.now();
+      final startOfWeek = DateTime(now.year, now.month, now.day)
+          .subtract(Duration(days: now.weekday - 1));
+      final startOfWeekTimestamp = Timestamp.fromDate(startOfWeek);
+      
+      // Get the end of the current week (Sunday)
+      final endOfWeek = startOfWeek.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
+      final endOfWeekTimestamp = Timestamp.fromDate(endOfWeek);
+
+      // Query check-ins for this week
+      final checkInsQuery = await FirebaseFirestore.instance
+          .collection('staff_check_ins')
+          .where('staffAuthUid', isEqualTo: userId)
+          .where('checkInTime', isGreaterThanOrEqualTo: startOfWeekTimestamp)
+          .where('checkInTime', isLessThanOrEqualTo: endOfWeekTimestamp)
+          .get();
+
+      // Initialize day-wise map
+      final dailyHours = <String, int>{
+        'Monday': 0,
+        'Tuesday': 0,
+        'Wednesday': 0,
+        'Thursday': 0,
+        'Friday': 0,
+        'Saturday': 0,
+        'Sunday': 0,
+      };
+
+      int totalSeconds = 0;
+
+      for (final doc in checkInsQuery.docs) {
+        final checkIn = StaffCheckInRecord.fromFirestore(doc);
+        final checkInDate = checkIn.checkInTime;
+        final dayName = _getDayName(checkInDate.weekday);
+        
+        // Calculate working seconds for this check-in
+        final workingSeconds = checkIn.workingSeconds;
+        dailyHours[dayName] = (dailyHours[dayName] ?? 0) + workingSeconds;
+        totalSeconds += workingSeconds;
+      }
+
+      if (mounted) {
+        setState(() {
+          _dailyWorkingHours = dailyHours;
+          _totalWeeklyHours = totalSeconds;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error calculating weekly working hours: $e');
+      if (mounted) {
+        setState(() {
+          _dailyWorkingHours = {
+            'Monday': 0,
+            'Tuesday': 0,
+            'Wednesday': 0,
+            'Thursday': 0,
+            'Friday': 0,
+            'Saturday': 0,
+            'Sunday': 0,
+          };
+          _totalWeeklyHours = 0;
+        });
+      }
+    }
+  }
+
+  String _getDayName(int weekday) {
+    switch (weekday) {
+      case 1: return 'Monday';
+      case 2: return 'Tuesday';
+      case 3: return 'Wednesday';
+      case 4: return 'Thursday';
+      case 5: return 'Friday';
+      case 6: return 'Saturday';
+      case 7: return 'Sunday';
+      default: return 'Monday';
+    }
+  }
+
+  String _formatDuration(int seconds) {
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    if (hours > 0) {
+      return '${hours}h ${minutes}m';
+    } else if (minutes > 0) {
+      return '${minutes}m';
+    } else {
+      return '0m';
+    }
+  }
+
+  Widget _buildWeeklyHoursChart() {
+    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    
+    // Find max hours for scaling
+    double maxHours = 0;
+    for (final dayName in dayNames) {
+      final seconds = _dailyWorkingHours[dayName] ?? 0;
+      final hours = seconds / 3600.0;
+      if (hours > maxHours) maxHours = hours;
+    }
+    // Set minimum max to 8 hours for better visualization
+    if (maxHours < 8) maxHours = 8;
+
+    return BarChart(
+      BarChartData(
+        alignment: BarChartAlignment.spaceAround,
+        maxY: maxHours,
+        barTouchData: BarTouchData(
+          enabled: true,
+          touchTooltipData: BarTouchTooltipData(
+            getTooltipColor: (group) => const Color(0xFF3B82F6),
+            tooltipRoundedRadius: 8,
+            tooltipPadding: const EdgeInsets.all(8),
+            tooltipMargin: 8,
+            getTooltipItem: (group, groupIndex, rod, rodIndex) {
+              final dayName = dayNames[group.x.toInt()];
+              final seconds = _dailyWorkingHours[dayName] ?? 0;
+              return BarTooltipItem(
+                _formatDuration(seconds),
+                const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              );
+            },
+          ),
+        ),
+        titlesData: FlTitlesData(
+          show: true,
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              getTitlesWidget: (value, meta) {
+                if (value.toInt() >= 0 && value.toInt() < days.length) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      days[value.toInt()],
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  );
+                }
+                return const Text('');
+              },
+              reservedSize: 30,
+            ),
+          ),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 40,
+              getTitlesWidget: (value, meta) {
+                if (value == meta.max) return const Text('');
+                return Text(
+                  '${value.toInt()}h',
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 10,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: 2,
+          getDrawingHorizontalLine: (value) {
+            return FlLine(
+              color: AppColors.border.withOpacity(0.3),
+              strokeWidth: 1,
+            );
+          },
+        ),
+        borderData: FlBorderData(show: false),
+        barGroups: List.generate(7, (index) {
+          final dayName = dayNames[index];
+          final seconds = _dailyWorkingHours[dayName] ?? 0;
+          final hours = seconds / 3600.0;
+          return BarChartGroupData(
+            x: index,
+            barRods: [
+              BarChartRodData(
+                toY: hours,
+                color: const Color(0xFF3B82F6),
+                width: 20,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(4),
+                ),
+                backDrawRodData: BackgroundBarChartRodData(
+                  show: true,
+                  toY: maxHours,
+                  color: AppColors.border.withOpacity(0.1),
+                ),
+              ),
+            ],
+          );
+        }),
+      ),
+    );
   }
 
   @override
@@ -1024,6 +1250,75 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 20),
+        // Weekly Working Hours Section
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3B82F6).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      FontAwesomeIcons.clock,
+                      color: Color(0xFF3B82F6),
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Weekly Working Hours',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _formatDuration(_totalWeeklyHours),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'This Week',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppColors.muted,
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Bar Chart
+              SizedBox(
+                height: 200,
+                child: _buildWeeklyHoursChart(),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 20),
         // Tips Section
