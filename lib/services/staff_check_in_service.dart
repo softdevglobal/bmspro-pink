@@ -2,6 +2,35 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'location_service.dart';
 
+/// Break period model
+class BreakPeriod {
+  final DateTime startTime;
+  final DateTime? endTime;
+
+  BreakPeriod({required this.startTime, this.endTime});
+
+  Duration get duration {
+    if (endTime == null) return Duration.zero;
+    return endTime!.difference(startTime);
+  }
+
+  factory BreakPeriod.fromMap(Map<String, dynamic> map) {
+    return BreakPeriod(
+      startTime: (map['startTime'] as Timestamp).toDate(),
+      endTime: map['endTime'] != null
+          ? (map['endTime'] as Timestamp).toDate()
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'startTime': Timestamp.fromDate(startTime),
+      if (endTime != null) 'endTime': Timestamp.fromDate(endTime!),
+    };
+  }
+}
+
 /// Staff check-in record model
 class StaffCheckInRecord {
   final String? id;
@@ -22,6 +51,7 @@ class StaffCheckInRecord {
   final double allowedRadius;
   final String status;
   final String? note;
+  final List<BreakPeriod> breakPeriods;
 
   StaffCheckInRecord({
     this.id,
@@ -42,10 +72,20 @@ class StaffCheckInRecord {
     required this.allowedRadius,
     required this.status,
     this.note,
+    this.breakPeriods = const [],
   });
 
   factory StaffCheckInRecord.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    
+    // Parse break periods
+    List<BreakPeriod> breaks = [];
+    if (data['breakPeriods'] != null && data['breakPeriods'] is List) {
+      breaks = (data['breakPeriods'] as List)
+          .map((b) => BreakPeriod.fromMap(b as Map<String, dynamic>))
+          .toList();
+    }
+    
     return StaffCheckInRecord(
       id: doc.id,
       staffId: data['staffId'] ?? '',
@@ -67,15 +107,67 @@ class StaffCheckInRecord {
       allowedRadius: (data['allowedRadius'] ?? 100).toDouble(),
       status: data['status'] ?? 'checked_in',
       note: data['note'],
+      breakPeriods: breaks,
     );
   }
 
   String get hoursWorked {
     if (checkOutTime == null) return 'In progress';
-    final diff = checkOutTime!.difference(checkInTime);
-    final hours = diff.inHours;
-    final minutes = diff.inMinutes % 60;
+    
+    // Calculate total time
+    final totalDiff = checkOutTime!.difference(checkInTime);
+    
+    // Calculate total break time
+    int totalBreakSeconds = 0;
+    for (final breakPeriod in breakPeriods) {
+      if (breakPeriod.endTime != null) {
+        totalBreakSeconds += breakPeriod.duration.inSeconds;
+      }
+    }
+    
+    // Subtract break time from total time
+    final workingSeconds = totalDiff.inSeconds - totalBreakSeconds;
+    if (workingSeconds < 0) return '0h 0m';
+    
+    final hours = workingSeconds ~/ 3600;
+    final minutes = (workingSeconds % 3600) ~/ 60;
     return '${hours}h ${minutes}m';
+  }
+  
+  /// Get total working time in seconds (excluding breaks)
+  int get workingSeconds {
+    if (checkOutTime == null) {
+      // For active check-ins, calculate from check-in time to now
+      final now = DateTime.now();
+      final totalDiff = now.difference(checkInTime);
+      
+      // Calculate total break time (including active break if any)
+      int totalBreakSeconds = 0;
+      for (final breakPeriod in breakPeriods) {
+        if (breakPeriod.endTime != null) {
+          totalBreakSeconds += breakPeriod.duration.inSeconds;
+        } else {
+          // Active break - calculate from start to now
+          totalBreakSeconds += now.difference(breakPeriod.startTime).inSeconds;
+        }
+      }
+      
+      final workingSeconds = totalDiff.inSeconds - totalBreakSeconds;
+      return workingSeconds > 0 ? workingSeconds : 0;
+    }
+    
+    // For completed check-ins
+    final totalDiff = checkOutTime!.difference(checkInTime);
+    
+    int totalBreakSeconds = 0;
+    for (final breakPeriod in breakPeriods) {
+      if (breakPeriod.endTime != null) {
+        totalBreakSeconds += breakPeriod.duration.inSeconds;
+      }
+    }
+    
+    final workingSeconds = totalDiff.inSeconds - totalBreakSeconds;
+    return workingSeconds > 0 ? workingSeconds : 0;
   }
 }
 
@@ -284,6 +376,7 @@ class StaffCheckInService {
         'isWithinRadius': true,
         'allowedRadius': allowedRadius,
         'status': 'checked_in',
+        'breakPeriods': [], // Initialize break periods array
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -336,12 +429,32 @@ class StaffCheckInService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // Calculate hours worked
+      // Calculate hours worked (excluding breaks)
       final checkInTime = (checkInData['checkInTime'] as Timestamp).toDate();
       final now = DateTime.now();
-      final diff = now.difference(checkInTime);
-      final hours = diff.inHours;
-      final minutes = diff.inMinutes % 60;
+      final totalDiff = now.difference(checkInTime);
+      
+      // Calculate total break time
+      int totalBreakSeconds = 0;
+      if (checkInData['breakPeriods'] != null && checkInData['breakPeriods'] is List) {
+        final breaks = checkInData['breakPeriods'] as List;
+        for (final breakData in breaks) {
+          if (breakData is Map) {
+            final breakStart = (breakData['startTime'] as Timestamp).toDate();
+            final breakEnd = breakData['endTime'] != null
+                ? (breakData['endTime'] as Timestamp).toDate()
+                : null;
+            if (breakEnd != null) {
+              totalBreakSeconds += breakEnd.difference(breakStart).inSeconds;
+            }
+          }
+        }
+      }
+      
+      // Subtract break time
+      final workingSeconds = totalDiff.inSeconds - totalBreakSeconds;
+      final hours = workingSeconds > 0 ? workingSeconds ~/ 3600 : 0;
+      final minutes = workingSeconds > 0 ? (workingSeconds % 3600) ~/ 60 : 0;
 
       return CheckOutResult(
         success: true,
@@ -416,5 +529,109 @@ class StaffCheckInService {
       if (snap.docs.isEmpty) return null;
       return StaffCheckInRecord.fromFirestore(snap.docs.first);
     });
+  }
+
+  /// Start a break period
+  static Future<bool> startBreak(String checkInId) async {
+    try {
+      print('startBreak called with checkInId: $checkInId');
+      final checkInDoc = await _db.collection('staff_check_ins').doc(checkInId).get();
+      if (!checkInDoc.exists) {
+        print('Check-in document does not exist');
+        return false;
+      }
+
+      final checkInData = checkInDoc.data()!;
+      print('Check-in status: ${checkInData['status']}');
+      if (checkInData['status'] != 'checked_in') {
+        print('Check-in is not active');
+        return false;
+      }
+
+      // Check if there's already an active break
+      List<dynamic> breakPeriods = List.from(checkInData['breakPeriods'] ?? []);
+      for (final breakPeriod in breakPeriods) {
+        if (breakPeriod is Map && breakPeriod['endTime'] == null) {
+          print('Break already in progress');
+          return false; // Already on break
+        }
+      }
+      
+      // Add new break period - use Timestamp.now() instead of FieldValue.serverTimestamp()
+      // because Firestore doesn't support serverTimestamp() inside arrays
+      breakPeriods.add({
+        'startTime': Timestamp.now(),
+        'endTime': null,
+      });
+
+      print('Updating check-in with break period...');
+      await _db.collection('staff_check_ins').doc(checkInId).update({
+        'breakPeriods': breakPeriods,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      print('Break started successfully');
+      return true;
+    } catch (e) {
+      print('Error starting break: $e');
+      return false;
+    }
+  }
+
+  /// End a break period
+  static Future<bool> endBreak(String checkInId) async {
+    try {
+      print('endBreak called with checkInId: $checkInId');
+      final checkInDoc = await _db.collection('staff_check_ins').doc(checkInId).get();
+      if (!checkInDoc.exists) {
+        print('Check-in document does not exist');
+        return false;
+      }
+
+      final checkInData = checkInDoc.data()!;
+      print('Check-in status: ${checkInData['status']}');
+      if (checkInData['status'] != 'checked_in') {
+        print('Check-in is not active');
+        return false;
+      }
+
+      // Get existing break periods
+      List<dynamic> breakPeriods = List.from(checkInData['breakPeriods'] ?? []);
+      print('Current break periods: ${breakPeriods.length}');
+      
+      // Find the last break without an end time and close it
+      bool found = false;
+      for (int i = breakPeriods.length - 1; i >= 0; i--) {
+        final breakPeriod = breakPeriods[i];
+        if (breakPeriod is Map && breakPeriod['endTime'] == null) {
+          // Use Timestamp.now() instead of FieldValue.serverTimestamp()
+          // because Firestore doesn't support serverTimestamp() inside arrays
+          breakPeriods[i] = {
+            ...breakPeriod,
+            'endTime': Timestamp.now(),
+          };
+          found = true;
+          print('Found active break at index $i');
+          break;
+        }
+      }
+
+      if (!found) {
+        print('No active break found to end');
+        return false;
+      }
+
+      print('Updating check-in to end break...');
+      await _db.collection('staff_check_ins').doc(checkInId).update({
+        'breakPeriods': breakPeriods,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      print('Break ended successfully');
+      return true;
+    } catch (e) {
+      print('Error ending break: $e');
+      return false;
+    }
   }
 }

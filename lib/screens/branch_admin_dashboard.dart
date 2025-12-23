@@ -2,12 +2,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'profile_screen.dart' as profile_screen;
 import 'appointment_requests_page.dart';
 import 'all_appointments_page.dart';
 import 'appointment_details_page.dart';
+import 'staff_check_in_page.dart';
+import '../services/staff_check_in_service.dart';
 
 enum ClockStatus { out, clockedIn, onBreak }
 
@@ -50,6 +53,9 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   Timer? _workTimer;
   int _workedSeconds = 0;
   bool _timerRunning = false;
+  DateTime? _checkInTime; // Store the actual check-in time to prevent recalculation issues
+  String? _selectedBranch;
+  String? _activeCheckInId; // Store check-in ID for break tracking
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -91,6 +97,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     _loadData();
     _listenToPendingRequests();
     _fetchTodayAppointments();
+    _refreshCheckInStatus(); // Load current check-in status
   }
   
   @override
@@ -102,32 +109,141 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   }
   
   // Clock in/out handlers
-  void _handleClockAction() {
+  void _handleClockAction() async {
     if (_clockStatus == ClockStatus.out) {
-      setState(() {
-        _clockStatus = ClockStatus.clockedIn;
-      });
-      _resetWorkTimer();
-      _startWorkTimer();
+      // Navigate to location-based check-in page
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const StaffCheckInPage()),
+      );
+      // Refresh check-in status after returning
+      _refreshCheckInStatus();
     } else if (_clockStatus == ClockStatus.clockedIn) {
+      // Navigate to check-in page for check-out
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const StaffCheckInPage()),
+      );
+      // Refresh check-in status after returning
+      _refreshCheckInStatus();
+    }
+  }
+
+  Future<void> _refreshCheckInStatus() async {
+    final activeCheckIn = await StaffCheckInService.getActiveCheckIn();
+    if (mounted) {
       setState(() {
-        _clockStatus = ClockStatus.out;
+        if (activeCheckIn != null) {
+          _clockStatus = ClockStatus.clockedIn;
+          _selectedBranch = activeCheckIn.branchName;
+          _activeCheckInId = activeCheckIn.id;
+          
+          // Use workingSeconds from the record (which excludes breaks)
+          final newCheckInTime = activeCheckIn.checkInTime;
+          if (_checkInTime == null || 
+              _checkInTime!.millisecondsSinceEpoch != newCheckInTime.millisecondsSinceEpoch ||
+              !_timerRunning) {
+            _checkInTime = newCheckInTime;
+            // Use workingSeconds from the record which already excludes breaks
+            _workedSeconds = activeCheckIn.workingSeconds;
+            _startWorkTimer();
+          }
+        } else {
+          _clockStatus = ClockStatus.out;
+          _selectedBranch = null;
+          _checkInTime = null;
+          _activeCheckInId = null;
+          _resetWorkTimer();
+        }
       });
-      _resetWorkTimer();
     }
   }
   
-  void _handleBreakAction() {
+  void _handleBreakAction() async {
+    print('Break button clicked. Current status: $_clockStatus');
+    
+    // Get check-in ID if not already set
+    String? checkInId = _activeCheckInId;
+    if (checkInId == null) {
+      print('Check-in ID not set, fetching active check-in...');
+      final activeCheckIn = await StaffCheckInService.getActiveCheckIn();
+      if (activeCheckIn == null || activeCheckIn.id == null) {
+        print('No active check-in found');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No active check-in found. Please check in first.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      checkInId = activeCheckIn.id;
+      print('Found check-in ID: $checkInId');
+      if (mounted) {
+        setState(() {
+          _activeCheckInId = checkInId;
+        });
+      }
+    } else {
+      print('Using existing check-in ID: $checkInId');
+    }
+    
     final next = _clockStatus == ClockStatus.clockedIn
         ? ClockStatus.onBreak
         : ClockStatus.clockedIn;
-    setState(() {
-      _clockStatus = next;
-    });
+    
+    print('Next status will be: $next');
+    
     if (next == ClockStatus.onBreak) {
-      _pauseWorkTimer();
+      // Start break - record in Firestore
+      print('Starting break...');
+      final success = await StaffCheckInService.startBreak(checkInId!);
+      print('Start break result: $success');
+      if (success && mounted) {
+        setState(() {
+          _clockStatus = ClockStatus.onBreak;
+        });
+        _pauseWorkTimer();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Break started'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to start break. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } else if (next == ClockStatus.clockedIn) {
-      _startWorkTimer();
+      // End break - record in Firestore
+      print('Ending break...');
+      final success = await StaffCheckInService.endBreak(checkInId!);
+      print('End break result: $success');
+      if (success && mounted) {
+        setState(() {
+          _clockStatus = ClockStatus.clockedIn;
+        });
+        // Refresh to get updated working seconds (excluding the break)
+        _refreshCheckInStatus();
+        _startWorkTimer();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Break ended. Back to work!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to end break. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
   
@@ -149,9 +265,11 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   }
   
   void _resetWorkTimer() {
-    _workTimer?.cancel();
-    _timerRunning = false;
-    _workedSeconds = 0;
+    _pauseWorkTimer();
+    setState(() {
+      _workedSeconds = 0;
+      _checkInTime = null;
+    });
   }
   
   String get _formattedWorkTime {
@@ -159,6 +277,88 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     final minutes = (_workedSeconds % 3600) ~/ 60;
     final seconds = _workedSeconds % 60;
     return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  String _formatElapsed(int totalSeconds) {
+    final hrs = (totalSeconds ~/ 3600).toString().padLeft(2, '0');
+    final mins = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
+    final secs = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$hrs:$mins:$secs';
+  }
+
+  Widget _buildTimerChip({required bool paused}) {
+    final Gradient gradient = paused
+        ? LinearGradient(
+            colors: [Colors.orange.shade400, Colors.orange.shade600])
+        : const LinearGradient(colors: [AppColors.primary, AppColors.accent]);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: gradient,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.25),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Icon(
+                paused ? FontAwesomeIcons.pause : FontAwesomeIcons.clock,
+                size: 12,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            _formatElapsed(_workedSeconds),
+            style: GoogleFonts.robotoMono(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(width: 8),
+          ScaleTransition(
+            scale: _pulseAnimation,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          if (paused) ...[
+            const SizedBox(width: 8),
+            const Text(
+              'Paused',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w600),
+            ),
+          ]
+        ],
+      ),
+    );
   }
   
   /// Listen to pending appointment requests for branch admin approval
@@ -747,8 +947,8 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
         icon = FontAwesomeIcons.check;
         iconColor = Colors.green;
         iconBg = Colors.green.shade100;
-        title = 'Clocked In: ${widget.branchName}';
-        subtitle = 'Time worked: $_formattedWorkTime';
+        title = 'Clocked In: ${_selectedBranch ?? widget.branchName}';
+        subtitle = "You're on duty!";
 
         mainButton = _buildClockButton(
           text: 'Clock Out',
@@ -833,6 +1033,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               ),
             ],
           ),
+          if (_clockStatus != ClockStatus.out) ...[
+            const SizedBox(height: 12),
+            _buildTimerChip(paused: _clockStatus == ClockStatus.onBreak),
+          ],
           const SizedBox(height: 16),
           mainButton,
           if (secondaryButton != null) ...[

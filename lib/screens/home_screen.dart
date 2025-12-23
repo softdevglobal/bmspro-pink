@@ -71,6 +71,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _workedSeconds = 0;
   bool _timerRunning = false;
   DateTime? _checkInTime; // Store the actual check-in time to prevent recalculation issues
+  String? _activeCheckInId; // Store check-in ID for break tracking
 
   // Role state
   String? _userRole;
@@ -444,44 +445,116 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (activeCheckIn != null) {
           _status = ClockStatus.clockedIn;
           _selectedBranch = activeCheckIn.branchName;
+          _activeCheckInId = activeCheckIn.id;
           
+          // Use workingSeconds from the record (which excludes breaks)
           // Only recalculate if check-in time changed or timer not running
-          // This prevents resetting the timer when it's already running
           final newCheckInTime = activeCheckIn.checkInTime;
           if (_checkInTime == null || 
               _checkInTime!.millisecondsSinceEpoch != newCheckInTime.millisecondsSinceEpoch ||
               !_timerRunning) {
             _checkInTime = newCheckInTime;
-            final now = DateTime.now();
-            final difference = now.difference(_checkInTime!);
-            // Ensure we don't get negative values - if check-in time is in the future, start from 0
-            _workedSeconds = difference.inSeconds > 0 ? difference.inSeconds : 0;
+            // Use workingSeconds from the record which already excludes breaks
+            _workedSeconds = activeCheckIn.workingSeconds;
             _startWorkTimer();
           }
         } else {
           _status = ClockStatus.out;
           _selectedBranch = null;
           _checkInTime = null;
+          _activeCheckInId = null;
           _resetWorkTimer();
         }
       });
     }
   }
 
-  void _handleBreakAction() {
-    _startLoading(() {
-      final next = _status == ClockStatus.clockedIn
-          ? ClockStatus.onBreak
-          : ClockStatus.clockedIn;
-      setState(() {
-        _status = next;
-      });
-      if (next == ClockStatus.onBreak) {
-        _pauseWorkTimer();
-      } else if (next == ClockStatus.clockedIn) {
-        _startWorkTimer();
+  void _handleBreakAction() async {
+    print('Break button clicked. Current status: $_status');
+    
+    // Get check-in ID if not already set
+    String? checkInId = _activeCheckInId;
+    if (checkInId == null) {
+      print('Check-in ID not set, fetching active check-in...');
+      final activeCheckIn = await StaffCheckInService.getActiveCheckIn();
+      if (activeCheckIn == null || activeCheckIn.id == null) {
+        print('No active check-in found');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No active check-in found. Please check in first.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
       }
-    });
+      checkInId = activeCheckIn.id;
+      print('Found check-in ID: $checkInId');
+      if (mounted) {
+        setState(() {
+          _activeCheckInId = checkInId;
+        });
+      }
+    } else {
+      print('Using existing check-in ID: $checkInId');
+    }
+    
+    final next = _status == ClockStatus.clockedIn
+        ? ClockStatus.onBreak
+        : ClockStatus.clockedIn;
+    
+    print('Next status will be: $next');
+    
+    if (next == ClockStatus.onBreak) {
+      // Start break - record in Firestore
+      print('Starting break...');
+      final success = await StaffCheckInService.startBreak(checkInId!);
+      print('Start break result: $success');
+      if (success && mounted) {
+        setState(() {
+          _status = ClockStatus.onBreak;
+        });
+        _pauseWorkTimer();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Break started'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to start break. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } else if (next == ClockStatus.clockedIn) {
+      // End break - record in Firestore
+      print('Ending break...');
+      final success = await StaffCheckInService.endBreak(checkInId!);
+      print('End break result: $success');
+      if (success && mounted) {
+        setState(() {
+          _status = ClockStatus.clockedIn;
+        });
+        // Refresh to get updated working seconds (excluding the break)
+        _refreshCheckInStatus();
+        _startWorkTimer();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Break ended. Back to work!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to end break. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   // Simulate network/processing delay
@@ -495,9 +568,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (_timerRunning) return;
     _timerRunning = true;
     _workTimer?.cancel();
-    _workTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _workTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (!mounted) return;
       if (_status == ClockStatus.clockedIn) {
+        // Only increment if not on break
         setState(() {
           _workedSeconds += 1;
         });
