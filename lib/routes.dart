@@ -4,6 +4,8 @@ import 'screens/welcome_screen.dart';
 import 'screens/login_screen.dart';
 // import 'screens/register_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/staff_check_in_page.dart';
+import 'screens/branch_location_picker_page.dart';
 
 class AppRoutes {
   static const String splash = '/';
@@ -11,6 +13,8 @@ class AppRoutes {
   static const String login = '/login';
   static const String register = '/register';
   static const String home = '/home';
+  static const String staffCheckIn = '/staff-check-in';
+  static const String branchLocationPicker = '/branch-location-picker';
 
   static Route<dynamic>? onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -24,6 +28,9 @@ class AppRoutes {
       //   return MaterialPageRoute(builder: (_) => const RegisterScreen());
       case home:
         return MaterialPageRoute(builder: (_) => const HomeScreen());
+      case staffCheckIn:
+        return MaterialPageRoute(builder: (_) => const StaffCheckInPage());
+      // Note: branchLocationPicker requires arguments, use Navigator.push with MaterialPageRoute
       default:
         return MaterialPageRoute(
           builder: (_) => const Scaffold(

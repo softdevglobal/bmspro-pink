@@ -18,6 +18,8 @@ import 'admin_dashboard.dart';
 import 'branch_admin_dashboard.dart';
 import 'owner_bookings_page.dart';
 import 'more_page.dart';
+import 'staff_check_in_page.dart';
+import '../services/staff_check_in_service.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -106,6 +108,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _fetchUserRole();
     _listenToUnreadNotifications();
     _listenToPendingRequests();
+    _refreshCheckInStatus(); // Load current check-in status
   }
 
   /// Listen to unread notifications for the current staff
@@ -413,34 +416,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  void _handleClockAction() {
+  void _handleClockAction() async {
     if (_status == ClockStatus.out) {
-      // Open Branch Modal
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => BranchSelectionDialog(
-          onBranchSelected: (branch) {
-            Navigator.pop(context);
-            _startLoading(() {
-              setState(() {
-                _selectedBranch = branch;
-                _status = ClockStatus.clockedIn;
-              });
-              _resetWorkTimer();
-              _startWorkTimer();
-            });
-          },
-        ),
+      // Navigate to location-based check-in page
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const StaffCheckInPage()),
       );
+      // Refresh check-in status after returning
+      _refreshCheckInStatus();
     } else if (_status == ClockStatus.clockedIn) {
-      // Clock Out
-      _startLoading(() {
-        setState(() {
+      // Navigate to check-in page for check-out
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const StaffCheckInPage()),
+      );
+      // Refresh check-in status after returning
+      _refreshCheckInStatus();
+    }
+  }
+
+  Future<void> _refreshCheckInStatus() async {
+    final activeCheckIn = await StaffCheckInService.getActiveCheckIn();
+    if (mounted) {
+      setState(() {
+        if (activeCheckIn != null) {
+          _status = ClockStatus.clockedIn;
+          _selectedBranch = activeCheckIn.branchName;
+          // Calculate worked seconds from check-in time
+          final now = DateTime.now();
+          _workedSeconds = now.difference(activeCheckIn.checkInTime).inSeconds;
+          _startWorkTimer();
+        } else {
           _status = ClockStatus.out;
           _selectedBranch = null;
-        });
-        _resetWorkTimer();
+          _resetWorkTimer();
+        }
       });
     }
   }

@@ -45,5 +45,11 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>BMS Pro Pink needs your location to verify your presence at the branch when you check in for work.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>BMS Pro Pink needs your location to verify your presence at the branch when you check in for work.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>BMS Pro Pink needs your location to verify your presence at the branch when you check in for work.</string>
 </dict>
 </plist>
