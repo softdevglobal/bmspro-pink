@@ -70,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Timer? _workTimer;
   int _workedSeconds = 0;
   bool _timerRunning = false;
+  DateTime? _checkInTime; // Store the actual check-in time to prevent recalculation issues
 
   // Role state
   String? _userRole;
@@ -443,13 +444,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (activeCheckIn != null) {
           _status = ClockStatus.clockedIn;
           _selectedBranch = activeCheckIn.branchName;
-          // Calculate worked seconds from check-in time
-          final now = DateTime.now();
-          _workedSeconds = now.difference(activeCheckIn.checkInTime).inSeconds;
-          _startWorkTimer();
+          
+          // Only recalculate if check-in time changed or timer not running
+          // This prevents resetting the timer when it's already running
+          final newCheckInTime = activeCheckIn.checkInTime;
+          if (_checkInTime == null || 
+              _checkInTime!.millisecondsSinceEpoch != newCheckInTime.millisecondsSinceEpoch ||
+              !_timerRunning) {
+            _checkInTime = newCheckInTime;
+            final now = DateTime.now();
+            final difference = now.difference(_checkInTime!);
+            // Ensure we don't get negative values - if check-in time is in the future, start from 0
+            _workedSeconds = difference.inSeconds > 0 ? difference.inSeconds : 0;
+            _startWorkTimer();
+          }
         } else {
           _status = ClockStatus.out;
           _selectedBranch = null;
+          _checkInTime = null;
           _resetWorkTimer();
         }
       });
@@ -502,6 +514,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _pauseWorkTimer();
     setState(() {
       _workedSeconds = 0;
+      _checkInTime = null;
     });
   }
 
@@ -1020,11 +1033,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(width: 10),
           Text(
             _formatElapsed(_workedSeconds),
-            style: GoogleFonts.shareTechMono(
+            style: GoogleFonts.robotoMono(
               color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.0,
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              height: 1.2,
             ),
           ),
           const SizedBox(width: 8),

@@ -147,7 +147,8 @@ class _StaffCheckInPageState extends State<StaffCheckInPage> {
 
     if (result.success) {
       _showSnackBar(result.message);
-      _loadData();
+      // Automatically return to dashboard after successful check-in
+      Navigator.pop(context, true);
     } else {
       _showSnackBar(result.message, isError: true);
     }
