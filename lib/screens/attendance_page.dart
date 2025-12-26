@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../services/staff_check_in_service.dart';
-import 'timesheets_page.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -236,30 +235,6 @@ class _AttendancePageState extends State<AttendancePage> {
           : SingleChildScrollView(
               child: Column(
                 children: [
-                  // Timesheets Button
-                  Container(
-                    margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const TimesheetsPage()),
-                        );
-                      },
-                      icon: const Icon(FontAwesomeIcons.clock, size: 16),
-                      label: const Text('View Timesheets'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                  // Header Card
-                  _buildHeaderCard(),
                   // Stats Cards
                   _buildStatsCards(),
                   // Date Navigation & Filters
@@ -273,63 +248,6 @@ class _AttendancePageState extends State<AttendancePage> {
                 ],
               ),
             ),
-    );
-  }
-
-  Widget _buildHeaderCard() {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFEC4899), Color(0xFFF472B6), Color(0xFF8B5CF6)],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(FontAwesomeIcons.calendarCheck, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Staff Attendance',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Monitor staff attendance with real-time geofencing',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
