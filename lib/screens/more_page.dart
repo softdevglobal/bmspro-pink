@@ -6,6 +6,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'services_page.dart';
 import 'staff_management_page.dart';
 import 'attendance_page.dart';
+import 'timesheets_page.dart';
 import 'branches_page.dart';
 import 'salon_settings_page.dart';
 import 'audit_logs_page.dart';
@@ -145,11 +146,22 @@ class _MorePageState extends State<MorePage> {
                   _buildSubMenuItem(
                     context,
                     icon: FontAwesomeIcons.clipboardUser,
-                    title: 'Attendance',
+                    title: 'Attendance & GPS',
                     onTap: () {
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const AttendancePage()),
+                      );
+                    },
+                  ),
+                  _buildSubMenuItem(
+                    context,
+                    icon: FontAwesomeIcons.clock,
+                    title: 'Timesheets',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const TimesheetsPage()),
                       );
                     },
                   ),
@@ -917,8 +929,8 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
         
         // Calculate working seconds for this check-in
         final workingSeconds = checkIn.workingSeconds;
-        dailyHours[dayName] = (dailyHours[dayName] ?? 0) + workingSeconds;
-        totalSeconds += workingSeconds;
+        dailyHours[dayName] = ((dailyHours[dayName] ?? 0) as int) + workingSeconds;
+        totalSeconds = totalSeconds + workingSeconds;
       }
 
       if (mounted) {
