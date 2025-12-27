@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'location_service.dart';
+import 'audit_log_service.dart';
 
 /// Break period model
 class BreakPeriod {
@@ -381,6 +382,20 @@ class StaffCheckInService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
+      // Log check-in to audit log
+      await AuditLogService.logStaffCheckIn(
+        ownerUid: ownerUid.toString(),
+        checkInId: checkInDoc.id,
+        staffId: user.uid,
+        staffName: staffName,
+        branchId: branchId,
+        branchName: branchName,
+        performedBy: user.uid,
+        performedByName: staffName,
+        performedByRole: staffRole,
+        details: 'Distance from branch: ${distance.toStringAsFixed(1)}m',
+      );
+
       return CheckInResult(
         success: true,
         message: 'Successfully checked in at $branchName',
@@ -455,11 +470,33 @@ class StaffCheckInService {
       final workingSeconds = totalDiff.inSeconds - totalBreakSeconds;
       final hours = workingSeconds > 0 ? workingSeconds ~/ 3600 : 0;
       final minutes = workingSeconds > 0 ? (workingSeconds % 3600) ~/ 60 : 0;
+      final hoursWorked = '${hours}h ${minutes}m';
+
+      // Get check-in details for audit log
+      final staffName = checkInData['staffName'] ?? 'Unknown';
+      final branchId = checkInData['branchId'] ?? '';
+      final branchName = checkInData['branchName'] ?? 'Unknown Branch';
+      final ownerUid = checkInData['ownerUid'] ?? user.uid;
+      final staffRole = checkInData['staffRole'] ?? 'Staff';
+
+      // Log check-out to audit log
+      await AuditLogService.logStaffCheckOut(
+        ownerUid: ownerUid.toString(),
+        checkInId: checkInId,
+        staffId: user.uid,
+        staffName: staffName,
+        branchId: branchId,
+        branchName: branchName,
+        performedBy: user.uid,
+        performedByName: staffName,
+        performedByRole: staffRole,
+        hoursWorked: hoursWorked,
+      );
 
       return CheckOutResult(
         success: true,
         message: 'Successfully checked out',
-        hoursWorked: '${hours}h ${minutes}m',
+        hoursWorked: hoursWorked,
       );
     } catch (e) {
       print('Check-out error: $e');

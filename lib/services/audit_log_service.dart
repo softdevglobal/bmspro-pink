@@ -1,4 +1,5 @@
 import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:convert';
 
 class AuditLogService {
@@ -22,9 +23,21 @@ class AuditLogService {
     Map<String, dynamic>? metadata,
   }) async {
     try {
+      // Get Firebase auth token for authentication
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        print('Audit log failed: No authenticated user');
+        return false;
+      }
+
+      final token = await user.getIdToken();
+      
       final response = await http.post(
         Uri.parse(_baseUrl),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
         body: json.encode({
           'ownerUid': ownerUid,
           'action': action,
@@ -321,6 +334,8 @@ class AuditLogService {
     String? performedBy,
     String? performedByName,
     String? performedByRole,
+    String? branchId,
+    String? branchName,
   }) {
     if (ownerUid == null || performedBy == null) {
       return Future.value(false);
@@ -333,6 +348,9 @@ class AuditLogService {
       performedBy: performedBy,
       performedByName: performedByName,
       performedByRole: performedByRole,
+      branchId: branchId,
+      branchName: branchName,
+      details: branchName != null ? 'Logged in to branch: $branchName' : null,
     );
   }
 
@@ -386,6 +404,70 @@ class AuditLogService {
       newValue: newStatus,
       details: details,
       branchName: branchName,
+    );
+  }
+
+  static Future<bool> logStaffCheckIn({
+    String? ownerUid,
+    required String checkInId,
+    required String staffId,
+    required String staffName,
+    required String branchId,
+    required String branchName,
+    String? performedBy,
+    String? performedByName,
+    String? performedByRole,
+    String? details,
+  }) {
+    if (ownerUid == null || performedBy == null) {
+      return Future.value(false);
+    }
+    return createAuditLog(
+      ownerUid: ownerUid,
+      action: 'Staff checked in',
+      actionType: 'create',
+      entityType: 'staff_check_in',
+      entityId: checkInId,
+      entityName: staffName,
+      performedBy: performedBy,
+      performedByName: performedByName,
+      performedByRole: performedByRole,
+      branchId: branchId,
+      branchName: branchName,
+      details: details ?? 'Checked in at $branchName',
+    );
+  }
+
+  static Future<bool> logStaffCheckOut({
+    String? ownerUid,
+    required String checkInId,
+    required String staffId,
+    required String staffName,
+    required String branchId,
+    required String branchName,
+    String? performedBy,
+    String? performedByName,
+    String? performedByRole,
+    String? hoursWorked,
+  }) {
+    if (ownerUid == null || performedBy == null) {
+      return Future.value(false);
+    }
+    return createAuditLog(
+      ownerUid: ownerUid,
+      action: 'Staff checked out',
+      actionType: 'update',
+      entityType: 'staff_check_in',
+      entityId: checkInId,
+      entityName: staffName,
+      performedBy: performedBy,
+      performedByName: performedByName,
+      performedByRole: performedByRole,
+      branchId: branchId,
+      branchName: branchName,
+      details: hoursWorked != null 
+          ? 'Checked out from $branchName. Hours worked: $hoursWorked'
+          : 'Checked out from $branchName',
     );
   }
 }

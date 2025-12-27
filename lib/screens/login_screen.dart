@@ -96,11 +96,22 @@ class _LoginScreenState extends State<LoginScreen> {
       // Log successful login
       final ownerUid = userData['ownerUid'] ?? user.uid;
       final userName = userData['displayName'] ?? userData['name'] ?? user.email ?? 'Unknown';
+      
+      // Include branch information for branch admins
+      String? branchId;
+      String? branchName;
+      if (userRole == 'salon_branch_admin') {
+        branchId = userData['branchId']?.toString();
+        branchName = userData['branchName']?.toString();
+      }
+      
       await AuditLogService.logUserLogin(
         ownerUid: ownerUid.toString(),
         performedBy: user.uid,
         performedByName: userName.toString(),
         performedByRole: userRole,
+        branchId: branchId,
+        branchName: branchName,
       );
 
       if (mounted) {
