@@ -138,6 +138,13 @@ class NotificationService {
         final doc = snapshot.docs.first;
         if (!_shownNotificationIds.contains(doc.id)) {
           final data = doc.data();
+          final type = data['type']?.toString() ?? '';
+          
+          // Skip booking_approval_request notifications (they're handled via pending requests alert)
+          if (type == 'booking_approval_request') {
+            return;
+          }
+          
           _shownNotificationIds.add(doc.id);
           _showOnScreenNotification(
             title: data['title']?.toString() ?? 'New Notification',
