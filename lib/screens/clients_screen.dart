@@ -104,9 +104,9 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
         setState(() {
           _userRole = (data['role'] ?? '').toString();
           _branchId = (data['branchId'] ?? '').toString();
-          // For branch admin, use ownerUid; for owner, use own uid
-          if (_userRole == 'salon_branch_admin') {
-            _ownerUid = (data['ownerUid'] ?? '').toString();
+          // For branch admin and staff, use ownerUid; for owner, use own uid
+          if (_userRole == 'salon_branch_admin' || _userRole == 'salon_staff') {
+            _ownerUid = (data['ownerUid'] ?? user.uid).toString();
           } else {
             _ownerUid = user.uid;
           }
@@ -117,6 +117,7 @@ class _ClientsScreenState extends State<ClientsScreen> with TickerProviderStateM
         _listenToClients();
       } else {
         setState(() {
+          // Try to get ownerUid from user document if available, otherwise use own uid
           _ownerUid = user.uid;
           _isLoadingRole = false;
         });
