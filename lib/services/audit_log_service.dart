@@ -470,4 +470,39 @@ class AuditLogService {
           : 'Checked out from $branchName',
     );
   }
+
+  static Future<bool> logWalkInBookingCreated({
+    String? ownerUid,
+    required String bookingId,
+    String? bookingCode,
+    required String clientName,
+    required String serviceName,
+    required String performedBy,
+    String? performedByName,
+    String? performedByRole,
+    String? branchId,
+    String? branchName,
+    String? bookingDate,
+    String? bookingTime,
+  }) {
+    if (ownerUid == null || performedBy == null) {
+      return Future.value(false);
+    }
+    return createAuditLog(
+      ownerUid: ownerUid,
+      action: 'Walk-in booking created: $serviceName',
+      actionType: 'create',
+      entityType: 'booking',
+      entityId: bookingId,
+      entityName: bookingCode ?? 'Booking for $clientName',
+      performedBy: performedBy,
+      performedByName: performedByName,
+      performedByRole: performedByRole,
+      branchId: branchId,
+      branchName: branchName,
+      details: bookingDate != null && bookingTime != null
+          ? 'Client: $clientName, Service: $serviceName, Date: $bookingDate, Time: $bookingTime'
+          : 'Client: $clientName, Service: $serviceName',
+    );
+  }
 }

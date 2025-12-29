@@ -5,6 +5,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/timezone_helper.dart';
+import '../services/audit_log_service.dart';
 
 // --- 1. Theme & Colors (Matching HTML/Tailwind) ---
 class AppColors {
@@ -659,9 +660,36 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
     debugPrint('Creating booking with data: $bookingData');
 
-    await FirebaseFirestore.instance
+    // Create booking in Firestore
+    final bookingRef = await FirebaseFirestore.instance
         .collection('bookings')
         .add(bookingData);
+    
+    final bookingId = bookingRef.id;
+
+    // Log audit trail for staff-created walk-in bookings
+    if (_userRole == 'salon_staff' && _ownerUid != null && _currentUserId != null) {
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        await AuditLogService.logWalkInBookingCreated(
+          ownerUid: _ownerUid,
+          bookingId: bookingId,
+          bookingCode: bookingCode,
+          clientName: clientName,
+          serviceName: serviceNames,
+          performedBy: _currentUserId!,
+          performedByName: _currentUserName,
+          performedByRole: 'salon_staff',
+          branchId: _selectedBranchId,
+          branchName: _selectedBranchLabel,
+          bookingDate: dateStr,
+          bookingTime: mainTimeStr,
+        );
+      } catch (e) {
+        debugPrint('Failed to create audit log for walk-in booking: $e');
+        // Don't fail the booking creation if audit log fails
+      }
+    }
   }
 
   // --- UI Building ---
