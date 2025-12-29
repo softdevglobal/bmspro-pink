@@ -484,13 +484,55 @@ class AuditLogService {
     String? branchName,
     String? bookingDate,
     String? bookingTime,
+    double? price,
+    int? duration,
+    String? notes,
+    String? bookingSource,
+    String? clientEmail,
+    String? clientPhone,
+    String? staffName,
   }) {
     if (ownerUid == null || performedBy == null) {
       return Future.value(false);
     }
+    
+    // Build comprehensive details string
+    String details = 'Client: $clientName, Service: $serviceName';
+    if (staffName != null && staffName.isNotEmpty && staffName != 'Any Available') {
+      details += ', Staff: $staffName';
+    }
+    if (price != null && price > 0) {
+      details += ', Price: \$${price.toStringAsFixed(2)}';
+    }
+    if (duration != null && duration > 0) {
+      details += ', Duration: $duration mins';
+    }
+    if (bookingDate != null && bookingTime != null) {
+      details += ', Date/Time: $bookingDate $bookingTime';
+    }
+    if (notes != null && notes.trim().isNotEmpty) {
+      details += ', Notes: ${notes.trim()}';
+    }
+    if (bookingSource != null && bookingSource.isNotEmpty) {
+      details += ', Source: $bookingSource';
+    }
+    
+    // Build metadata map
+    Map<String, dynamic>? metadata;
+    if (price != null || duration != null || notes != null || bookingSource != null || clientEmail != null || clientPhone != null) {
+      metadata = <String, dynamic>{};
+      if (price != null) metadata!['price'] = price;
+      if (duration != null) metadata!['duration'] = duration;
+      if (notes != null && notes.trim().isNotEmpty) metadata!['notes'] = notes.trim();
+      if (bookingSource != null) metadata!['bookingSource'] = bookingSource;
+      if (clientEmail != null && clientEmail.isNotEmpty) metadata!['clientEmail'] = clientEmail;
+      if (clientPhone != null && clientPhone.isNotEmpty) metadata!['clientPhone'] = clientPhone;
+      if (staffName != null && staffName.isNotEmpty) metadata!['staffName'] = staffName;
+    }
+    
     return createAuditLog(
       ownerUid: ownerUid,
-      action: 'Walk-in booking created: $serviceName',
+      action: 'Booking created for $clientName',
       actionType: 'create',
       entityType: 'booking',
       entityId: bookingId,
@@ -500,9 +542,8 @@ class AuditLogService {
       performedByRole: performedByRole,
       branchId: branchId,
       branchName: branchName,
-      details: bookingDate != null && bookingTime != null
-          ? 'Client: $clientName, Service: $serviceName, Date: $bookingDate, Time: $bookingTime'
-          : 'Client: $clientName, Service: $serviceName',
+      details: details,
+      metadata: metadata,
     );
   }
 }

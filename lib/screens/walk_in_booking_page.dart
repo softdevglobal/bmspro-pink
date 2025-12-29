@@ -667,10 +667,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     
     final bookingId = bookingRef.id;
 
-    // Log audit trail for staff-created walk-in bookings
-    if (_userRole == 'salon_staff' && _ownerUid != null && _currentUserId != null) {
+    // Log audit trail for staff and branch admin created bookings
+    if ((_userRole == 'salon_staff' || _userRole == 'salon_branch_admin') && _ownerUid != null && _currentUserId != null) {
       try {
-        final user = FirebaseAuth.instance.currentUser;
         await AuditLogService.logWalkInBookingCreated(
           ownerUid: _ownerUid,
           bookingId: bookingId,
@@ -679,11 +678,18 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           serviceName: serviceNames,
           performedBy: _currentUserId!,
           performedByName: _currentUserName,
-          performedByRole: 'salon_staff',
+          performedByRole: _userRole,
           branchId: _selectedBranchId,
           branchName: _selectedBranchLabel,
           bookingDate: dateStr,
           bookingTime: mainTimeStr,
+          price: _totalPrice,
+          duration: _totalDuration,
+          notes: notes.isNotEmpty ? notes : null,
+          bookingSource: bookingSource,
+          clientEmail: email.isNotEmpty ? email : null,
+          clientPhone: phone.isNotEmpty ? phone : null,
+          staffName: mainStaffName != 'Any Available' && mainStaffName != 'Multiple Staff' ? mainStaffName : null,
         );
       } catch (e) {
         debugPrint('Failed to create audit log for walk-in booking: $e');
