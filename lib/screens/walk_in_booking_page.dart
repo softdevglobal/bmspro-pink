@@ -683,7 +683,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           branchName: _selectedBranchLabel,
           bookingDate: dateStr,
           bookingTime: mainTimeStr,
-          price: _totalPrice,
+          price: _totalPrice.toDouble(),
           duration: _totalDuration,
           notes: notes.isNotEmpty ? notes : null,
           bookingSource: bookingSource,
