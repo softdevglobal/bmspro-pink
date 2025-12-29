@@ -583,7 +583,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         }
       }
       
-      // For staff-created bookings, mark services as accepted
+      // Build service data
       final serviceData = {
         'duration': (service['duration'] as num?)?.toInt() ?? 60,
         'id': service['id'],
@@ -594,11 +594,22 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         'time': svcTimeStr,
       };
       
-      // If staff is creating the booking, auto-accept the service and store auth UID
+      // Set approval status based on user role and staff assignment
       if (_userRole == 'salon_staff' && staffId != null) {
+        // Staff bookings: auto-accept the service and store auth UID
         serviceData['approvalStatus'] = 'accepted';
         serviceData['staffAuthUid'] = staffId; // Store auth UID for calendar matching
+      } else if (_userRole == 'salon_owner' || _userRole == 'salon_branch_admin') {
+        // Owner/Admin bookings: set approval status based on staff assignment
+        // Services with valid staff get "pending" approval status
+        // Services without staff (Any Available) get "needs_assignment" status
+        final hasStaff = staffId != null && 
+                        staffId != 'null' && 
+                        staffId != 'any' &&
+                        !staffId.toLowerCase().contains('any');
+        serviceData['approvalStatus'] = hasStaff ? 'pending' : 'needs_assignment';
       }
+      // For other roles, leave approvalStatus unset (will be handled by backend)
       
       return serviceData;
     }).toList();
@@ -663,7 +674,15 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       'staffId': mainStaffId,
       'staffName': mainStaffName,
       if (_userRole == 'salon_staff' && mainStaffId != null) 'staffAuthUid': mainStaffId, // Store auth UID for calendar matching
-      'status': _userRole == 'salon_staff' ? 'Confirmed' : 'Pending', // Auto-confirm staff bookings
+      // Determine booking status:
+      // - salon_staff: Confirmed (all services auto-accepted)
+      // - salon_owner/salon_branch_admin: AwaitingStaffApproval (skip Pending, go directly to staff approval)
+      // - Other roles: Pending
+      'status': _userRole == 'salon_staff' 
+          ? 'Confirmed' 
+          : (_userRole == 'salon_owner' || _userRole == 'salon_branch_admin')
+              ? 'AwaitingStaffApproval'
+              : 'Pending',
       'time': mainTimeStr, // Local time for backward compatibility
       'updatedAt': FieldValue.serverTimestamp(),
     };
