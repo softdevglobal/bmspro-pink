@@ -49,6 +49,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
   StreamSubscription<DocumentSnapshot>? _bookingSubscription;
   bool _isServiceCompleted = false;
   String? _currentServiceId;
+  bool _isMyAppointment = false; // Track if appointment belongs to current user
 
   @override
   void initState() {
@@ -91,6 +92,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
       final serviceId = widget.appointmentData?['serviceId']?.toString();
       _currentServiceId = serviceId;
       
+      // Check if appointment belongs to current user
+      bool isMyAppointment = false;
+      
       // Check completion status
       bool isCompleted = false;
       
@@ -98,6 +102,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
         // Multi-service booking - check specific service completion status
         for (final service in (data['services'] as List)) {
           if (service is Map && service['id']?.toString() == serviceId) {
+            final staffId = service['staffId']?.toString();
+            final staffAuthUid = service['staffAuthUid']?.toString();
+            if (staffId == user?.uid || staffAuthUid == user?.uid) {
+              isMyAppointment = true;
+            }
             final completionStatus = service['completionStatus']?.toString()?.toLowerCase() ?? '';
             isCompleted = completionStatus == 'completed';
             break;
@@ -110,6 +119,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
             final staffId = service['staffId']?.toString();
             final staffAuthUid = service['staffAuthUid']?.toString();
             if (staffId == user?.uid || staffAuthUid == user?.uid) {
+              isMyAppointment = true;
               final completionStatus = service['completionStatus']?.toString()?.toLowerCase() ?? '';
               isCompleted = completionStatus == 'completed';
               break;
@@ -117,7 +127,12 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
           }
         }
       } else {
-        // Single service booking - check booking-level status
+        // Single service booking - check booking-level status and assignment
+        final staffId = data['staffId']?.toString();
+        final staffAuthUid = data['staffAuthUid']?.toString();
+        if (staffId == user?.uid || staffAuthUid == user?.uid) {
+          isMyAppointment = true;
+        }
         final status = data['status']?.toString()?.toLowerCase() ?? '';
         isCompleted = status == 'completed';
       }
@@ -126,6 +141,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
       setState(() {
         _bookingData = data;
         _isServiceCompleted = isCompleted;
+        _isMyAppointment = isMyAppointment;
       });
     });
   }
@@ -150,6 +166,50 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
           _bookingData = bookingDoc.data();
         }
       }
+      
+      // Check if appointment belongs to current user (initial check)
+      final user = FirebaseAuth.instance.currentUser;
+      bool isMyAppointment = false;
+      
+      if (_bookingData != null && user != null) {
+        final serviceId = widget.appointmentData?['serviceId']?.toString();
+        
+        if (_bookingData!['services'] is List && serviceId != null && serviceId.isNotEmpty) {
+          // Multi-service booking - check specific service
+          for (final service in (_bookingData!['services'] as List)) {
+            if (service is Map && service['id']?.toString() == serviceId) {
+              final staffId = service['staffId']?.toString();
+              final staffAuthUid = service['staffAuthUid']?.toString();
+              if (staffId == user.uid || staffAuthUid == user.uid) {
+                isMyAppointment = true;
+                break;
+              }
+            }
+          }
+        } else if (_bookingData!['services'] is List && (_bookingData!['services'] as List).isNotEmpty) {
+          // Multi-service booking - check if any service belongs to user
+          for (final service in (_bookingData!['services'] as List)) {
+            if (service is Map) {
+              final staffId = service['staffId']?.toString();
+              final staffAuthUid = service['staffAuthUid']?.toString();
+              if (staffId == user.uid || staffAuthUid == user.uid) {
+                isMyAppointment = true;
+                break;
+              }
+            }
+          }
+        } else {
+          // Single service booking - check booking-level assignment
+          final staffId = _bookingData!['staffId']?.toString();
+          final staffAuthUid = _bookingData!['staffAuthUid']?.toString();
+          if (staffId == user.uid || staffAuthUid == user.uid) {
+            isMyAppointment = true;
+          }
+        }
+      }
+      
+      // Set the appointment ownership flag
+      _isMyAppointment = isMyAppointment;
 
       // Extract customer info from booking
       final clientName = _bookingData?['client']?.toString() ?? 
@@ -163,7 +223,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
       _customerPhone = clientPhone;
       
       // Try to find customer in customers collection
-      final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final ownerUid = user.uid;
         // Try to find customer by email or phone
@@ -293,7 +352,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
     }
 
     if (mounted) {
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
@@ -821,18 +882,19 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
             ),
           ),
         ] else ...[
-          // Show Start Appointment button for non-completed services
-          _GradientButton(
-            text: 'Start Appointment',
-            icon: FontAwesomeIcons.play,
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => TaskDetailsPage(appointmentData: widget.appointmentData),
-                ),
-              );
-            },
-          ),
+          // Show Start Appointment button only if it's the current user's appointment
+          if (_isMyAppointment)
+            _GradientButton(
+              text: 'Start Appointment',
+              icon: FontAwesomeIcons.play,
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => TaskDetailsPage(appointmentData: widget.appointmentData),
+                  ),
+                );
+              },
+            ),
         ],
         const SizedBox(height: 12),
         SizedBox(

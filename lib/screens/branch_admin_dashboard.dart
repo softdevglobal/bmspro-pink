@@ -83,6 +83,8 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   
   // Today's appointments
   List<Map<String, dynamic>> _todayAppointments = [];
+  List<Map<String, dynamic>> _myTodayAppointments = []; // Only branch admin's appointments
+  List<Map<String, dynamic>> _otherStaffAppointments = []; // Other staff's appointments in the branch
   bool _isLoadingAppointments = true;
 
   @override
@@ -925,11 +927,54 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
           return timeA.compareTo(timeB);
         });
         
-        debugPrint('Processed ${appointments.length} appointments for branch');
+        // Separate appointments: branch admin's own vs other staff's
+        final List<Map<String, dynamic>> myAppointments = [];
+        final List<Map<String, dynamic>> otherStaffAppointments = [];
+        final currentUserId = user.uid;
+        
+        for (var appointment in appointments) {
+          final appointmentData = appointment['data'] as Map<String, dynamic>?;
+          if (appointmentData == null) continue;
+          
+          // Check if assigned to current branch admin
+          bool isMyAppointment = false;
+          
+          // Check top-level staffId
+          final staffId = appointmentData['staffId']?.toString();
+          final staffAuthUid = appointmentData['staffAuthUid']?.toString();
+          if (staffId == currentUserId || staffAuthUid == currentUserId) {
+            isMyAppointment = true;
+          }
+          
+          // Check services array for multi-service bookings
+          if (!isMyAppointment && appointmentData['services'] is List) {
+            final services = appointmentData['services'] as List;
+            for (var service in services) {
+              if (service is Map) {
+                final svcStaffId = service['staffId']?.toString();
+                final svcStaffAuthUid = service['staffAuthUid']?.toString();
+                if (svcStaffId == currentUserId || svcStaffAuthUid == currentUserId) {
+                  isMyAppointment = true;
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (isMyAppointment) {
+            myAppointments.add(appointment);
+          } else {
+            otherStaffAppointments.add(appointment);
+          }
+        }
+        
+        debugPrint('Processed ${appointments.length} appointments: ${myAppointments.length} mine, ${otherStaffAppointments.length} other staff');
         
         if (!mounted) return;
         setState(() {
-          _todayAppointments = appointments;
+          _todayAppointments = appointments; // Keep all for reference
+          _myTodayAppointments = myAppointments;
+          _otherStaffAppointments = otherStaffAppointments;
           _isLoadingAppointments = false;
         });
       }, onError: (e) {
@@ -1135,6 +1180,8 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
                 const SizedBox(height: 24),
               ],
               _buildAppointmentsSection(),
+              const SizedBox(height: 24),
+              _buildOtherStaffAppointmentsSection(),
               const SizedBox(height: 24),
               _buildKpiSection(),
               const SizedBox(height: 24),
@@ -1574,8 +1621,8 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   }
 
   Widget _buildAppointmentsSection() {
-    // Get pending/confirmed appointments
-    final upcomingAppointments = _todayAppointments.where((a) {
+    // Get pending/confirmed appointments - only branch admin's own appointments
+    final upcomingAppointments = _myTodayAppointments.where((a) {
       final status = (a['status'] ?? '').toString().toLowerCase();
       return status == 'pending' || status == 'confirmed' || status == 'awaitingstaffapproval' || status == 'partiallyapproved';
     }).toList();
@@ -1722,6 +1769,121 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               ),
             ),
           )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOtherStaffAppointmentsSection() {
+    // Get pending/confirmed appointments for other staff
+    final otherStaffAppointments = _otherStaffAppointments.where((a) {
+      final status = (a['status'] ?? '').toString().toLowerCase();
+      return status == 'pending' || status == 'confirmed' || status == 'awaitingstaffapproval' || status == 'partiallyapproved';
+    }).toList();
+    
+    if (otherStaffAppointments.isEmpty) {
+      return const SizedBox.shrink(); // Don't show section if no other staff appointments
+    }
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.1),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(FontAwesomeIcons.users, color: AppColors.primary, size: 16),
+                  const SizedBox(width: 8),
+                  const Text(
+                    "Other Staff Appointments",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${otherStaffAppointments.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              )
+            ],
+          ),
+          const SizedBox(height: 16),
+          ...otherStaffAppointments.take(5).toList().asMap().entries.map((entry) {
+            final index = entry.key;
+            final appointment = entry.value;
+            final serviceName = appointment['serviceName'] ?? 'Service';
+            final duration = appointment['duration'];
+            final time = appointment['time'] ?? '';
+            final staffName = appointment['staffName'] ?? 'Unassigned';
+            final displayTitle = duration != null && duration.isNotEmpty 
+                ? '$serviceName ${duration}min' 
+                : serviceName;
+            
+            // Get icon and colors based on service name
+            final iconData = _getServiceIcon(serviceName);
+            final colors = _getServiceColors(index + 10); // Offset to get different colors
+            
+            return _buildAppointmentItem(
+              displayTitle,
+              _formatTime(time),
+              staffName,
+              iconData,
+              colors,
+              isNext: false,
+              appointmentData: appointment,
+            );
+          }),
+          if (otherStaffAppointments.length > 5)
+            const SizedBox(height: 8),
+          if (otherStaffAppointments.length > 5)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const AllAppointmentsPage()),
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  side: const BorderSide(color: AppColors.primary),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'View All (${otherStaffAppointments.length} more)',
+                  style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
+                ),
+              ),
+            )
         ],
       ),
     );
