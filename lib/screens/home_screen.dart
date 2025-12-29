@@ -20,6 +20,8 @@ import 'owner_bookings_page.dart';
 import 'more_page.dart';
 import 'staff_check_in_page.dart';
 import '../services/staff_check_in_service.dart';
+import '../services/location_service.dart';
+import 'package:geolocator/geolocator.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
 class AppColors {
@@ -72,6 +74,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _timerRunning = false;
   DateTime? _checkInTime; // Store the actual check-in time to prevent recalculation issues
   String? _activeCheckInId; // Store check-in ID for break tracking
+  
+  // Location monitoring timer for auto check-out
+  Timer? _locationMonitorTimer;
 
   // Role state
   String? _userRole;
@@ -413,6 +418,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     _pulseController.dispose();
     _workTimer?.cancel();
+    _locationMonitorTimer?.cancel();
     _notificationsSub?.cancel();
     _pendingRequestsSub?.cancel();
     super.dispose();
@@ -458,15 +464,69 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _workedSeconds = activeCheckIn.workingSeconds;
             _startWorkTimer();
           }
+          
+          // Start location monitoring for auto check-out
+          _startLocationMonitoring();
         } else {
           _status = ClockStatus.out;
           _selectedBranch = null;
           _checkInTime = null;
           _activeCheckInId = null;
           _resetWorkTimer();
+          _stopLocationMonitoring();
         }
       });
     }
+  }
+  
+  /// Start periodic location monitoring to auto check-out when radius is exceeded
+  void _startLocationMonitoring() {
+    _stopLocationMonitoring(); // Stop any existing timer
+    
+    // Check location every 60 seconds (1 minute)
+    _locationMonitorTimer = Timer.periodic(const Duration(seconds: 60), (timer) async {
+      if (_activeCheckInId == null || _status != ClockStatus.clockedIn) {
+        _stopLocationMonitoring();
+        return;
+      }
+      
+      try {
+        // Get current location
+        final position = await LocationService.getCurrentLocation();
+        if (position == null) {
+          return; // Could not get location, skip this check
+        }
+        
+        // Check if still within radius and auto check-out if exceeded
+        final wasAutoCheckedOut = await StaffCheckInService.autoCheckOutIfExceededRadius(
+          checkInId: _activeCheckInId!,
+          currentLatitude: position.latitude,
+          currentLongitude: position.longitude,
+        );
+        
+        if (wasAutoCheckedOut && mounted) {
+          // Show notification to user
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('You have been automatically checked out for exceeding the branch radius.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 5),
+            ),
+          );
+          
+          // Refresh check-in status
+          _refreshCheckInStatus();
+        }
+      } catch (e) {
+        debugPrint('Error in location monitoring: $e');
+      }
+    });
+  }
+  
+  /// Stop location monitoring
+  void _stopLocationMonitoring() {
+    _locationMonitorTimer?.cancel();
+    _locationMonitorTimer = null;
   }
 
   void _handleBreakAction() async {

@@ -87,6 +87,13 @@ class StaffCheckInRecord {
           .toList();
     }
     
+    // Parse status - support checked_in, checked_out, and auto_checked_out
+    String status = data['status'] ?? 'checked_in';
+    if (status != 'checked_in' && status != 'checked_out' && status != 'auto_checked_out') {
+      // Handle legacy status values
+      status = status == 'checked_in' ? 'checked_in' : 'checked_out';
+    }
+    
     return StaffCheckInRecord(
       id: doc.id,
       staffId: data['staffId'] ?? '',
@@ -106,7 +113,7 @@ class StaffCheckInRecord {
       distanceFromBranch: (data['distanceFromBranch'] ?? 0).toDouble(),
       isWithinRadius: data['isWithinRadius'] ?? false,
       allowedRadius: (data['allowedRadius'] ?? 100).toDouble(),
-      status: data['status'] ?? 'checked_in',
+      status: status,
       note: data['note'],
       breakPeriods: breaks,
     );
@@ -668,6 +675,130 @@ class StaffCheckInService {
       return true;
     } catch (e) {
       print('Error ending break: $e');
+      return false;
+    }
+  }
+
+  /// Auto check-out when staff exceeds branch radius
+  /// This function checks if the staff member is still within the allowed radius
+  /// and automatically checks them out if they've exceeded it
+  static Future<bool> autoCheckOutIfExceededRadius({
+    required String checkInId,
+    required double currentLatitude,
+    required double currentLongitude,
+  }) async {
+    try {
+      final checkInDoc = await _db.collection('staff_check_ins').doc(checkInId).get();
+      if (!checkInDoc.exists) {
+        return false;
+      }
+
+      final checkInData = checkInDoc.data()!;
+      
+      // Only process if still checked in
+      if (checkInData['status'] != 'checked_in') {
+        return false;
+      }
+
+      // Get branch location and radius
+      final branchId = checkInData['branchId'] as String;
+      final branchDoc = await _db.collection('branches').doc(branchId).get();
+      
+      if (!branchDoc.exists) {
+        return false;
+      }
+
+      final branchData = branchDoc.data()!;
+      final location = branchData['location'] as Map<String, dynamic>?;
+      
+      if (location == null ||
+          location['latitude'] == null ||
+          location['longitude'] == null) {
+        return false;
+      }
+
+      final branchLat = location['latitude'].toDouble();
+      final branchLon = location['longitude'].toDouble();
+      final allowedRadius = (branchData['allowedCheckInRadius'] ?? 100).toDouble();
+
+      // Calculate current distance from branch
+      final distance = LocationService.calculateDistance(
+        currentLatitude,
+        currentLongitude,
+        branchLat,
+        branchLon,
+      );
+
+      // If outside radius, auto check-out
+      if (distance > allowedRadius) {
+        // Calculate hours worked (excluding breaks)
+        final checkInTime = (checkInData['checkInTime'] as Timestamp).toDate();
+        final now = DateTime.now();
+        final totalDiff = now.difference(checkInTime);
+        
+        // Calculate total break time
+        int totalBreakSeconds = 0;
+        if (checkInData['breakPeriods'] != null && checkInData['breakPeriods'] is List) {
+          final breaks = checkInData['breakPeriods'] as List;
+          for (final breakData in breaks) {
+            if (breakData is Map) {
+              final breakStart = (breakData['startTime'] as Timestamp).toDate();
+              final breakEnd = breakData['endTime'] != null
+                  ? (breakData['endTime'] as Timestamp).toDate()
+                  : null;
+              if (breakEnd != null) {
+                totalBreakSeconds += breakEnd.difference(breakStart).inSeconds;
+              }
+            }
+          }
+        }
+        
+        // Subtract break time
+        final workingSeconds = totalDiff.inSeconds - totalBreakSeconds;
+        final hours = workingSeconds > 0 ? workingSeconds ~/ 3600 : 0;
+        final minutes = workingSeconds > 0 ? (workingSeconds % 3600) ~/ 60 : 0;
+        final hoursWorked = '${hours}h ${minutes}m';
+
+        // Update check-in record with auto check-out
+        await _db.collection('staff_check_ins').doc(checkInId).update({
+          'checkOutTime': FieldValue.serverTimestamp(),
+          'status': 'auto_checked_out',
+          'updatedAt': FieldValue.serverTimestamp(),
+          'autoCheckOutReason': 'Exceeded branch radius',
+          'autoCheckOutDistance': distance.round(),
+          'autoCheckOutLocation': {
+            'latitude': currentLatitude,
+            'longitude': currentLongitude,
+          },
+        });
+
+        // Get check-in details for audit log
+        final staffName = checkInData['staffName'] ?? 'Unknown';
+        final branchName = checkInData['branchName'] ?? 'Unknown Branch';
+        final ownerUid = checkInData['ownerUid'] ?? '';
+        final staffRole = checkInData['staffRole'] ?? 'Staff';
+        final user = _auth.currentUser;
+
+        // Log auto check-out to audit log
+        await AuditLogService.logStaffCheckOut(
+          ownerUid: ownerUid.toString(),
+          checkInId: checkInId,
+          staffId: checkInData['staffId'] ?? '',
+          staffName: staffName,
+          branchId: branchId,
+          branchName: branchName,
+          performedBy: user?.uid ?? 'system',
+          performedByName: 'System (Auto)',
+          performedByRole: 'System',
+          hoursWorked: hoursWorked,
+        );
+
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      print('Error in auto check-out: $e');
       return false;
     }
   }
