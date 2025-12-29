@@ -125,7 +125,7 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
                   'client': client,
                   'data': data,
                   'isToday': date == todayStr,
-                  'isFuture': date.compareTo(todayStr) >= 0,
+                  'isFuture': date.compareTo(todayStr) > 0,
                 });
               }
             }
@@ -149,7 +149,7 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
               'client': client,
               'data': data,
               'isToday': date == todayStr,
-              'isFuture': date.compareTo(todayStr) >= 0,
+              'isFuture': date.compareTo(todayStr) > 0,
             });
           }
         }
@@ -174,14 +174,20 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
   }
 
   List<Map<String, dynamic>> get _filteredAppointments {
+    final now = DateTime.now();
+    final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    
     switch (_selectedFilter) {
       case 'today':
         return _appointments.where((a) => a['isToday'] == true).toList();
       case 'upcoming':
-        return _appointments.where((a) => 
-            a['isFuture'] == true && 
-            (a['status'] == 'pending' || a['status'] == 'confirmed')
-        ).toList();
+        // Show confirmed bookings that are in future days (not today)
+        return _appointments.where((a) {
+          final date = a['date']?.toString() ?? '';
+          final status = (a['status']?.toString() ?? '').toLowerCase();
+          // Must be future date (after today) and confirmed
+          return date.compareTo(todayStr) > 0 && status == 'confirmed';
+        }).toList();
       case 'all':
       default:
         return _appointments;
