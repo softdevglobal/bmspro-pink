@@ -21,6 +21,7 @@ import 'more_page.dart';
 import 'staff_check_in_page.dart';
 import '../services/staff_check_in_service.dart';
 import '../services/location_service.dart';
+import '../services/notification_service.dart';
 import 'package:geolocator/geolocator.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
@@ -116,6 +117,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _listenToUnreadNotifications();
     _listenToPendingRequests();
     _refreshCheckInStatus(); // Load current check-in status
+    
+    // Set up notification service for on-screen notifications
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService().setContext(context);
+      NotificationService().listenToNotifications();
+    });
   }
 
   /// Listen to unread notifications for the current staff
@@ -421,6 +428,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _locationMonitorTimer?.cancel();
     _notificationsSub?.cancel();
     _pendingRequestsSub?.cancel();
+    NotificationService().dispose();
     super.dispose();
   }
 

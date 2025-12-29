@@ -12,6 +12,7 @@ import 'appointment_details_page.dart';
 import 'staff_check_in_page.dart';
 import '../services/staff_check_in_service.dart';
 import '../services/location_service.dart';
+import '../services/notification_service.dart';
 import 'package:geolocator/geolocator.dart';
 
 enum ClockStatus { out, clockedIn, onBreak }
@@ -103,6 +104,12 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     _listenToPendingRequests();
     _fetchTodayAppointments();
     _refreshCheckInStatus(); // Load current check-in status
+    
+    // Set up notification service for on-screen notifications
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService().setContext(context);
+      NotificationService().listenToNotifications();
+    });
   }
   
   @override
@@ -111,6 +118,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     _workTimer?.cancel();
     _locationMonitorTimer?.cancel();
     _pendingRequestsSub?.cancel();
+    NotificationService().dispose();
     super.dispose();
   }
   
