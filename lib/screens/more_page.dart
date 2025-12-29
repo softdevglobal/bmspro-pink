@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 import 'services_page.dart';
 import 'staff_management_page.dart';
 import 'attendance_page.dart';
@@ -12,6 +13,46 @@ import 'salon_settings_page.dart';
 import 'audit_logs_page.dart';
 import '../widgets/animated_toggle.dart';
 import '../services/staff_check_in_service.dart';
+
+// Data class for weekly hours
+class WeeklyHoursData {
+  final DateTime weekStart; // Monday of the week
+  final DateTime weekEnd; // Sunday of the week
+  final int totalSeconds;
+  final Map<String, int> dailyHours; // Day name -> seconds
+
+  WeeklyHoursData({
+    required this.weekStart,
+    required this.weekEnd,
+    required this.totalSeconds,
+    required this.dailyHours,
+  });
+
+  String get weekLabel {
+    final startFormat = DateFormat('MMM d');
+    final endFormat = DateFormat('MMM d, yyyy');
+    if (weekStart.year == weekEnd.year && weekStart.month == weekEnd.month) {
+      return '${startFormat.format(weekStart)} - ${endFormat.format(weekEnd)}';
+    }
+    return '${startFormat.format(weekStart)} - ${endFormat.format(weekEnd)}';
+  }
+
+  String get shortLabel {
+    final now = DateTime.now();
+    final weekStartOnly = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    final nowStartOnly = DateTime(now.year, now.month, now.day);
+    final daysDiff = nowStartOnly.difference(weekStartOnly).inDays;
+    
+    if (daysDiff < 7) {
+      return 'This Week';
+    } else if (daysDiff < 14) {
+      return 'Last Week';
+    } else {
+      final weekNum = (daysDiff ~/ 7);
+      return '$weekNum weeks ago';
+    }
+  }
+}
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -653,13 +694,18 @@ class BranchAdminSummaryPage extends StatefulWidget {
 class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
   bool _showBranchSummary = false; // false = My Summary, true = Branch Summary
   bool _loading = true;
+  String? _currentUserName;
 
   // My Summary data
   int _myCompletedServices = 0;
   double _myRevenue = 0;
   int _myTotalBookings = 0;
-  Map<String, int> _dailyWorkingHours = {}; // Day-wise working hours in seconds
-  int _totalWeeklyHours = 0; // Total weekly hours in seconds
+  Map<String, int> _dailyWorkingHours = {}; // Day-wise working hours in seconds (current week)
+  int _totalWeeklyHours = 0; // Total weekly hours in seconds (current week)
+  
+  // 4 weeks of data
+  List<WeeklyHoursData> _weeklyHoursData = []; // 4 weeks: [current, week-1, week-2, week-3]
+  int _selectedWeekIndex = 0; // 0 = current week, 1 = last week, etc.
 
   // Branch Summary data
   double _branchRevenue = 0;
@@ -697,6 +743,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
       final userData = userDoc.data()!;
       final branchId = (userData['branchId'] ?? '').toString();
       final ownerUid = (userData['ownerUid'] ?? '').toString();
+      _currentUserName = userData['displayName'] ?? userData['name'] ?? 'Staff';
       
       debugPrint('Branch Admin Summary - branchId: $branchId, ownerUid: $ownerUid');
       
@@ -891,58 +938,162 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
 
   Future<void> _calculateWeeklyWorkingHours(String userId) async {
     try {
-      // Get the start of the current week (Monday)
       final now = DateTime.now();
-      final startOfWeek = DateTime(now.year, now.month, now.day)
-          .subtract(Duration(days: now.weekday - 1));
-      final startOfWeekTimestamp = Timestamp.fromDate(startOfWeek);
       
-      // Get the end of the current week (Sunday)
-      final endOfWeek = startOfWeek.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
-      final endOfWeekTimestamp = Timestamp.fromDate(endOfWeek);
+      // Query ALL check-ins for this user (like admin panel does - no date filter in query)
+      // This avoids index requirements and ensures we get all data
+      // Try both staffId and staffAuthUid to handle different record formats
+      QuerySnapshot checkInsQuery;
+      try {
+        checkInsQuery = await FirebaseFirestore.instance
+            .collection('staff_check_ins')
+            .where('staffId', isEqualTo: userId)
+            .get();
+        debugPrint('Total check-ins found for user (staffId): ${checkInsQuery.docs.length}');
+      } catch (e) {
+        // Fallback to staffAuthUid if staffId query fails
+        debugPrint('staffId query failed, trying staffAuthUid: $e');
+        checkInsQuery = await FirebaseFirestore.instance
+            .collection('staff_check_ins')
+            .where('staffAuthUid', isEqualTo: userId)
+            .get();
+        debugPrint('Total check-ins found for user (staffAuthUid): ${checkInsQuery.docs.length}');
+      }
+      
+      // Also try querying without field filter to see all records (for debugging)
+      if (checkInsQuery.docs.isEmpty) {
+        debugPrint('No check-ins found with staffId/staffAuthUid, checking all records...');
+        final allCheckIns = await FirebaseFirestore.instance
+            .collection('staff_check_ins')
+            .limit(10)
+            .get();
+        debugPrint('Sample check-in records (first 10):');
+        for (final doc in allCheckIns.docs) {
+          final data = doc.data();
+          debugPrint('  Check-in ${doc.id}: staffId=${data['staffId']}, staffAuthUid=${data['staffAuthUid']}, staffName=${data['staffName']}');
+        }
+      }
 
-      // Query check-ins for this week
-      final checkInsQuery = await FirebaseFirestore.instance
-          .collection('staff_check_ins')
-          .where('staffAuthUid', isEqualTo: userId)
-          .where('checkInTime', isGreaterThanOrEqualTo: startOfWeekTimestamp)
-          .where('checkInTime', isLessThanOrEqualTo: endOfWeekTimestamp)
-          .get();
+      // Initialize weekly data structures
+      final List<WeeklyHoursData> weeklyData = [];
+      
+      for (int weekOffset = 0; weekOffset < 4; weekOffset++) {
+        // Calculate week start (Monday at 00:00:00) and end (Sunday at 23:59:59)
+        final weekStartDate = DateTime(now.year, now.month, now.day)
+            .subtract(Duration(days: now.weekday - 1 + (weekOffset * 7)));
+        final weekStart = DateTime(weekStartDate.year, weekStartDate.month, weekStartDate.day, 0, 0, 0);
+        final weekEndDate = weekStart.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
 
-      // Initialize day-wise map
-      final dailyHours = <String, int>{
-        'Monday': 0,
-        'Tuesday': 0,
-        'Wednesday': 0,
-        'Thursday': 0,
-        'Friday': 0,
-        'Saturday': 0,
-        'Sunday': 0,
-      };
+        // Initialize day-wise map for this week
+        final dailyHours = <String, int>{
+          'Monday': 0,
+          'Tuesday': 0,
+          'Wednesday': 0,
+          'Thursday': 0,
+          'Friday': 0,
+          'Saturday': 0,
+          'Sunday': 0,
+        };
 
-      int totalSeconds = 0;
+        int totalSeconds = 0;
 
-      for (final doc in checkInsQuery.docs) {
-        final checkIn = StaffCheckInRecord.fromFirestore(doc);
-        final checkInDate = checkIn.checkInTime;
-        final dayName = _getDayName(checkInDate.weekday);
+        // Filter check-ins for this specific week (in memory, like admin panel)
+        for (final doc in checkInsQuery.docs) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            
+            // Verify this check-in belongs to the user (double-check)
+            final docStaffId = data['staffId']?.toString();
+            final docStaffAuthUid = data['staffAuthUid']?.toString();
+            if (docStaffId != userId && docStaffAuthUid != userId) {
+              continue; // Skip if not for this user
+            }
+            
+            final checkIn = StaffCheckInRecord.fromFirestore(doc);
+            final checkInDate = checkIn.checkInTime;
+            
+            // Check if this check-in falls within this week
+            // Use same logic as admin panel - compare timestamps
+            final checkInTimeMs = checkInDate.millisecondsSinceEpoch;
+            final weekStartMs = weekStart.millisecondsSinceEpoch;
+            final weekEndMs = weekEndDate.millisecondsSinceEpoch;
+            
+            if (checkInTimeMs >= weekStartMs && checkInTimeMs <= weekEndMs) {
+              final dayName = _getDayName(checkInDate.weekday);
+              
+              // Calculate working seconds for this check-in
+              final workingSeconds = checkIn.workingSeconds;
+              debugPrint('Week $weekOffset - ${checkInDate.toString()}: $workingSeconds seconds (${_formatDuration(workingSeconds)}) - Staff: ${checkIn.staffName}');
+              
+              dailyHours[dayName] = (dailyHours[dayName] ?? 0) + workingSeconds;
+              totalSeconds += workingSeconds;
+            }
+          } catch (e) {
+            debugPrint('Error processing check-in ${doc.id}: $e');
+            continue;
+          }
+        }
+
+        debugPrint('Week $weekOffset total: ${_formatDuration(totalSeconds)}');
         
-        // Calculate working seconds for this check-in
-        final workingSeconds = checkIn.workingSeconds;
-        dailyHours[dayName] = ((dailyHours[dayName] ?? 0) as int) + workingSeconds;
-        totalSeconds = totalSeconds + workingSeconds;
+        weeklyData.add(WeeklyHoursData(
+          weekStart: weekStart,
+          weekEnd: weekEndDate,
+          totalSeconds: totalSeconds,
+          dailyHours: dailyHours,
+        ));
       }
 
       if (mounted) {
         setState(() {
-          _dailyWorkingHours = dailyHours;
-          _totalWeeklyHours = totalSeconds;
+          _weeklyHoursData = weeklyData;
+          debugPrint('Weekly hours data calculated: ${weeklyData.length} weeks');
+          // Set current week data for backward compatibility
+          if (weeklyData.isNotEmpty) {
+            _dailyWorkingHours = weeklyData[0].dailyHours;
+            _totalWeeklyHours = weeklyData[0].totalSeconds;
+          } else {
+            _dailyWorkingHours = {
+              'Monday': 0,
+              'Tuesday': 0,
+              'Wednesday': 0,
+              'Thursday': 0,
+              'Friday': 0,
+              'Saturday': 0,
+              'Sunday': 0,
+            };
+            _totalWeeklyHours = 0;
+          }
         });
       }
     } catch (e) {
       debugPrint('Error calculating weekly working hours: $e');
+      // Even on error, create empty 4 weeks structure so UI can still show the section
+      final List<WeeklyHoursData> emptyWeeklyData = [];
+      final now = DateTime.now();
+      for (int weekOffset = 0; weekOffset < 4; weekOffset++) {
+        final weekStartDate = DateTime(now.year, now.month, now.day)
+            .subtract(Duration(days: now.weekday - 1 + (weekOffset * 7)));
+        final weekEndDate = weekStartDate.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
+        emptyWeeklyData.add(WeeklyHoursData(
+          weekStart: weekStartDate,
+          weekEnd: weekEndDate,
+          totalSeconds: 0,
+          dailyHours: {
+            'Monday': 0,
+            'Tuesday': 0,
+            'Wednesday': 0,
+            'Thursday': 0,
+            'Friday': 0,
+            'Saturday': 0,
+            'Sunday': 0,
+          },
+        ));
+      }
+      
       if (mounted) {
         setState(() {
+          _weeklyHoursData = emptyWeeklyData;
           _dailyWorkingHours = {
             'Monday': 0,
             'Tuesday': 0,
@@ -983,14 +1134,151 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
     }
   }
 
+  Widget _buildWeeksOverview() {
+    if (_weeklyHoursData.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Last 4 Weeks',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: AppColors.text,
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...List.generate(_weeklyHoursData.length, (index) {
+          final weekData = _weeklyHoursData[index];
+          final isCurrentWeek = index == 0;
+          final isSelected = _selectedWeekIndex == index;
+          return GestureDetector(
+            onTap: () {
+              setState(() {
+                _selectedWeekIndex = index;
+                // Update current week data for chart
+                _dailyWorkingHours = weekData.dailyHours;
+                _totalWeeklyHours = weekData.totalSeconds;
+              });
+            },
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? const Color(0xFF3B82F6).withOpacity(0.1)
+                    : AppColors.background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected
+                      ? const Color(0xFF3B82F6).withOpacity(0.3)
+                      : AppColors.border.withOpacity(0.5),
+                  width: isSelected ? 2 : 1,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            weekData.shortLabel,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: isSelected
+                                  ? const Color(0xFF3B82F6)
+                                  : AppColors.text,
+                            ),
+                          ),
+                          if (isCurrentWeek) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF3B82F6),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'Current',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (isSelected && !isCurrentWeek) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF3B82F6),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'Selected',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        weekData.weekLabel,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  _formatDuration(weekData.totalSeconds),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected
+                        ? const Color(0xFF3B82F6)
+                        : AppColors.text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          );
+        }),
+      ],
+    );
+  }
+
   Widget _buildWeeklyHoursChart() {
     final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     
+    // Use selected week's data if available, otherwise use current week data
+    final Map<String, int> chartData = _weeklyHoursData.isNotEmpty && _selectedWeekIndex < _weeklyHoursData.length
+        ? _weeklyHoursData[_selectedWeekIndex].dailyHours
+        : _dailyWorkingHours;
+    
     // Find max hours for scaling
     double maxHours = 0;
     for (final dayName in dayNames) {
-      final seconds = _dailyWorkingHours[dayName] ?? 0;
+      final seconds = chartData[dayName] ?? 0;
       final hours = seconds / 3600.0;
       if (hours > maxHours) maxHours = hours;
     }
@@ -1010,7 +1298,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
             tooltipMargin: 8,
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
               final dayName = dayNames[group.x.toInt()];
-              final seconds = _dailyWorkingHours[dayName] ?? 0;
+              final seconds = chartData[dayName] ?? 0;
               return BarTooltipItem(
                 _formatDuration(seconds),
                 const TextStyle(
@@ -1083,7 +1371,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
         borderData: FlBorderData(show: false),
         barGroups: List.generate(7, (index) {
           final dayName = dayNames[index];
-          final seconds = _dailyWorkingHours[dayName] ?? 0;
+          final seconds = chartData[dayName] ?? 0;
           final hours = seconds / 3600.0;
           return BarChartGroupData(
             x: index,
@@ -1307,8 +1595,20 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
                 ],
               ),
               const SizedBox(height: 8),
+              if (_currentUserName != null)
+                Text(
+                  _currentUserName!,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.text,
+                  ),
+                ),
+              if (_currentUserName != null)               const SizedBox(height: 4),
               Text(
-                _formatDuration(_totalWeeklyHours),
+                _weeklyHoursData.isNotEmpty && _selectedWeekIndex < _weeklyHoursData.length
+                    ? _formatDuration(_weeklyHoursData[_selectedWeekIndex].totalSeconds)
+                    : _formatDuration(_totalWeeklyHours),
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -1317,14 +1617,21 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                'This Week',
+                _weeklyHoursData.isNotEmpty && _selectedWeekIndex < _weeklyHoursData.length
+                    ? _weeklyHoursData[_selectedWeekIndex].shortLabel
+                    : 'This Week',
                 style: TextStyle(
                   fontSize: 14,
                   color: AppColors.muted,
                 ),
               ),
               const SizedBox(height: 24),
-              // Bar Chart
+              // 4 Weeks Overview - Always show if we have data
+              if (_weeklyHoursData.isNotEmpty) ...[
+                _buildWeeksOverview(),
+                const SizedBox(height: 24),
+              ],
+              // Bar Chart (Current Week)
               SizedBox(
                 height: 200,
                 child: _buildWeeklyHoursChart(),
