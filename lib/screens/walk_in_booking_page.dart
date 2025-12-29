@@ -583,7 +583,8 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         }
       }
       
-      return {
+      // For staff-created bookings, mark services as accepted
+      final serviceData = {
         'duration': (service['duration'] as num?)?.toInt() ?? 60,
         'id': service['id'],
         'name': service['name'],
@@ -592,6 +593,14 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         'staffName': staffName,
         'time': svcTimeStr,
       };
+      
+      // If staff is creating the booking, auto-accept the service and store auth UID
+      if (_userRole == 'salon_staff' && staffId != null) {
+        serviceData['approvalStatus'] = 'accepted';
+        serviceData['staffAuthUid'] = staffId; // Store auth UID for calendar matching
+      }
+      
+      return serviceData;
     }).toList();
 
     final bookingCode = _generateBookingCode();
@@ -653,7 +662,8 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       'services': servicesArray,
       'staffId': mainStaffId,
       'staffName': mainStaffName,
-      'status': 'Pending',
+      if (_userRole == 'salon_staff' && mainStaffId != null) 'staffAuthUid': mainStaffId, // Store auth UID for calendar matching
+      'status': _userRole == 'salon_staff' ? 'Confirmed' : 'Pending', // Auto-confirm staff bookings
       'time': mainTimeStr, // Local time for backward compatibility
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -1687,7 +1697,19 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     // Also checks if the NEW service would OVERLAP with other selected services
     // Returns: {'blocked': bool, 'reason': String?}
     Map<String, dynamic> isSlotBlockedByCurrentSelection(TimeOfDay slotTime) {
-      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return {'blocked': false};
+      // For staff bookings, always check for conflicts since staff are auto-assigned to all services
+      // For other roles, only check if staff is assigned
+      final bool shouldCheckConflicts;
+      if (_userRole == 'salon_staff' && _currentUserId != null) {
+        // Staff bookings: always check conflicts (staff is assigned to all services)
+        shouldCheckConflicts = true;
+      } else {
+        // Other roles: only check if staff is assigned
+        if (staffIdToCheck == null || staffIdToCheck.isEmpty) return {'blocked': false};
+        shouldCheckConflicts = true;
+      }
+      
+      if (!shouldCheckConflicts) return {'blocked': false};
       
       final slotMinutes = slotTime.hour * 60 + slotTime.minute;
       // Calculate when this new service would END
@@ -1696,8 +1718,16 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       for (final otherServiceId in _selectedServiceIds) {
         if (otherServiceId == serviceId) continue;
         
-        final otherStaffId = _serviceStaffSelections[otherServiceId];
-        if (otherStaffId != staffIdToCheck) continue;
+        // For staff bookings, check all other services since staff is assigned to all
+        // For other roles, only check if the other service has the same staff assigned
+        if (_userRole == 'salon_staff') {
+          // Staff is assigned to all services, so always check
+        } else {
+          final otherStaffId = _serviceStaffSelections[otherServiceId];
+          if (otherStaffId == null || otherStaffId == 'any' || otherStaffId != staffIdToCheck) {
+            continue; // Different staff or no staff assigned, no conflict
+          }
+        }
         
         final otherTime = _serviceTimeSelections[otherServiceId];
         if (otherTime == null) continue;

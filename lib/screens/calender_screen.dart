@@ -533,20 +533,40 @@ class _CalenderScreenState extends State<CalenderScreen> {
   }
 
   bool _isBookingForStaff(Map<String, dynamic> data, String staffUid) {
+    // Check top-level staffId
     final topLevelStaff = data['staffId'];
     if (topLevelStaff != null &&
         topLevelStaff.toString().isNotEmpty &&
         topLevelStaff.toString() == staffUid) {
       return true;
     }
+    
+    // Check top-level staffAuthUid (for staff created bookings)
+    final topLevelStaffAuthUid = data['staffAuthUid'];
+    if (topLevelStaffAuthUid != null &&
+        topLevelStaffAuthUid.toString().isNotEmpty &&
+        topLevelStaffAuthUid.toString() == staffUid) {
+      return true;
+    }
 
+    // Check services array for multi-service bookings
     if (data['services'] is List) {
       final list = data['services'] as List;
       for (final item in list) {
-        if (item is Map && item['staffId'] != null) {
-          final sid = item['staffId'].toString();
-          if (sid.isNotEmpty && sid == staffUid) {
-            return true;
+        if (item is Map) {
+          // Check staffId in service
+          if (item['staffId'] != null) {
+            final sid = item['staffId'].toString();
+            if (sid.isNotEmpty && sid == staffUid) {
+              return true;
+            }
+          }
+          // Check staffAuthUid in service (for staff created bookings)
+          if (item['staffAuthUid'] != null) {
+            final authUid = item['staffAuthUid'].toString();
+            if (authUid.isNotEmpty && authUid == staffUid) {
+              return true;
+            }
           }
         }
       }
