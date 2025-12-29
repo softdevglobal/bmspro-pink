@@ -18,7 +18,6 @@ import 'admin_dashboard.dart';
 import 'branch_admin_dashboard.dart';
 import 'owner_bookings_page.dart';
 import 'more_page.dart';
-import 'staff_check_in_page.dart';
 import '../services/staff_check_in_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
@@ -434,22 +433,463 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _handleClockAction() async {
     if (_status == ClockStatus.out) {
-      // Navigate to location-based check-in page
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const StaffCheckInPage()),
-      );
-      // Refresh check-in status after returning
-      _refreshCheckInStatus();
+      // Single-touch clock-in with location check
+      await _performClockIn();
     } else if (_status == ClockStatus.clockedIn) {
-      // Navigate to check-in page for check-out
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const StaffCheckInPage()),
-      );
-      // Refresh check-in status after returning
-      _refreshCheckInStatus();
+      // Direct check-out without navigation
+      await _performCheckOut();
     }
+  }
+
+  Future<void> _performClockIn() async {
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+
+    try {
+      // Get available branches for check-in
+      final branches = await StaffCheckInService.getBranchesForCheckIn();
+      
+      if (branches.isEmpty) {
+        Navigator.pop(context); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No branches with location configured. Please contact your administrator.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      String? branchId;
+      
+      // Try to get today's scheduled branch first
+      if (_branchId != null && _branchId!.isNotEmpty) {
+        // Check if this branch is in the available branches
+        final scheduledBranch = branches.firstWhere(
+          (b) => b.id == _branchId,
+          orElse: () => branches.first,
+        );
+        branchId = scheduledBranch.id;
+      } else if (branches.length == 1) {
+        // Only one branch available, use it
+        branchId = branches.first.id;
+      } else {
+        // Multiple branches - need to show selection (but for single touch, use first or scheduled)
+        // Try to get scheduled branch for today
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
+          
+          if (userDoc.exists) {
+            final userData = userDoc.data()!;
+            final todayWeekday = _getTodayWeekday();
+            final schedule = userData['schedule'];
+            String? scheduledBranchId;
+            
+            if (schedule is Map && schedule[todayWeekday] != null) {
+              final todaySchedule = schedule[todayWeekday];
+              if (todaySchedule is Map) {
+                scheduledBranchId = todaySchedule['branchId']?.toString();
+              }
+            }
+            
+            // Also check weeklySchedule format
+            final weeklySchedule = userData['weeklySchedule'];
+            if (weeklySchedule is Map && weeklySchedule[todayWeekday] != null) {
+              final todaySchedule = weeklySchedule[todayWeekday];
+              if (todaySchedule is Map) {
+                scheduledBranchId ??= todaySchedule['branchId']?.toString();
+              }
+            }
+            
+            if (scheduledBranchId != null) {
+              final scheduledBranch = branches.firstWhere(
+                (b) => b.id == scheduledBranchId,
+                orElse: () => branches.first,
+              );
+              branchId = scheduledBranch.id;
+            } else {
+              // No scheduled branch, use first available
+              branchId = branches.first.id;
+            }
+          } else {
+            branchId = branches.first.id;
+          }
+        } else {
+          branchId = branches.first.id;
+        }
+      }
+
+      if (branchId == null || branchId.isEmpty) {
+        Navigator.pop(context); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not determine branch. Please try again.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      // Check if location services are enabled
+      final isLocationEnabled = await LocationService.isLocationServiceEnabled();
+      if (!isLocationEnabled) {
+        Navigator.pop(context); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location services are disabled. Please enable them in your device settings.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
+      // Check permission first
+      final hasPermission = await LocationService.isLocationPermissionGranted();
+      if (!hasPermission) {
+        Navigator.pop(context); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permission is required. Please grant location permission in app settings.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
+      // Get current location
+      final position = await LocationService.getCurrentLocation();
+      if (position == null) {
+        Navigator.pop(context); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not get your location. Please make sure GPS is enabled and try again.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
+      // Perform check-in
+      final result = await StaffCheckInService.checkIn(
+        branchId: branchId,
+        staffLatitude: position.latitude,
+        staffLongitude: position.longitude,
+      );
+
+      Navigator.pop(context); // Close loading dialog
+
+      if (result.success) {
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(FontAwesomeIcons.circleCheck, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Expanded(child: Text(result.message)),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        // Refresh check-in status
+        _refreshCheckInStatus();
+      } else {
+        // Show error message - check if it's a radius issue
+        final isRadiusIssue = !(result.isWithinRadius ?? true);
+        if (isRadiusIssue) {
+          // Show creative popup dialog for radius issues
+          _showRadiusErrorDialog(result.message, result.distanceFromBranch ?? 0);
+        } else {
+          // Show snackbar for other errors
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(FontAwesomeIcons.circleExclamation, color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(result.message)),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      Navigator.pop(context); // Close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  void _showRadiusErrorDialog(String message, double distance) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: Container(
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Icon container
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  FontAwesomeIcons.locationDot,
+                  color: Colors.orange,
+                  size: 40,
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Title
+              const Text(
+                'Location Too Far',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              // Distance display
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      FontAwesomeIcons.ruler,
+                      color: AppColors.muted,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      LocationService.formatDistance(distance),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'away',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: AppColors.muted,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              // Message content
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      FontAwesomeIcons.circleInfo,
+                      color: Colors.orange,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        message,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: AppColors.text,
+                          fontWeight: FontWeight.w400,
+                          height: 1.5,
+                        ),
+                        textAlign: TextAlign.left,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Action button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(FontAwesomeIcons.check, size: 18),
+                      SizedBox(width: 10),
+                      Text(
+                        'Got It',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _performCheckOut() async {
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+
+    try {
+      // Get active check-in ID
+      String? checkInId = _activeCheckInId;
+      if (checkInId == null) {
+        final activeCheckIn = await StaffCheckInService.getActiveCheckIn();
+        if (activeCheckIn == null || activeCheckIn.id == null) {
+          Navigator.pop(context); // Close loading dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No active check-in found.'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+          return;
+        }
+        checkInId = activeCheckIn.id;
+      }
+
+      // Perform check-out (checkInId is guaranteed to be non-null at this point)
+      final result = await StaffCheckInService.checkOut(checkInId!);
+
+      Navigator.pop(context); // Close loading dialog
+
+      if (result.success) {
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(FontAwesomeIcons.circleCheck, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '${result.message}. Hours worked: ${result.hoursWorked}',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        // Refresh check-in status
+        _refreshCheckInStatus();
+      } else {
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(FontAwesomeIcons.circleExclamation, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Expanded(child: Text(result.message)),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      Navigator.pop(context); // Close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  String _getTodayWeekday() {
+    const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    return weekDays[DateTime.now().weekday - 1];
   }
 
   Future<void> _refreshCheckInStatus() async {

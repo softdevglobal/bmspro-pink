@@ -360,7 +360,7 @@ class StaffCheckInService {
         return CheckInResult(
           success: false,
           message:
-              'You are ${LocationService.formatDistance(distance)} away from $branchName. You must be within ${LocationService.formatDistance(allowedRadius)} to check in.',
+              'You are ${LocationService.formatDistance(distance)} away from $branchName. Please go to the branch location (within ${LocationService.formatDistance(allowedRadius)}) to check in.',
           isWithinRadius: false,
           distanceFromBranch: distance,
         );

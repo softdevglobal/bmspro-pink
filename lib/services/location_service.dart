@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -39,18 +40,43 @@ class LocationService {
   /// Get current location with high accuracy
   static Future<Position?> getCurrentLocation() async {
     try {
-      final permission = await requestLocationPermission();
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
+      // Check if location services are enabled first
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('Location services are disabled');
         return null;
       }
 
-      return await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 15),
-        ),
-      );
+      final permission = await requestLocationPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        print('Location permission denied or denied forever');
+        return null;
+      }
+
+      // Try to get current position with reasonable timeout
+      try {
+        return await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 30),
+          ),
+        );
+      } catch (e) {
+        print('High accuracy location failed: $e');
+        // If high accuracy fails, try with medium accuracy as fallback
+        try {
+          return await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.medium,
+              timeLimit: Duration(seconds: 20),
+            ),
+          );
+        } catch (e2) {
+          print('Fallback location also failed: $e2');
+          return null;
+        }
+      }
     } catch (e) {
       print('Error getting location: $e');
       return null;
