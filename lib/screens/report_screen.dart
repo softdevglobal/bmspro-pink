@@ -1443,9 +1443,8 @@ class _ReportScreenState extends State<ReportScreen> {
     return BarChart(
       BarChartData(
         maxY: maxHours,
-        gridData: FlGridData(
-          show: false, // Hide grid lines to remove white lines
-          drawVerticalLine: false,
+        gridData: const FlGridData(
+          show: false,
         ),
         titlesData: FlTitlesData(
           leftTitles: AxisTitles(
@@ -1526,7 +1525,7 @@ class _ReportScreenState extends State<ReportScreen> {
           width: 16,
           borderRadius: BorderRadius.circular(4),
           backDrawRodData: BackgroundBarChartRodData(
-            show: false, // Remove white background bars
+            show: false,
           ),
         ),
       ],
