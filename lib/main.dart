@@ -6,6 +6,7 @@ import 'screens/splash_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'utils/timezone_helper.dart';
 import 'services/notification_service.dart';
+import 'services/app_initializer.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,8 +18,11 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   
-  // Initialize notification service
+  // Initialize notification service (registers background handler for notifications when app is closed/terminated)
   await NotificationService().initialize();
+  
+  // Check if app was opened from a notification (when app was closed)
+  await AppInitializer().checkInitialNotification();
   
   runApp(const BmsproPinkApp());
 }
@@ -45,6 +49,14 @@ class BmsproPinkApp extends StatelessWidget {
     return MaterialApp(
       title: 'BMSPRO PINK',
       debugShowCheckedModeBanner: false,
+      navigatorKey: AppInitializer().navigatorKey,
+      builder: (context, child) {
+        // Set root context for notification handling when app builds
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          AppInitializer().setRootContext(context);
+        });
+        return child ?? const SizedBox();
+      },
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,

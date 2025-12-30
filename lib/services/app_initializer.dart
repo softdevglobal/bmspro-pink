@@ -1,0 +1,88 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
+import '../screens/appointment_requests_page.dart';
+
+/// Service to handle app initialization and notification navigation
+class AppInitializer {
+  static final AppInitializer _instance = AppInitializer._internal();
+  factory AppInitializer() => _instance;
+  AppInitializer._internal();
+
+  BuildContext? _rootContext;
+  RemoteMessage? _pendingNotification;
+  final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+  /// Set the root navigator context (should be called from main app widget)
+  void setRootContext(BuildContext context) {
+    _rootContext = context;
+    // If there's a pending notification, handle it now that we have context
+    if (_pendingNotification != null) {
+      _handlePendingNotification();
+    }
+  }
+
+  /// Check for initial notification when app starts (called from main.dart)
+  Future<void> checkInitialNotification() async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      final initialMessage = await messaging.getInitialMessage();
+      if (initialMessage != null) {
+        _pendingNotification = initialMessage;
+        // If context is already available, handle immediately
+        if (_rootContext != null) {
+          _handlePendingNotification();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking initial notification: $e');
+    }
+  }
+
+  /// Handle pending notification navigation
+  void _handlePendingNotification() {
+    if (_pendingNotification == null) return;
+
+    final message = _pendingNotification!;
+    _pendingNotification = null;
+
+    // Wait a bit for the app to fully initialize before navigating
+    Future.delayed(const Duration(milliseconds: 2000), () {
+      final navigator = navigatorKey.currentState;
+      if (navigator == null) return;
+      
+      final data = message.data;
+      final type = data['type']?.toString() ?? '';
+      
+      // Navigate based on notification type
+      if (type == 'booking_approval_request' || 
+          type == 'staff_assignment' || 
+          type == 'staff_reassignment') {
+        navigator.push(
+          MaterialPageRoute(
+            builder: (context) => const AppointmentRequestsPage(),
+          ),
+        );
+      }
+    });
+  }
+
+  /// Handle notification tap when app is opened from background
+  static void handleNotificationTap(RemoteMessage message, BuildContext? context) {
+    if (context == null || !context.mounted) return;
+
+    final data = message.data;
+    final type = data['type']?.toString() ?? '';
+    
+    // Navigate based on notification type
+    if (type == 'booking_approval_request' || 
+        type == 'staff_assignment' || 
+        type == 'staff_reassignment') {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const AppointmentRequestsPage(),
+        ),
+      );
+    }
+  }
+}
+

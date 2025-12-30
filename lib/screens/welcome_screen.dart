@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../routes.dart';
 import '../widgets/primary_gradient_button.dart';
+import '../services/auth_state_manager.dart';
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -139,7 +140,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   // Optional: Back or Skip
                   TextButton(
                     onPressed: _currentPage == 0
-                        ? () => Navigator.pushReplacementNamed(context, AppRoutes.login)
+                        ? () async {
+                            // Mark first launch as complete when skipping
+                            await AuthStateManager.setFirstLaunchComplete();
+                            await AuthStateManager.setWelcomeSeen();
+                            if (mounted) {
+                              Navigator.pushReplacementNamed(context, AppRoutes.login);
+                            }
+                          }
                         : () => _controller.previousPage(
                               duration: const Duration(milliseconds: 300),
                               curve: Curves.easeOut,
@@ -163,7 +171,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       label: 'Get Started',
                       width: 160,
                       height: 48,
-                      onTap: () => Navigator.pushReplacementNamed(context, AppRoutes.login),
+                      onTap: () async {
+                        // Mark first launch as complete and welcome as seen
+                        await AuthStateManager.setFirstLaunchComplete();
+                        await AuthStateManager.setWelcomeSeen();
+                        if (mounted) {
+                          Navigator.pushReplacementNamed(context, AppRoutes.login);
+                        }
+                      },
                     ),
                 ],
               ),

@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 import '../screens/appointment_requests_page.dart';
+import 'app_initializer.dart';
 
 /// Top-level function to handle background messages
 /// Must be a top-level function, not a class method
@@ -81,17 +82,11 @@ class NotificationService {
         _handleForegroundMessage(message);
       });
 
-      // Handle background messages
+      // Handle background messages (when app is opened from notification while in background)
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-        print('Notification opened app: ${message.messageId}');
+        print('Notification opened app from background: ${message.messageId}');
         _handleNotificationTap(message);
       });
-
-      // Check if app was opened from a notification
-      RemoteMessage? initialMessage = await _messaging.getInitialMessage();
-      if (initialMessage != null) {
-        _handleNotificationTap(initialMessage);
-      }
 
       // Set up background message handler
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
@@ -123,36 +118,60 @@ class NotificationService {
   }
 
   /// Listen to Firestore notifications and show on-screen notifications
+  /// Only shows NEW notifications that arrive while app is running, not old unread ones
   void listenToNotifications() {
     final user = _auth.currentUser;
     if (user == null) return;
-
-    // Cancel existing subscription
-    _notificationSubscription?.cancel();
 
     // Cancel existing subscriptions
     _notificationSubscription?.cancel();
     _adminNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     
-    // Query for staff notifications
+    // Track if this is the first snapshot (initial load) - we skip showing those notifications
+    bool isInitialLoad = true;
+    
+    // Query for staff notifications - only listen for NEW ones (created after we started listening)
     _notificationSubscription = _db
         .collection('notifications')
         .where('staffUid', isEqualTo: user.uid)
-        .where('read', isEqualTo: false)
         .orderBy('createdAt', descending: true)
-        .limit(1)
         .snapshots()
         .listen((snapshot) {
-      if (snapshot.docs.isNotEmpty) {
-        final doc = snapshot.docs.first;
-        if (!_shownNotificationIds.contains(doc.id)) {
+      // Skip the initial snapshot - only process changes that happen AFTER we start listening
+      if (isInitialLoad) {
+        isInitialLoad = false;
+        // Don't show any notifications from the initial load
+        return;
+      }
+      
+      // Only process NEW notifications (documents that were added after we started listening)
+      for (final change in snapshot.docChanges) {
+        // Only show if it's a new document (added), not modified or existing
+        if (change.type == DocumentChangeType.added) {
+          final doc = change.doc;
           final data = doc.data();
+          
+          // Skip if data is null
+          if (data == null) {
+            continue;
+          }
+          
+          // Skip if we've already shown this notification
+          if (_shownNotificationIds.contains(doc.id)) {
+            continue;
+          }
+          
           final type = data['type']?.toString() ?? '';
           
           // Skip booking_approval_request notifications (they're handled via pending requests alert)
           if (type == 'booking_approval_request') {
-            return;
+            continue;
+          }
+          
+          // Only show if unread
+          if (data['read'] == true) {
+            continue;
           }
           
           _shownNotificationIds.add(doc.id);
@@ -168,26 +187,49 @@ class NotificationService {
       print('Error listening to staff notifications: $e');
     });
     
-    // Query for admin notifications (ownerUid) - for branch admins
+    // Query for admin notifications (ownerUid) - only listen for NEW ones
+    bool isInitialAdminLoad = true;
     _adminNotificationSubscription = _db
         .collection('notifications')
         .where('ownerUid', isEqualTo: user.uid)
-        .where('read', isEqualTo: false)
         .orderBy('createdAt', descending: true)
-        .limit(1)
         .snapshots()
         .listen((snapshot) {
-      if (snapshot.docs.isNotEmpty) {
-        final doc = snapshot.docs.first;
-        final data = doc.data();
-        // Only show if it's an admin notification (no staffUid or targetAdminUid matches user)
-        final staffUid = data['staffUid']?.toString();
-        final targetAdminUid = data['targetAdminUid']?.toString();
-        
-        // Show if: no staffUid assigned, or targetAdminUid matches, or it's a general admin notification
-        if ((staffUid == null || staffUid != user.uid) && 
-            (targetAdminUid == null || targetAdminUid == user.uid)) {
-          if (!_shownNotificationIds.contains(doc.id)) {
+      // Skip the initial snapshot
+      if (isInitialAdminLoad) {
+        isInitialAdminLoad = false;
+        return;
+      }
+      
+      // Only process NEW notifications
+      for (final change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.added) {
+          final doc = change.doc;
+          final data = doc.data();
+          
+          // Skip if data is null
+          if (data == null) {
+            continue;
+          }
+          
+          // Skip if we've already shown this notification
+          if (_shownNotificationIds.contains(doc.id)) {
+            continue;
+          }
+          
+          // Only show if it's an admin notification (no staffUid or targetAdminUid matches user)
+          final staffUid = data['staffUid']?.toString();
+          final targetAdminUid = data['targetAdminUid']?.toString();
+          
+          // Show if: no staffUid assigned, or targetAdminUid matches, or it's a general admin notification
+          if ((staffUid == null || staffUid != user.uid) && 
+              (targetAdminUid == null || targetAdminUid == user.uid)) {
+            
+            // Only show if unread
+            if (data['read'] == true) {
+              continue;
+            }
+            
             _shownNotificationIds.add(doc.id);
             _showOnScreenNotification(
               title: data['title']?.toString() ?? 'New Notification',
@@ -251,43 +293,35 @@ class NotificationService {
     );
   }
 
-  /// Handle notification tap
+  /// Handle notification tap (when app is opened from background)
   void _handleNotificationTap(RemoteMessage message) {
-    // Navigate to appropriate screen based on notification data
-    final data = message.data;
-    _handleNotificationTapFromData(data);
+    // Mark notification as read
+    _handleNotificationTapFromData(message.data);
+    
+    // Use AppInitializer for consistent navigation handling
+    if (_context != null && _context!.mounted) {
+      AppInitializer.handleNotificationTap(message, _context);
+    } else {
+      // If context is not available, try to get it from navigator key
+      final navigator = AppInitializer().navigatorKey.currentState;
+      if (navigator != null) {
+        AppInitializer.handleNotificationTap(message, navigator.context);
+      }
+    }
   }
 
-  /// Handle notification tap from data
+  /// Handle notification tap from data (marks notification as read only)
+  /// Navigation is handled by AppInitializer.handleNotificationTap
   void _handleNotificationTapFromData(Map<String, dynamic>? data) {
-    if (_context == null || !_context!.mounted || data == null) return;
+    if (data == null) return;
 
-    final type = data['type']?.toString() ?? '';
     final notificationId = data['notificationId']?.toString() ?? '';
     
-    // Mark notification as read
+    // Mark notification as read in Firestore
     if (notificationId.isNotEmpty) {
-      _db.collection('notifications').doc(notificationId).update({'read': true});
-    }
-    
-    // Navigate based on notification type
-    try {
-      if (type == 'booking_approval_request' || 
-          type == 'staff_assignment' || 
-          type == 'staff_reassignment') {
-        // Navigate to appointment requests page for booking approval notifications
-        Navigator.of(_context!).push(
-          MaterialPageRoute(
-            builder: (context) => const AppointmentRequestsPage(),
-          ),
-        );
-      } else {
-        // For other notification types, you could navigate to notifications page
-        // For now, we'll just mark as read (navigation can be added later if needed)
-        debugPrint('Notification type: $type - no specific navigation handler');
-      }
-    } catch (e) {
-      debugPrint('Error navigating from notification: $e');
+      _db.collection('notifications').doc(notificationId).update({'read': true}).catchError((e) {
+        debugPrint('Error marking notification as read: $e');
+      });
     }
   }
 

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../routes.dart';
+import '../services/auth_state_manager.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -10,21 +12,39 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  Timer? _timer;
-
   @override
   void initState() {
     super.initState();
-    _timer = Timer(const Duration(seconds: 2), () {
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, AppRoutes.welcome);
-    });
+    _initializeApp();
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
+  Future<void> _initializeApp() async {
+    // Show splash screen for at least 1.5 seconds for smooth UX
+    await Future.delayed(const Duration(milliseconds: 1500));
+
+    if (!mounted) return;
+
+    // Check if this is the first launch
+    final isFirstLaunch = await AuthStateManager.isFirstLaunch();
+    
+    if (isFirstLaunch) {
+      // First launch - show welcome/onboarding screens
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, AppRoutes.welcome);
+    } else {
+      // Not first launch - check auth state and navigate accordingly
+      final user = await AuthStateManager.waitForAuthState();
+      
+      if (!mounted) return;
+
+      if (user != null) {
+        // User is logged in - go directly to home
+        Navigator.pushReplacementNamed(context, AppRoutes.home);
+      } else {
+        // User is not logged in - go to login
+        Navigator.pushReplacementNamed(context, AppRoutes.login);
+      }
+    }
   }
 
   @override
