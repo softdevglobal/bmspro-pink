@@ -146,8 +146,29 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         final role = (data['role'] ?? '').toString();
         if (role == 'salon_staff' || role == 'salon_branch_admin') {
           final staffBranchId = (data['branchId'] ?? '').toString();
-          // For branch admins, only show staff from their branch
-          if (isBranchAdmin && staffBranchId != _userBranchId) continue;
+          final weeklySchedule = data['weeklySchedule'] as Map<String, dynamic>?;
+          
+          // For branch admins, include staff who either:
+          // 1. Have primary branchId matching this branch, OR
+          // 2. Work at this branch on ANY day via weeklySchedule
+          if (isBranchAdmin) {
+            bool worksAtBranch = staffBranchId == _userBranchId;
+            
+            // Also check weeklySchedule for any day at this branch
+            if (!worksAtBranch && weeklySchedule != null) {
+              for (var daySchedule in weeklySchedule.values) {
+                if (daySchedule is Map) {
+                  final scheduledBranchId = (daySchedule['branchId'] ?? '').toString();
+                  if (scheduledBranchId == _userBranchId) {
+                    worksAtBranch = true;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            if (!worksAtBranch) continue;
+          }
           
           loaded.add({
             'id': doc.id,
@@ -155,10 +176,13 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             'role': (data['staffRole'] ?? data['role'] ?? 'Staff').toString(),
             'avatarUrl': (data['photoURL'] ?? data['avatarUrl']).toString(),
             'branchId': staffBranchId,
-            'weeklySchedule': data['weeklySchedule'] as Map<String, dynamic>?,
+            'weeklySchedule': weeklySchedule,
+            'status': (data['status'] ?? 'Active').toString(),
+            'branch': (data['branch'] ?? '').toString(), // Branch name for matching
           });
         }
       }
+      debugPrint('[StaffList] Loaded ${loaded.length} staff members: ${loaded.map((s) => s['name']).toList()}');
       if (mounted) {
         setState(() {
           _staffList = loaded;
@@ -884,9 +908,10 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     } catch (_) {}
 
     List<List<Map<String, dynamic>>> availableStaffPerService = [];
+    final bookingBranchName = (booking.rawData['branchName'] ?? '').toString();
     for (var service in servicesToEdit) {
       final sName = (service['name'] ?? '').toString();
-      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName));
+      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName, branchName: bookingBranchName));
     }
 
     showDialog(
@@ -1307,9 +1332,10 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     } catch (_) {}
 
     List<List<Map<String, dynamic>>> availableStaffPerService = [];
+    final bookingBranchName = (booking.rawData['branchName'] ?? '').toString();
     for (var service in servicesToEdit) {
       final sName = (service['name'] ?? '').toString();
-      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName));
+      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName, branchName: bookingBranchName));
     }
 
     showDialog(
@@ -1929,9 +1955,10 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     } catch (_) {}
 
     List<List<Map<String, dynamic>>> availableStaffPerService = [];
+    final bookingBranchName = (booking.rawData['branchName'] ?? '').toString();
     for (var service in servicesToEdit) {
       final sName = (service['name'] ?? '').toString();
-      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName));
+      availableStaffPerService.add(_getAvailableStaffForService(sName, booking.branchId, dayName, branchName: bookingBranchName));
     }
 
     showDialog(
@@ -2344,7 +2371,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   }
 
   List<Map<String, dynamic>> _getAvailableStaffForService(
-      String serviceName, String branchId, String dayName) {
+      String serviceName, String branchId, String dayName, {String branchName = ''}) {
     // 1. Find service definition
     final service = _servicesList.firstWhere(
       (s) => s['name'] == serviceName,
@@ -2352,37 +2379,70 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     );
     final List<String> allowedStaffIds =
         service.isNotEmpty ? List<String>.from(service['staffIds'] ?? []) : [];
+    final serviceHasStaffAssigned = allowedStaffIds.isNotEmpty;
+    
+    debugPrint('[StaffFilter] Service: $serviceName, staffIds: $allowedStaffIds, branchId: $branchId, branchName: $branchName, day: $dayName');
 
-    return _staffList.where((staff) {
-      // 2. Check Service Capability (if defined)
-      if (service.isNotEmpty && allowedStaffIds.isNotEmpty) {
-        if (!allowedStaffIds.contains(staff['id'])) return false;
-      }
-
-      // 3. Check Schedule and Branch
-      // If dayName is valid, check if staff works on this day
+    // Helper function to check if staff works at branch (EXACTLY matching admin panel logic)
+    bool staffWorksAtBranch(Map<String, dynamic> staff) {
+      if (branchId.isEmpty) return true; // No branch selected = show all
+      
+      // Check weekly schedule first (day-specific branch assignment)
+      // IMPORTANT: If weeklySchedule exists, we RETURN based on schedule, no fallthrough!
       if (dayName.isNotEmpty) {
         final schedule = staff['weeklySchedule'] as Map<String, dynamic>?;
         if (schedule != null) {
           final daySchedule = schedule[dayName];
-          if (daySchedule == null) return false; // Not working today
-
-          // Check if scheduled at the booking branch
-          final scheduledBranch = daySchedule['branchId'];
-          if (scheduledBranch != null && scheduledBranch.toString() != branchId) {
-             return false; // Scheduled at a different branch
-          }
-        } else {
-          // No schedule defined - fallback to home branch check
-           if (staff['branchId'] != branchId) return false;
+          if (daySchedule == null) return false; // Staff is off this day
+          
+          // Check if scheduled at selected branch (by ID or name) - RETURN result, don't fall through!
+          final scheduledBranchId = (daySchedule['branchId'] ?? '').toString();
+          final scheduledBranchName = (daySchedule['branchName'] ?? '').toString();
+          
+          // Match by branchId OR branchName (exactly like admin panel)
+          return scheduledBranchId == branchId || 
+                 (branchName.isNotEmpty && scheduledBranchName.isNotEmpty && scheduledBranchName == branchName);
         }
-      } else {
-        // No date info - fallback to home branch check
-        if (staff['branchId'] != branchId) return false;
       }
+      
+      // Fall back to home branch check ONLY if no weeklySchedule
+      final staffBranchId = (staff['branchId'] ?? '').toString();
+      final staffBranchName = (staff['branch'] ?? '').toString();
+      
+      // Staff MUST have a branch assignment matching the selected branch (by ID or name)
+      return staffBranchId == branchId || 
+             (branchName.isNotEmpty && staffBranchName.isNotEmpty && staffBranchName == branchName);
+    }
 
+    // FILTER: Staff must be non-suspended + work at branch + (if service has staffIds, be in that list)
+    final result = _staffList.where((staff) {
+      // 1. Filter out suspended staff (matching admin panel logic)
+      final status = (staff['status'] ?? 'Active').toString();
+      if (status == 'Suspended' || status == 'suspended') {
+        debugPrint('[StaffFilter] ${staff['name']} filtered out: suspended');
+        return false;
+      }
+      
+      // 2. If service has specific staff assigned, ONLY show those
+      if (serviceHasStaffAssigned) {
+        if (!allowedStaffIds.contains(staff['id'].toString())) {
+          debugPrint('[StaffFilter] ${staff['name']} filtered out: not in service staffIds');
+          return false;
+        }
+      }
+      
+      // 3. Staff must work at the selected branch (mandatory)
+      if (!staffWorksAtBranch(staff)) {
+        debugPrint('[StaffFilter] ${staff['name']} filtered out: not working at branch on $dayName');
+        return false;
+      }
+      
+      debugPrint('[StaffFilter] ${staff['name']} INCLUDED');
       return true;
     }).toList();
+    
+    debugPrint('[StaffFilter] Result: ${result.map((s) => s['name']).toList()}');
+    return result;
   }
 
   void _showConfirmDialog(BuildContext context, String action,
