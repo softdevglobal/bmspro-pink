@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/audit_log_service.dart';
+import 'branch_location_picker_page.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -31,6 +32,12 @@ class BranchModel {
   final List<String> serviceIds;
   final List<String> staffIds;
   final String? adminStaffId;
+  // Location data for geofenced check-in
+  final double? locationLatitude;
+  final double? locationLongitude;
+  final String? locationAddress;
+  final String? locationPlaceId;
+  final int allowedCheckInRadius;
 
   BranchModel({
     required this.id,
@@ -44,10 +51,18 @@ class BranchModel {
     this.serviceIds = const [],
     this.staffIds = const [],
     this.adminStaffId,
+    this.locationLatitude,
+    this.locationLongitude,
+    this.locationAddress,
+    this.locationPlaceId,
+    this.allowedCheckInRadius = 100,
   });
+
+  bool get hasLocation => locationLatitude != null && locationLongitude != null;
 
   factory BranchModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    final location = data['location'] as Map<String, dynamic>?;
     return BranchModel(
       id: doc.id,
       name: data['name'] ?? '',
@@ -60,6 +75,11 @@ class BranchModel {
       serviceIds: List<String>.from(data['serviceIds'] ?? []),
       staffIds: List<String>.from(data['staffIds'] ?? []),
       adminStaffId: data['adminStaffId'],
+      locationLatitude: location?['latitude']?.toDouble(),
+      locationLongitude: location?['longitude']?.toDouble(),
+      locationAddress: location?['formattedAddress'],
+      locationPlaceId: location?['placeId'],
+      allowedCheckInRadius: data['allowedCheckInRadius'] ?? 100,
     );
   }
 }
@@ -825,6 +845,12 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
   late String _status;
   late Map<String, Map<String, dynamic>> _hours;
   String? _selectedAdminStaffId;
+  
+  // Location data
+  double? _locationLatitude;
+  double? _locationLongitude;
+  String? _locationAddress;
+  int _allowedCheckInRadius = 50;
 
   @override
   void initState() {
@@ -837,6 +863,12 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     _capacityController = TextEditingController(text: branch?.capacity?.toString() ?? '');
     _status = branch?.status ?? 'Active';
     _selectedAdminStaffId = branch?.adminStaffId;
+    
+    // Initialize location data
+    _locationLatitude = branch?.locationLatitude;
+    _locationLongitude = branch?.locationLongitude;
+    _locationAddress = branch?.locationAddress;
+    _allowedCheckInRadius = branch?.allowedCheckInRadius ?? 50;
 
     // Initialize hours
     _hours = {
@@ -902,6 +934,16 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
         'manager': managerName,
         'updatedAt': FieldValue.serverTimestamp(),
       };
+      
+      // Add location data if set
+      if (_locationLatitude != null && _locationLongitude != null) {
+        data['location'] = {
+          'latitude': _locationLatitude,
+          'longitude': _locationLongitude,
+          'formattedAddress': _locationAddress,
+          'allowedCheckInRadius': _allowedCheckInRadius,
+        };
+      }
 
       final user = FirebaseAuth.instance.currentUser;
       final userDoc = user != null 
@@ -1306,6 +1348,137 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                       ..._hours.keys.map((day) => _buildHoursRow(day)),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  
+                  // Check-in Location
+                  _buildSectionCard(
+                    title: 'Check-in Location',
+                    icon: FontAwesomeIcons.locationDot,
+                    iconColor: const Color(0xFFEF4444),
+                    children: [
+                      if (_locationLatitude != null && _locationLongitude != null) ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.green.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade100,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(FontAwesomeIcons.mapPin, 
+                                  color: Colors.green.shade700, size: 14),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _locationAddress ?? 'Location set',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.green.shade700,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Radius: ${_allowedCheckInRadius}m',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.green.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ] else
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.amber.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(FontAwesomeIcons.triangleExclamation, 
+                                color: Colors.amber.shade700, size: 16),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Text(
+                                  'No location set. Staff check-in will not be geofenced.',
+                                  style: TextStyle(fontSize: 12, color: AppColors.text),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            final result = await Navigator.push<BranchLocationData>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => BranchLocationPickerPage(
+                                  branchId: widget.branch?.id, // Null for new branches
+                                  branchName: _nameController.text.isNotEmpty 
+                                      ? _nameController.text 
+                                      : (widget.branch?.name ?? 'New Branch'),
+                                  initialLatitude: _locationLatitude,
+                                  initialLongitude: _locationLongitude,
+                                  initialRadius: _allowedCheckInRadius,
+                                  initialAddress: _locationAddress,
+                                ),
+                              ),
+                            );
+                            if (result != null && mounted) {
+                              setState(() {
+                                _locationLatitude = result.latitude;
+                                _locationLongitude = result.longitude;
+                                _locationAddress = result.formattedAddress;
+                                _allowedCheckInRadius = result.allowedRadius;
+                              });
+                            }
+                          },
+                          icon: Icon(
+                            _locationLatitude != null 
+                                ? FontAwesomeIcons.penToSquare 
+                                : FontAwesomeIcons.locationDot,
+                            size: 14,
+                          ),
+                          label: Text(
+                            _locationLatitude != null ? 'Edit Location' : 'Set Location',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFEF4444),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 24),
                 ],
               ),
@@ -1655,6 +1828,84 @@ class _BranchPreviewSheetState extends State<_BranchPreviewSheet> {
                       ),
                     ],
                   ),
+                ),
+                const SizedBox(height: 16),
+
+                // Location for Check-in (read-only in preview)
+                _buildSectionCard(
+                  title: 'Check-in Location',
+                  icon: FontAwesomeIcons.locationDot,
+                  iconColor: const Color(0xFFEF4444),
+                  child: widget.branch.hasLocation
+                      ? Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.green.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade100,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(FontAwesomeIcons.mapPin, 
+                                  color: Colors.green.shade700, size: 14),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      widget.branch.locationAddress ?? 'Location set',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.green.shade700,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Radius: ${widget.branch.allowedCheckInRadius}m',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.green.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.amber.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(FontAwesomeIcons.triangleExclamation, 
+                                color: Colors.amber.shade700, size: 16),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Text(
+                                  'No location set. Edit branch to set check-in location.',
+                                  style: TextStyle(fontSize: 12, color: AppColors.text),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                 ),
                 const SizedBox(height: 16),
 
