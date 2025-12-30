@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
+import '../screens/appointment_requests_page.dart';
 
 /// Top-level function to handle background messages
 /// Must be a top-level function, not a class method
@@ -11,7 +12,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print('Handling background message: ${message.messageId}');
   print('Title: ${message.notification?.title}');
   print('Body: ${message.notification?.body}');
-  // You can perform background tasks here
+  print('Data: ${message.data}');
+  
+  // Note: When the app is in the background or terminated,
+  // FCM automatically displays the notification on Android and iOS.
+  // This handler is for any additional processing you might need.
+  
+  // You can perform background tasks here, such as:
+  // - Updating local database
+  // - Scheduling local notifications
+  // - Processing notification data
 }
 
 /// Notification service for handling FCM and on-screen notifications
@@ -261,8 +271,24 @@ class NotificationService {
     }
     
     // Navigate based on notification type
-    // Note: Navigation will be handled by the screens that use this service
-    // The screens can listen to notification taps and navigate accordingly
+    try {
+      if (type == 'booking_approval_request' || 
+          type == 'staff_assignment' || 
+          type == 'staff_reassignment') {
+        // Navigate to appointment requests page for booking approval notifications
+        Navigator.of(_context!).push(
+          MaterialPageRoute(
+            builder: (context) => const AppointmentRequestsPage(),
+          ),
+        );
+      } else {
+        // For other notification types, you could navigate to notifications page
+        // For now, we'll just mark as read (navigation can be added later if needed)
+        debugPrint('Notification type: $type - no specific navigation handler');
+      }
+    } catch (e) {
+      debugPrint('Error navigating from notification: $e');
+    }
   }
 
   /// Dispose resources

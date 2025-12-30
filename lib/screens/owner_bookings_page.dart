@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'dart:async' show TimeoutException;
 import 'walk_in_booking_page.dart';
 import '../services/audit_log_service.dart';
 
@@ -517,19 +520,33 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     required List<Map<String, dynamic>> services,
   }) async {
     try {
+      debugPrint("🔔 _createStaffApprovalNotifications called for bookingId: $bookingId");
+      debugPrint("🔔 Services count: ${services.length}");
+      
       final ownerUid = _ownerUid ?? '';
       final Set<String> notifiedStaffIds = {};
       
+      // API base URL for sending push notifications
+      const String apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+      
+      if (services.isEmpty) {
+        debugPrint("⚠️ No services provided, cannot send notifications");
+        return;
+      }
+      
       for (final service in services) {
+        debugPrint("🔔 Processing service: ${service['name']} with staffId: ${service['staffId']}");
         final staffId = (service['staffId'] ?? '').toString();
         final staffName = (service['staffName'] ?? 'Staff').toString();
         final serviceName = (service['name'] ?? service['serviceName'] ?? 'Service').toString();
         
         // Skip if no staff assigned or already notified
         if (staffId.isEmpty || staffId == 'null' || notifiedStaffIds.contains(staffId)) {
+          debugPrint("⏭️ Skipping service - staffId: $staffId (empty: ${staffId.isEmpty}, isNull: ${staffId == 'null'}, alreadyNotified: ${notifiedStaffIds.contains(staffId)})");
           continue;
         }
         notifiedStaffIds.add(staffId);
+        debugPrint("✅ Processing staff member: $staffName ($staffId)");
         
         // Get all services assigned to this staff member
         final staffServices = services
@@ -538,12 +555,16 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             .join(', ');
         
         final time = booking.rawData['time'] ?? '';
+        final title = 'Booking Approval Required';
+        final message = 'Please review and approve booking for $staffServices with ${booking.customerName} on ${booking.date} at $time.';
         
-        await db.collection('notifications').add({
+        // Create Firestore notification
+        debugPrint("📝 Creating Firestore notification for $staffName ($staffId)");
+        final notificationRef = await db.collection('notifications').add({
           'bookingId': bookingId,
           'type': 'booking_approval_request',
-          'title': 'Booking Approval Required',
-          'message': 'Please review and approve booking for $staffServices with ${booking.customerName} on ${booking.date} at $time.',
+          'title': title,
+          'message': message,
           'status': 'AwaitingStaffApproval',
           'ownerUid': ownerUid,
           'staffUid': staffId,
@@ -557,11 +578,63 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
           'read': false,
           'createdAt': FieldValue.serverTimestamp(),
         });
+        debugPrint("✅ Firestore notification created with ID: ${notificationRef.id}");
         
-        debugPrint("Sent approval request notification to $staffName ($staffId)");
+        // Send FCM push notification via API
+        try {
+          final user = FirebaseAuth.instance.currentUser;
+          if (user != null) {
+            debugPrint("📤 Attempting to send FCM push notification to $staffName ($staffId)");
+            final token = await user.getIdToken();
+            debugPrint("📤 Auth token obtained, calling API: $apiBaseUrl/api/notifications/send-push");
+            
+            final response = await http.post(
+              Uri.parse('$apiBaseUrl/api/notifications/send-push'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({
+                'staffUid': staffId,
+                'title': title,
+                'message': message,
+                'data': {
+                  'notificationId': notificationRef.id,
+                  'type': 'booking_approval_request',
+                  'bookingId': bookingId,
+                },
+              }),
+            ).timeout(
+              const Duration(seconds: 10),
+            );
+            
+            debugPrint("📥 API Response Status: ${response.statusCode}");
+            debugPrint("📥 API Response Body: ${response.body}");
+            
+            if (response.statusCode == 200) {
+              debugPrint("✅ Successfully sent FCM push notification to $staffName ($staffId)");
+            } else {
+              debugPrint("❌ Failed to send FCM push notification: ${response.statusCode}");
+              debugPrint("❌ Response body: ${response.body}");
+            }
+          } else {
+            debugPrint("⚠ No authenticated user found, cannot send FCM push notification");
+          }
+        } catch (e) {
+          // Don't fail the whole operation if push notification fails
+          debugPrint("❌ Error sending FCM push notification: $e");
+          if (e is TimeoutException) {
+            debugPrint("❌ Request timed out - check network connection");
+          }
+        }
+        
+        debugPrint("✅ Sent approval request notification to $staffName ($staffId)");
       }
-    } catch (e) {
-      debugPrint("Error creating staff approval notifications: $e");
+      
+      debugPrint("🔔 Completed _createStaffApprovalNotifications - notified ${notifiedStaffIds.length} staff members");
+    } catch (e, stackTrace) {
+      debugPrint("❌ Error creating staff approval notifications: $e");
+      debugPrint("❌ Stack trace: $stackTrace");
     }
   }
 
