@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../services/staff_check_in_service.dart';
 
 class AppColors {
@@ -51,11 +52,23 @@ class _AttendancePageState extends State<AttendancePage> {
   List<StaffCheckInRecord> _checkIns = [];
   List<Branch> _branches = [];
   String _activeView = 'list'; // 'map' or 'list'
+  GoogleMapController? _mapController;
+  
+  // Stream subscriptions for cleanup
+  dynamic _branchesSubscription;
+  dynamic _checkInsSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _branchesSubscription?.cancel();
+    _checkInsSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -68,23 +81,37 @@ class _AttendancePageState extends State<AttendancePage> {
     setState(() => _loading = true);
 
     try {
-      // Get owner UID
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
+      // Get owner UID - check salon_staff collection first (like admin panel)
+      String ownerUid = user.uid;
+      
+      // Try salon_staff collection first
+      final staffDoc = await FirebaseFirestore.instance
+          .collection('salon_staff')
           .doc(user.uid)
           .get();
       
-      final role = userDoc.data()?['role'] ?? '';
-      String ownerUid = user.uid;
-      
-      if (role == 'salon_branch_admin') {
-        ownerUid = userDoc.data()?['ownerUid'] ?? user.uid;
+      if (staffDoc.exists && staffDoc.data()?['ownerUid'] != null) {
+        ownerUid = staffDoc.data()!['ownerUid'];
+        debugPrint('Got ownerUid from salon_staff: $ownerUid');
+      } else {
+        // Fall back to users collection
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        final role = userDoc.data()?['role'] ?? '';
+        if (role == 'salon_branch_admin' || role == 'staff') {
+          ownerUid = userDoc.data()?['ownerUid'] ?? user.uid;
+        }
+        debugPrint('Got ownerUid from users: $ownerUid (role: $role)');
       }
 
       _ownerUid = ownerUid;
+      debugPrint('Final ownerUid: $_ownerUid');
 
-      // Subscribe to branches
-      FirebaseFirestore.instance
+      // Subscribe to branches (real-time)
+      _branchesSubscription = FirebaseFirestore.instance
           .collection('branches')
           .where('ownerUid', isEqualTo: ownerUid)
           .snapshots()
@@ -103,11 +130,14 @@ class _AttendancePageState extends State<AttendancePage> {
               );
             }).toList();
           });
+          debugPrint('Loaded ${_branches.length} branches');
         }
+      }, onError: (e) {
+        debugPrint('Error subscribing to branches: $e');
       });
 
-      // Load check-ins for selected date
-      _fetchCheckIns();
+      // Subscribe to check-ins (real-time)
+      _subscribeToCheckIns();
 
       setState(() => _loading = false);
     } catch (e) {
@@ -116,39 +146,66 @@ class _AttendancePageState extends State<AttendancePage> {
     }
   }
 
-  void _fetchCheckIns() async {
+  void _subscribeToCheckIns() {
     if (_ownerUid == null) return;
 
-    try {
-      // Get start and end of selected date
-      final startOfDay = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, 0, 0, 0);
-      final endOfDay = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, 23, 59, 59);
+    // Cancel existing subscription
+    _checkInsSubscription?.cancel();
 
-      // Query check-ins for the owner
-      final checkInsQuery = await FirebaseFirestore.instance
-          .collection('staff_check_ins')
-          .where('ownerUid', isEqualTo: _ownerUid)
-          .get();
+    // Get start and end of selected date
+    final startOfDay = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, 0, 0, 0);
+    final endOfDay = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, 23, 59, 59);
 
-      // Filter by date
-      final allCheckIns = checkInsQuery.docs
-          .map((doc) => StaffCheckInRecord.fromFirestore(doc))
+    debugPrint('Subscribing to check-ins for ownerUid: $_ownerUid');
+    debugPrint('Date range: $startOfDay to $endOfDay');
+
+    // Subscribe to check-ins for the owner (real-time like admin panel)
+    _checkInsSubscription = FirebaseFirestore.instance
+        .collection('staff_check_ins')
+        .where('ownerUid', isEqualTo: _ownerUid)
+        .snapshots()
+        .listen((snapshot) {
+      debugPrint('Received ${snapshot.docs.length} total check-ins from Firestore');
+      
+      // Filter by date in memory (like admin panel's timesheet approach)
+      final allCheckIns = snapshot.docs
+          .map((doc) {
+            try {
+              return StaffCheckInRecord.fromFirestore(doc);
+            } catch (e) {
+              debugPrint('Error parsing check-in ${doc.id}: $e');
+              return null;
+            }
+          })
+          .where((checkIn) => checkIn != null)
+          .cast<StaffCheckInRecord>()
           .where((checkIn) {
             final checkInTime = checkIn.checkInTime;
-            return checkInTime.isAfter(startOfDay.subtract(const Duration(seconds: 1))) &&
+            final isInRange = checkInTime.isAfter(startOfDay.subtract(const Duration(seconds: 1))) &&
                    checkInTime.isBefore(endOfDay.add(const Duration(seconds: 1)));
+            return isInRange;
           })
           .toList();
+      
+      // Sort by checkInTime descending (most recent first) - like admin panel
+      allCheckIns.sort((a, b) => b.checkInTime.compareTo(a.checkInTime));
 
+      debugPrint('Filtered to ${allCheckIns.length} check-ins for selected date');
+      
       if (mounted) {
         setState(() => _checkIns = allCheckIns);
       }
-    } catch (e) {
-      debugPrint('Error fetching check-ins: $e');
+    }, onError: (e) {
+      debugPrint('Error subscribing to check-ins: $e');
       if (mounted) {
         setState(() => _checkIns = []);
       }
-    }
+    });
+  }
+  
+  // Called when date changes to re-subscribe with new date filter
+  void _onDateChanged() {
+    _subscribeToCheckIns();
   }
 
   List<StaffCheckInRecord> get _filteredCheckIns {
@@ -242,7 +299,7 @@ class _AttendancePageState extends State<AttendancePage> {
                   // View Toggle
                   _buildViewToggle(),
                   // Main Content
-                  _activeView == 'list' ? _buildListView() : _buildMapPlaceholder(),
+                  _activeView == 'list' ? _buildListView() : _buildMapView(),
                   // Branch Quick View
                   _buildBranchQuickView(),
                 ],
@@ -370,7 +427,7 @@ class _AttendancePageState extends State<AttendancePage> {
                   setState(() {
                     _selectedDate = _selectedDate.subtract(const Duration(days: 1));
                   });
-                  _fetchCheckIns();
+                  _onDateChanged();
                 },
                 icon: const Icon(FontAwesomeIcons.chevronLeft, size: 16),
               ),
@@ -390,7 +447,7 @@ class _AttendancePageState extends State<AttendancePage> {
                   setState(() {
                     _selectedDate = _selectedDate.add(const Duration(days: 1));
                   });
-                  _fetchCheckIns();
+                  _onDateChanged();
                 },
                 icon: const Icon(FontAwesomeIcons.chevronRight, size: 16),
               ),
@@ -438,7 +495,7 @@ class _AttendancePageState extends State<AttendancePage> {
                     setState(() {
                       _selectedDate = DateTime.now();
                     });
-                    _fetchCheckIns();
+                    _onDateChanged();
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
@@ -532,38 +589,322 @@ class _AttendancePageState extends State<AttendancePage> {
     );
   }
 
-  Widget _buildMapPlaceholder() {
+  Set<Marker> _buildMarkers() {
+    final Set<Marker> markers = {};
+
+    // Add branch markers
+    for (final branch in _branches) {
+      if (branch.latitude != null && branch.longitude != null) {
+        final position = LatLng(branch.latitude!, branch.longitude!);
+        final activeStaffCount = _checkIns
+            .where((c) => c.branchId == branch.id && c.status == 'checked_in')
+            .length;
+        
+        // Branch marker
+        markers.add(
+          Marker(
+            markerId: MarkerId('branch_${branch.id}'),
+            position: position,
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+            infoWindow: InfoWindow(
+              title: branch.name,
+              snippet: '$activeStaffCount active • Radius: ${_formatDistance(branch.allowedCheckInRadius ?? 100)}',
+            ),
+          ),
+        );
+      }
+    }
+
+    // Add staff check-in markers
+    for (final checkIn in _filteredCheckIns) {
+      final isActive = checkIn.status == 'checked_in';
+      final isOutsideRadius = !checkIn.isWithinRadius;
+      
+      // Determine marker color based on status
+      double hue;
+      if (isOutsideRadius) {
+        hue = BitmapDescriptor.hueRed; // Red for outside radius
+      } else if (isActive) {
+        hue = BitmapDescriptor.hueGreen; // Green for active
+      } else {
+        hue = BitmapDescriptor.hueAzure; // Blue for completed
+      }
+
+      markers.add(
+        Marker(
+          markerId: MarkerId('staff_${checkIn.id}'),
+          position: LatLng(checkIn.staffLatitude, checkIn.staffLongitude),
+          icon: BitmapDescriptor.defaultMarkerWithHue(hue),
+          infoWindow: InfoWindow(
+            title: checkIn.staffName,
+            snippet: '${isActive ? "Active" : "Completed"} at ${checkIn.branchName}\n${_formatDistance(checkIn.distanceFromBranch)} from branch',
+          ),
+        ),
+      );
+    }
+
+    return markers;
+  }
+
+  Set<Circle> _buildCircles() {
+    final Set<Circle> circles = {};
+
+    // Add branch check-in radius circles
+    for (final branch in _branches) {
+      if (branch.latitude != null && branch.longitude != null) {
+        final position = LatLng(branch.latitude!, branch.longitude!);
+        
+        circles.add(
+          Circle(
+            circleId: CircleId('radius_${branch.id}'),
+            center: position,
+            radius: branch.allowedCheckInRadius ?? 100,
+            strokeWidth: 2,
+            strokeColor: AppColors.primary,
+            fillColor: AppColors.primary.withOpacity(0.1),
+          ),
+        );
+      }
+    }
+
+    return circles;
+  }
+
+  LatLng _getMapCenter() {
+    // If viewing a specific branch, center on it
+    if (_selectedBranchId != 'all') {
+      final branch = _branches.firstWhere(
+        (b) => b.id == _selectedBranchId,
+        orElse: () => _branches.first,
+      );
+      if (branch.latitude != null && branch.longitude != null) {
+        return LatLng(branch.latitude!, branch.longitude!);
+      }
+    }
+
+    // If there are branches with locations, center on the first one
+    final branchesWithLocation = _branches.where((b) => b.latitude != null && b.longitude != null);
+    if (branchesWithLocation.isNotEmpty) {
+      final branch = branchesWithLocation.first;
+      return LatLng(branch.latitude!, branch.longitude!);
+    }
+
+    // Default center (Colombo, Sri Lanka)
+    return const LatLng(6.9271, 79.8612);
+  }
+
+  Widget _buildMapView() {
+    final branchesWithLocation = _branches.where((b) => b.latitude != null && b.longitude != null).toList();
+    final markers = _buildMarkers();
+    final circles = _buildCircles();
+    
+    if (branchesWithLocation.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.all(16),
+        height: 400,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(FontAwesomeIcons.mapLocationDot, size: 48, color: Colors.grey.shade400),
+              const SizedBox(height: 16),
+              Text(
+                'No Branch Locations Set',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  'Set branch locations to view staff check-ins on the map',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.all(16),
-      height: 400,
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade300),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
-      child: Center(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(FontAwesomeIcons.map, size: 48, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            Text(
-              'Map View',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade600,
+            // Map
+            SizedBox(
+              height: 350,
+              child: GoogleMap(
+                initialCameraPosition: CameraPosition(
+                  target: _getMapCenter(),
+                  zoom: 15,
+                ),
+                onMapCreated: (controller) {
+                  _mapController = controller;
+                },
+                markers: markers,
+                circles: circles,
+                myLocationEnabled: true,
+                myLocationButtonEnabled: false,
+                zoomControlsEnabled: false,
+                mapToolbarEnabled: false,
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Map integration coming soon',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.shade500,
+            // Map Legend
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border(
+                  top: BorderSide(color: Colors.grey.shade200),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildLegendItem(Colors.purple, 'Branch'),
+                      _buildLegendItem(Colors.green, 'Active Staff'),
+                      _buildLegendItem(Colors.blue, 'Completed'),
+                      _buildLegendItem(Colors.red, 'Outside Radius'),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.primary, width: 2),
+                          color: AppColors.primary.withOpacity(0.1),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Check-in Radius',
+                        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Quick Branch Selector
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                border: Border(
+                  top: BorderSide(color: Colors.grey.shade200),
+                ),
+              ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildBranchChip('all', 'All Branches'),
+                    ...branchesWithLocation.map((branch) => 
+                      _buildBranchChip(branch.id, branch.name),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegendItem(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(fontSize: 10, color: Colors.grey.shade700),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBranchChip(String branchId, String name) {
+    final isSelected = _selectedBranchId == branchId;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: GestureDetector(
+        onTap: () {
+          setState(() => _selectedBranchId = branchId);
+          if (branchId != 'all') {
+            final branch = _branches.firstWhere((b) => b.id == branchId);
+            if (branch.latitude != null && branch.longitude != null) {
+              _mapController?.animateCamera(
+                CameraUpdate.newLatLngZoom(
+                  LatLng(branch.latitude!, branch.longitude!),
+                  17,
+                ),
+              );
+            }
+          } else {
+            _mapController?.animateCamera(
+              CameraUpdate.newLatLngZoom(_getMapCenter(), 13),
+            );
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.primary : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : Colors.grey.shade300,
+            ),
+          ),
+          child: Text(
+            name,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: isSelected ? Colors.white : AppColors.text,
+            ),
+          ),
         ),
       ),
     );
