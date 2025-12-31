@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -233,16 +234,80 @@ class NotificationService {
   /// Handle local notification tap
   void _onLocalNotificationTap(NotificationResponse response) {
     print('📩 Local notification tapped: ${response.payload}');
-    // Navigate based on payload
-    if (_context != null && _context!.mounted && response.payload != null) {
-      final bookingId = response.payload;
-      if (bookingId != null && bookingId.isNotEmpty) {
-        Navigator.of(_context!).push(
-          MaterialPageRoute(
-            builder: (context) => const AppointmentRequestsPage(),
-          ),
-        );
+    
+    if (_context == null || !_context!.mounted) return;
+    if (response.payload == null || response.payload!.isEmpty) return;
+    
+    // Try to parse the payload as JSON to get notification details
+    String? notificationType;
+    String? bookingId;
+    
+    try {
+      // Payload might be JSON with type and bookingId
+      if (response.payload!.startsWith('{')) {
+        final Map<String, dynamic> payloadData = 
+            Map<String, dynamic>.from(
+              (response.payload! as String).isNotEmpty 
+                ? _parsePayload(response.payload!) 
+                : {}
+            );
+        notificationType = payloadData['type']?.toString();
+        bookingId = payloadData['bookingId']?.toString();
+      } else {
+        // Legacy: payload is just the bookingId
+        bookingId = response.payload;
       }
+    } catch (e) {
+      // If parsing fails, treat payload as bookingId
+      bookingId = response.payload;
+    }
+    
+    print('📩 Notification type: $notificationType, bookingId: $bookingId');
+    
+    // Navigate based on notification type
+    // Owner/Admin notifications go to OwnerBookingsPage
+    if (notificationType == 'booking_needs_assignment' ||
+        notificationType == 'booking_engine_new_booking' ||
+        notificationType == 'staff_booking_created' ||
+        notificationType == 'branch_booking_created' ||
+        notificationType == 'staff_assignment' ||
+        notificationType == 'staff_reassignment' ||
+        notificationType == 'booking_assigned' ||
+        notificationType == 'booking_confirmed' ||
+        notificationType == 'booking_status_changed' ||
+        notificationType == 'booking_completed' ||
+        notificationType == 'booking_canceled' ||
+        notificationType == 'staff_rejected') {
+      Navigator.of(_context!).push(
+        MaterialPageRoute(
+          builder: (context) => const OwnerBookingsPage(),
+        ),
+      );
+    } else if (notificationType == 'booking_approval_request') {
+      // Staff approval requests go to AppointmentRequestsPage
+      Navigator.of(_context!).push(
+        MaterialPageRoute(
+          builder: (context) => const AppointmentRequestsPage(),
+        ),
+      );
+    } else {
+      // Default: go to OwnerBookingsPage for any booking-related notification
+      Navigator.of(_context!).push(
+        MaterialPageRoute(
+          builder: (context) => const OwnerBookingsPage(),
+        ),
+      );
+    }
+  }
+  
+  /// Helper to parse JSON payload
+  Map<String, dynamic> _parsePayload(String payload) {
+    try {
+      if (payload.isEmpty) return {};
+      return Map<String, dynamic>.from(jsonDecode(payload));
+    } catch (e) {
+      print('Error parsing notification payload: $e');
+      return {};
     }
   }
   
@@ -373,7 +438,8 @@ class NotificationService {
             id: doc.id.hashCode,
             title: data['title']?.toString() ?? 'New Notification',
             body: data['message']?.toString() ?? '',
-            payload: doc.id,
+            bookingId: data['bookingId']?.toString(),
+            notificationType: type,
           );
         }
       }
@@ -449,7 +515,8 @@ class NotificationService {
               id: doc.id.hashCode,
               title: data['title']?.toString() ?? 'New Notification',
               body: data['message']?.toString() ?? '',
-              payload: doc.id,
+              bookingId: data['bookingId']?.toString(),
+              notificationType: type,
             );
           }
         }
@@ -497,11 +564,13 @@ class NotificationService {
           );
           
           // Also show a local notification for better visibility
+          final notifType = data['type']?.toString() ?? 'branch_booking_created';
           _showLocalNotification(
             id: doc.id.hashCode,
             title: data['title']?.toString() ?? 'New Booking',
             body: data['message']?.toString() ?? '',
-            payload: doc.id,
+            bookingId: data['bookingId']?.toString(),
+            notificationType: notifType,
           );
         }
       }
@@ -552,11 +621,13 @@ class NotificationService {
           );
           
           // Also show a local notification for better visibility
+          final notifType = data['type']?.toString() ?? 'admin_notification';
           _showLocalNotification(
             id: doc.id.hashCode,
             title: data['title']?.toString() ?? 'New Notification',
             body: data['message']?.toString() ?? '',
-            payload: doc.id,
+            bookingId: data['bookingId']?.toString(),
+            notificationType: notifType,
           );
         }
       }
@@ -570,7 +641,8 @@ class NotificationService {
     required int id,
     required String title,
     required String body,
-    String? payload,
+    String? bookingId,
+    String? notificationType,
   }) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'appointments',
@@ -594,6 +666,13 @@ class NotificationService {
       android: androidDetails,
       iOS: iosDetails,
     );
+    
+    // Create JSON payload with type and bookingId for navigation
+    final payloadData = {
+      'type': notificationType ?? 'booking_notification',
+      'bookingId': bookingId ?? '',
+    };
+    final payload = jsonEncode(payloadData);
     
     await _localNotifications.show(
       id,
@@ -646,12 +725,15 @@ class NotificationService {
     // Show local notification for foreground messages
     final title = message.notification?.title ?? message.data['title'] ?? 'New Notification';
     final body = message.notification?.body ?? message.data['message'] ?? '';
+    final notificationType = message.data['type']?.toString() ?? 'fcm_notification';
+    final bookingId = message.data['bookingId']?.toString();
     
     _showLocalNotification(
       id: message.hashCode,
       title: title,
       body: body,
-      payload: message.data['bookingId'] ?? message.data['notificationId'] ?? '',
+      bookingId: bookingId,
+      notificationType: notificationType,
     );
     
     // Also show on-screen notification overlay

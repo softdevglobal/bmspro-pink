@@ -72,8 +72,16 @@ class AppInitializer {
                  type == 'booking_engine_new_booking' ||
                  type == 'booking_assigned' ||
                  type == 'booking_completed' ||
-                 type == 'booking_canceled') {
+                 type == 'booking_canceled' ||
+                 type == 'staff_rejected') {
         // All booking-related notifications go to OwnerBookingsPage
+        navigator.push(
+          MaterialPageRoute(
+            builder: (context) => const OwnerBookingsPage(),
+          ),
+        );
+      } else {
+        // Default: go to OwnerBookingsPage for any unrecognized notification
         navigator.push(
           MaterialPageRoute(
             builder: (context) => const OwnerBookingsPage(),
@@ -108,8 +116,16 @@ class AppInitializer {
                type == 'booking_engine_new_booking' ||
                type == 'booking_assigned' ||
                type == 'booking_completed' ||
-               type == 'booking_canceled') {
+               type == 'booking_canceled' ||
+               type == 'staff_rejected') {
       // All booking-related notifications go to OwnerBookingsPage
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const OwnerBookingsPage(),
+        ),
+      );
+    } else {
+      // Default: go to OwnerBookingsPage for any unrecognized notification
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => const OwnerBookingsPage(),
