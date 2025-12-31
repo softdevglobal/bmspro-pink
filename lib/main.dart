@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart';
 import 'routes.dart';
 import 'screens/splash_screen.dart';
@@ -16,11 +17,17 @@ void main() async {
   // Initialize timezone data for proper timezone conversions
   TimezoneHelper.initialize();
   
+  // Initialize Firebase FIRST
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
   
-  // Initialize notification service (registers background handler for notifications when app is closed/terminated)
+  // CRITICAL: Register background message handler IMMEDIATELY after Firebase init
+  // This MUST be done before any other Firebase operations
+  // This handler runs when the app is in background or terminated
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  
+  // Initialize notification service (sets up foreground handlers, FCM token, etc.)
   // This will request notification permission
   await NotificationService().initialize();
   

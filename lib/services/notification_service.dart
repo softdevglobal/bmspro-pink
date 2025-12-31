@@ -13,22 +13,53 @@ import 'app_initializer.dart';
 /// Must be a top-level function, not a class method
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  print('📩 Handling background message: ${message.messageId}');
-  print('📩 Title: ${message.notification?.title}');
-  print('📩 Body: ${message.notification?.body}');
+  print('📩 Background FCM message received!');
+  print('📩 Message ID: ${message.messageId}');
+  print('📩 Notification Title: ${message.notification?.title}');
+  print('📩 Notification Body: ${message.notification?.body}');
   print('📩 Data: ${message.data}');
   
-  // Show local notification for data-only messages in background
-  // Note: Messages with notification payload are automatically shown by FCM
+  // IMPORTANT: For messages WITH notification payload, FCM automatically shows them
+  // when the app is in background/terminated. No action needed.
+  
+  // For data-only messages, we need to show a local notification
   if (message.notification == null && message.data.isNotEmpty) {
     await _showBackgroundNotification(message);
   }
 }
 
 /// Show a local notification for background data messages
+/// This is only called for data-only messages (no notification payload)
 Future<void> _showBackgroundNotification(RemoteMessage message) async {
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
+  
+  // Initialize the plugin for background use
+  const AndroidInitializationSettings androidSettings =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+    requestAlertPermission: false,
+    requestBadgePermission: false,
+    requestSoundPermission: false,
+  );
+  const InitializationSettings initSettings = InitializationSettings(
+    android: androidSettings,
+    iOS: iosSettings,
+  );
+  await flutterLocalNotificationsPlugin.initialize(initSettings);
+  
+  // Create the notification channel for Android (required for Android 8.0+)
+  if (Platform.isAndroid) {
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'appointments',
+      'Booking Notifications',
+      description: 'Notifications for booking appointments and updates',
+      importance: Importance.high,
+    );
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+  }
   
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     'appointments',
@@ -38,6 +69,8 @@ Future<void> _showBackgroundNotification(RemoteMessage message) async {
     priority: Priority.high,
     showWhen: true,
     icon: '@mipmap/ic_launcher',
+    playSound: true,
+    enableVibration: true,
   );
   
   const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
@@ -61,6 +94,8 @@ Future<void> _showBackgroundNotification(RemoteMessage message) async {
     notificationDetails,
     payload: message.data['bookingId'] ?? '',
   );
+  
+  print('📩 Background local notification shown: $title');
 }
 
 /// Notification service for handling FCM and on-screen notifications
@@ -142,8 +177,8 @@ class NotificationService {
         _handleNotificationTap(message);
       });
 
-      // Set up background message handler
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      // Note: Background message handler is registered in main.dart
+      // FirebaseMessaging.onBackgroundMessage must be called before runApp()
       
       // Subscribe to topics for broader notification targeting
       await _subscribeToTopics();
