@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:async';
 import '../screens/appointment_requests_page.dart';
 import '../screens/owner_bookings_page.dart';
@@ -11,19 +13,54 @@ import 'app_initializer.dart';
 /// Must be a top-level function, not a class method
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  print('Handling background message: ${message.messageId}');
-  print('Title: ${message.notification?.title}');
-  print('Body: ${message.notification?.body}');
-  print('Data: ${message.data}');
+  print('📩 Handling background message: ${message.messageId}');
+  print('📩 Title: ${message.notification?.title}');
+  print('📩 Body: ${message.notification?.body}');
+  print('📩 Data: ${message.data}');
   
-  // Note: When the app is in the background or terminated,
-  // FCM automatically displays the notification on Android and iOS.
-  // This handler is for any additional processing you might need.
+  // Show local notification for data-only messages in background
+  // Note: Messages with notification payload are automatically shown by FCM
+  if (message.notification == null && message.data.isNotEmpty) {
+    await _showBackgroundNotification(message);
+  }
+}
+
+/// Show a local notification for background data messages
+Future<void> _showBackgroundNotification(RemoteMessage message) async {
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
   
-  // You can perform background tasks here, such as:
-  // - Updating local database
-  // - Scheduling local notifications
-  // - Processing notification data
+  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    'appointments',
+    'Booking Notifications',
+    channelDescription: 'Notifications for booking appointments and updates',
+    importance: Importance.high,
+    priority: Priority.high,
+    showWhen: true,
+    icon: '@mipmap/ic_launcher',
+  );
+  
+  const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+    presentAlert: true,
+    presentBadge: true,
+    presentSound: true,
+  );
+  
+  const NotificationDetails notificationDetails = NotificationDetails(
+    android: androidDetails,
+    iOS: iosDetails,
+  );
+  
+  final title = message.data['title'] ?? 'New Notification';
+  final body = message.data['message'] ?? message.data['body'] ?? '';
+  
+  await flutterLocalNotificationsPlugin.show(
+    message.hashCode,
+    title,
+    body,
+    notificationDetails,
+    payload: message.data['bookingId'] ?? '',
+  );
 }
 
 /// Notification service for handling FCM and on-screen notifications
@@ -35,38 +72,50 @@ class NotificationService {
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
   
   String? _fcmToken;
   StreamSubscription<QuerySnapshot>? _notificationSubscription;
   StreamSubscription<QuerySnapshot>? _adminNotificationSubscription;
   StreamSubscription<QuerySnapshot>? _branchAdminNotificationSubscription;
-  Function(RemoteMessage)? _onMessageHandler;
   BuildContext? _context;
   final Set<String> _shownNotificationIds = {};
+  bool _isInitialized = false;
 
   /// Initialize notification service
   Future<void> initialize() async {
+    if (_isInitialized) {
+      print('NotificationService already initialized');
+      return;
+    }
+    
     try {
+      // Initialize local notifications first
+      await _initializeLocalNotifications();
+      
       // Request permission for iOS
       NotificationSettings settings = await _messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
         provisional: false,
+        announcement: true,
+        carPlay: false,
+        criticalAlert: false,
       );
 
       if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-        print('User granted notification permission');
+        print('✅ User granted notification permission');
       } else if (settings.authorizationStatus == AuthorizationStatus.provisional) {
-        print('User granted provisional notification permission');
+        print('⚠️ User granted provisional notification permission');
       } else {
-        print('User declined or has not accepted notification permission');
+        print('❌ User declined or has not accepted notification permission');
         return;
       }
 
       // Get FCM token
       _fcmToken = await _messaging.getToken();
-      print('FCM Token: $_fcmToken');
+      print('📱 FCM Token: $_fcmToken');
 
       // Save token to user document
       await _saveFcmToken(_fcmToken);
@@ -75,25 +124,104 @@ class NotificationService {
       _messaging.onTokenRefresh.listen((newToken) {
         _fcmToken = newToken;
         _saveFcmToken(newToken);
-        print('FCM Token refreshed: $newToken');
+        print('📱 FCM Token refreshed: $newToken');
       });
 
       // Handle foreground messages
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        print('Received foreground message: ${message.messageId}');
+        print('📩 Received foreground message: ${message.messageId}');
+        print('📩 Title: ${message.notification?.title}');
+        print('📩 Body: ${message.notification?.body}');
+        print('📩 Data: ${message.data}');
         _handleForegroundMessage(message);
       });
 
       // Handle background messages (when app is opened from notification while in background)
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-        print('Notification opened app from background: ${message.messageId}');
+        print('📩 Notification opened app from background: ${message.messageId}');
         _handleNotificationTap(message);
       });
 
       // Set up background message handler
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      
+      // Subscribe to topics for broader notification targeting
+      await _subscribeToTopics();
+      
+      _isInitialized = true;
+      print('✅ NotificationService initialized successfully');
     } catch (e) {
-      print('Error initializing notification service: $e');
+      print('❌ Error initializing notification service: $e');
+    }
+  }
+  
+  /// Initialize flutter_local_notifications
+  Future<void> _initializeLocalNotifications() async {
+    // Android initialization
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    
+    // iOS initialization
+    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    
+    const InitializationSettings initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+    
+    await _localNotifications.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onLocalNotificationTap,
+    );
+    
+    // Create notification channel for Android
+    if (Platform.isAndroid) {
+      const AndroidNotificationChannel channel = AndroidNotificationChannel(
+        'appointments',
+        'Booking Notifications',
+        description: 'Notifications for booking appointments and updates',
+        importance: Importance.high,
+      );
+      
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(channel);
+    }
+    
+    print('✅ Local notifications initialized');
+  }
+  
+  /// Handle local notification tap
+  void _onLocalNotificationTap(NotificationResponse response) {
+    print('📩 Local notification tapped: ${response.payload}');
+    // Navigate based on payload
+    if (_context != null && _context!.mounted && response.payload != null) {
+      final bookingId = response.payload;
+      if (bookingId != null && bookingId.isNotEmpty) {
+        Navigator.of(_context!).push(
+          MaterialPageRoute(
+            builder: (context) => const AppointmentRequestsPage(),
+          ),
+        );
+      }
+    }
+  }
+  
+  /// Subscribe to FCM topics
+  Future<void> _subscribeToTopics() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    
+    try {
+      // Subscribe to user-specific topic
+      await _messaging.subscribeToTopic('user_${user.uid}');
+      print('📢 Subscribed to topic: user_${user.uid}');
+    } catch (e) {
+      print('⚠️ Error subscribing to topics: $e');
     }
   }
 
@@ -109,19 +237,21 @@ class NotificationService {
       await _db.collection('users').doc(user.uid).update({
         'fcmToken': token,
         'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+        'platform': Platform.isAndroid ? 'android' : 'ios',
       });
-      print('FCM token saved to users collection');
+      print('✅ FCM token saved to users collection');
     } catch (e) {
-      print('Error saving FCM token to users collection: $e');
+      print('⚠️ Error saving FCM token to users collection: $e');
       // Try to create the document if it doesn't exist
       try {
         await _db.collection('users').doc(user.uid).set({
           'fcmToken': token,
           'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+          'platform': Platform.isAndroid ? 'android' : 'ios',
         }, SetOptions(merge: true));
-        print('FCM token saved to users collection (merged)');
+        print('✅ FCM token saved to users collection (merged)');
       } catch (e2) {
-        print('Error saving FCM token (merge attempt): $e2');
+        print('❌ Error saving FCM token (merge attempt): $e2');
       }
     }
     
@@ -133,11 +263,11 @@ class NotificationService {
           'fcmToken': token,
           'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
         });
-        print('FCM token also saved to salon_staff collection');
+        print('✅ FCM token also saved to salon_staff collection');
       }
     } catch (e) {
       // It's okay if this fails - user might not be in salon_staff collection
-      print('Could not save FCM token to salon_staff (user may not be staff): $e');
+      print('⚠️ Could not save FCM token to salon_staff (user may not be staff): $e');
     }
   }
 
@@ -162,10 +292,11 @@ class NotificationService {
     bool isInitialLoad = true;
     
     // Query for staff notifications - only listen for NEW ones (created after we started listening)
+    // Note: Removed orderBy to avoid needing composite indexes - we only care about new docs
     _notificationSubscription = _db
         .collection('notifications')
         .where('staffUid', isEqualTo: user.uid)
-        .orderBy('createdAt', descending: true)
+        .limit(50)
         .snapshots()
         .listen((snapshot) {
       // Skip the initial snapshot - only process changes that happen AFTER we start listening
@@ -183,26 +314,16 @@ class NotificationService {
           final data = doc.data();
           
           // Skip if data is null
-          if (data == null) {
-            continue;
-          }
+          if (data == null) continue;
           
           // Skip if we've already shown this notification
-          if (_shownNotificationIds.contains(doc.id)) {
-            continue;
-          }
+          if (_shownNotificationIds.contains(doc.id)) continue;
           
           final type = data['type']?.toString() ?? '';
           
-          // Skip booking_approval_request notifications (they're handled via pending requests alert)
-          if (type == 'booking_approval_request') {
-            continue;
-          }
-          
-          // Only show if unread
-          if (data['read'] == true) {
-            continue;
-          }
+          // Show all notification types to staff
+          // Only skip if already read
+          if (data['read'] == true) continue;
           
           _shownNotificationIds.add(doc.id);
           _showOnScreenNotification(
@@ -211,19 +332,28 @@ class NotificationService {
             notificationId: doc.id,
             notificationData: data,
           );
+          
+          // Also show a local notification for better visibility
+          _showLocalNotification(
+            id: doc.id.hashCode,
+            title: data['title']?.toString() ?? 'New Notification',
+            body: data['message']?.toString() ?? '',
+            payload: doc.id,
+          );
         }
       }
     }, onError: (e) {
-      print('Error listening to staff notifications: $e');
+      print('❌ Error listening to staff notifications: $e');
     });
     
     // Query for admin notifications (ownerUid) - only listen for NEW ones
     // This includes notifications where owner is directly the recipient (staff created bookings, etc.)
+    // Note: Removed orderBy to avoid needing composite indexes
     bool isInitialAdminLoad = true;
     _adminNotificationSubscription = _db
         .collection('notifications')
         .where('ownerUid', isEqualTo: user.uid)
-        .orderBy('createdAt', descending: true)
+        .limit(50)
         .snapshots()
         .listen((snapshot) {
       // Skip the initial snapshot
@@ -239,14 +369,10 @@ class NotificationService {
           final data = doc.data();
           
           // Skip if data is null
-          if (data == null) {
-            continue;
-          }
+          if (data == null) continue;
           
           // Skip if we've already shown this notification
-          if (_shownNotificationIds.contains(doc.id)) {
-            continue;
-          }
+          if (_shownNotificationIds.contains(doc.id)) continue;
           
           final type = data['type']?.toString() ?? '';
           final staffUid = data['staffUid']?.toString();
@@ -254,13 +380,16 @@ class NotificationService {
           final targetOwnerUid = data['targetOwnerUid']?.toString();
           
           // Show notification if:
-          // 1. It's a staff_booking_created or booking_engine_new_booking notification and user is the owner, OR
-          // 2. It's a general admin notification (no staffUid or targetAdminUid matches)
+          // 1. It's explicitly targeted to the owner (targetOwnerUid matches)
+          // 2. It's a staff_booking_created or booking_engine_new_booking notification
+          // 3. It's a booking_needs_assignment notification (unassigned bookings)
           bool shouldShow = false;
           
-          if ((type == 'staff_booking_created' || type == 'booking_engine_new_booking') && 
-              (targetOwnerUid == user.uid || data['ownerUid'] == user.uid)) {
-            // Booking created notification - always show to owner
+          if (targetOwnerUid == user.uid) {
+            shouldShow = true;
+          } else if (type == 'staff_booking_created' || 
+                     type == 'booking_engine_new_booking' ||
+                     type == 'booking_needs_assignment') {
             shouldShow = true;
           } else if ((staffUid == null || staffUid != user.uid) && 
               (targetAdminUid == null || targetAdminUid == user.uid)) {
@@ -270,9 +399,7 @@ class NotificationService {
           
           if (shouldShow) {
             // Only show if unread
-            if (data['read'] == true) {
-              continue;
-            }
+            if (data['read'] == true) continue;
             
             _shownNotificationIds.add(doc.id);
             _showOnScreenNotification(
@@ -281,19 +408,28 @@ class NotificationService {
               notificationId: doc.id,
               notificationData: data,
             );
+            
+            // Also show a local notification for better visibility
+            _showLocalNotification(
+              id: doc.id.hashCode,
+              title: data['title']?.toString() ?? 'New Notification',
+              body: data['message']?.toString() ?? '',
+              payload: doc.id,
+            );
           }
         }
       }
     }, onError: (e) {
-      print('Error listening to admin notifications: $e');
+      print('❌ Error listening to admin notifications: $e');
     });
     
     // Query for branch admin notifications (branchAdminUid or targetAdminUid)
+    // Note: Removed orderBy to avoid needing composite indexes
     bool isInitialBranchAdminLoad = true;
     _branchAdminNotificationSubscription = _db
         .collection('notifications')
         .where('branchAdminUid', isEqualTo: user.uid)
-        .orderBy('createdAt', descending: true)
+        .limit(50)
         .snapshots()
         .listen((snapshot) {
       // Skip the initial snapshot
@@ -309,19 +445,13 @@ class NotificationService {
           final data = doc.data();
           
           // Skip if data is null
-          if (data == null) {
-            continue;
-          }
+          if (data == null) continue;
           
           // Skip if we've already shown this notification
-          if (_shownNotificationIds.contains(doc.id)) {
-            continue;
-          }
+          if (_shownNotificationIds.contains(doc.id)) continue;
           
           // Only show if unread
-          if (data['read'] == true) {
-            continue;
-          }
+          if (data['read'] == true) continue;
           
           _shownNotificationIds.add(doc.id);
           _showOnScreenNotification(
@@ -330,18 +460,27 @@ class NotificationService {
             notificationId: doc.id,
             notificationData: data,
           );
+          
+          // Also show a local notification for better visibility
+          _showLocalNotification(
+            id: doc.id.hashCode,
+            title: data['title']?.toString() ?? 'New Booking',
+            body: data['message']?.toString() ?? '',
+            payload: doc.id,
+          );
         }
       }
     }, onError: (e) {
-      print('Error listening to branch admin notifications: $e');
+      print('❌ Error listening to branch admin notifications: $e');
     });
     
     // Also listen for targetAdminUid notifications (for reassignments, etc.)
+    // Note: Removed orderBy to avoid needing composite indexes
     bool isInitialTargetAdminLoad = true;
     _db
         .collection('notifications')
         .where('targetAdminUid', isEqualTo: user.uid)
-        .orderBy('createdAt', descending: true)
+        .limit(50)
         .snapshots()
         .listen((snapshot) {
       // Skip the initial snapshot
@@ -357,25 +496,17 @@ class NotificationService {
           final data = doc.data();
           
           // Skip if data is null
-          if (data == null) {
-            continue;
-          }
+          if (data == null) continue;
           
           // Skip if we've already shown this notification
-          if (_shownNotificationIds.contains(doc.id)) {
-            continue;
-          }
+          if (_shownNotificationIds.contains(doc.id)) continue;
           
           // Skip if it was already shown via branchAdminUid query
           final branchAdminUid = data['branchAdminUid']?.toString();
-          if (branchAdminUid == user.uid) {
-            continue; // Already handled by branchAdminUid subscription
-          }
+          if (branchAdminUid == user.uid) continue;
           
           // Only show if unread
-          if (data['read'] == true) {
-            continue;
-          }
+          if (data['read'] == true) continue;
           
           _shownNotificationIds.add(doc.id);
           _showOnScreenNotification(
@@ -384,14 +515,61 @@ class NotificationService {
             notificationId: doc.id,
             notificationData: data,
           );
+          
+          // Also show a local notification for better visibility
+          _showLocalNotification(
+            id: doc.id.hashCode,
+            title: data['title']?.toString() ?? 'New Notification',
+            body: data['message']?.toString() ?? '',
+            payload: doc.id,
+          );
         }
       }
     }, onError: (e) {
-      print('Error listening to target admin notifications: $e');
+      print('❌ Error listening to target admin notifications: $e');
     });
   }
+  
+  /// Show a local notification using flutter_local_notifications
+  Future<void> _showLocalNotification({
+    required int id,
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'appointments',
+      'Booking Notifications',
+      channelDescription: 'Notifications for booking appointments and updates',
+      importance: Importance.high,
+      priority: Priority.high,
+      showWhen: true,
+      icon: '@mipmap/ic_launcher',
+      playSound: true,
+      enableVibration: true,
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _localNotifications.show(
+      id,
+      title,
+      body,
+      notificationDetails,
+      payload: payload,
+    );
+  }
 
-  /// Show on-screen notification
+  /// Show on-screen notification overlay
   void _showOnScreenNotification({
     required String title,
     required String message,
@@ -430,10 +608,21 @@ class NotificationService {
 
   /// Handle foreground message
   void _handleForegroundMessage(RemoteMessage message) {
-    // Show on-screen notification for foreground messages
+    // Show local notification for foreground messages
+    final title = message.notification?.title ?? message.data['title'] ?? 'New Notification';
+    final body = message.notification?.body ?? message.data['message'] ?? '';
+    
+    _showLocalNotification(
+      id: message.hashCode,
+      title: title,
+      body: body,
+      payload: message.data['bookingId'] ?? message.data['notificationId'] ?? '',
+    );
+    
+    // Also show on-screen notification overlay
     _showOnScreenNotification(
-      title: message.notification?.title ?? 'New Notification',
-      message: message.notification?.body ?? '',
+      title: title,
+      message: body,
       notificationId: message.messageId ?? '',
       notificationData: message.data,
     );
@@ -472,21 +661,25 @@ class NotificationService {
     
     // Navigate based on notification type
     if (_context != null && _context!.mounted) {
-      if (type == 'booking_approval_request' || 
-          type == 'staff_assignment' || 
-          type == 'staff_reassignment') {
+      if (type == 'booking_approval_request') {
+        // Only booking approval requests go to AppointmentRequestsPage (for staff)
         Navigator.of(_context!).push(
           MaterialPageRoute(
             builder: (context) => const AppointmentRequestsPage(),
           ),
         );
-      } else if (type == 'branch_booking_created' || 
+      } else if (type == 'staff_assignment' || 
+                 type == 'staff_reassignment' ||
+                 type == 'branch_booking_created' || 
                  type == 'booking_needs_assignment' ||
                  type == 'booking_confirmed' ||
                  type == 'booking_status_changed' ||
                  type == 'staff_booking_created' ||
-                 type == 'booking_engine_new_booking') {
-        // Navigate to bookings page for owner/branch admin notifications
+                 type == 'booking_engine_new_booking' ||
+                 type == 'booking_assigned' ||
+                 type == 'booking_completed' ||
+                 type == 'booking_canceled') {
+        // All booking-related notifications go to OwnerBookingsPage
         Navigator.of(_context!).push(
           MaterialPageRoute(
             builder: (context) => const OwnerBookingsPage(),
@@ -651,4 +844,3 @@ class _NotificationOverlayState extends State<_NotificationOverlay>
     );
   }
 }
-

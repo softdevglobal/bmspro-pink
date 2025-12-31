@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/timezone_helper.dart';
 import '../services/audit_log_service.dart';
+import '../services/fcm_push_service.dart';
 
 // --- 1. Theme & Colors (Matching HTML/Tailwind) ---
 class AppColors {
@@ -766,55 +767,40 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     final message = '$creatorName created a booking for $clientName - $serviceNames at $branchName on $dateStr at $timeStr';
     
     // Create notification in Firestore
-    await FirebaseFirestore.instance.collection('notifications').add({
+    final notificationRef = await FirebaseFirestore.instance.collection('notifications').add({
       'type': 'staff_booking_created',
       'title': title,
       'message': message,
       'ownerUid': _ownerUid,
       'targetOwnerUid': _ownerUid, // Explicitly target the owner
       'staffUid': _currentUserId,
+      'bookingId': bookingId,
+      'bookingCode': bookingCode,
+      'clientName': clientName,
+      'serviceName': serviceNames,
+      'branchName': branchName,
+      'bookingDate': dateStr,
+      'bookingTime': timeStr,
       'createdAt': FieldValue.serverTimestamp(),
       'read': false,
-      'data': {
-        'bookingId': bookingId,
-        'bookingCode': bookingCode,
-        'clientName': clientName,
-        'serviceName': serviceNames,
-        'date': dateStr,
-        'time': timeStr,
-        'branchName': branchName,
-        'creatorName': creatorName,
-        'creatorRole': creatorRole,
-      },
     });
     
-    // Also send FCM push notification if owner has FCM token
+    // Send FCM push notification via API
     try {
-      // Get owner's FCM token
-      final ownerDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(_ownerUid)
-          .get();
-      
-      if (ownerDoc.exists) {
-        final ownerFcmToken = ownerDoc.data()?['fcmToken'];
-        if (ownerFcmToken != null && ownerFcmToken.isNotEmpty) {
-          // Store pending FCM notification for server to send
-          await FirebaseFirestore.instance.collection('pending_fcm_notifications').add({
-            'token': ownerFcmToken,
-            'title': title,
-            'body': message,
-            'data': {
-              'type': 'staff_booking_created',
-              'bookingId': bookingId,
-            },
-            'createdAt': FieldValue.serverTimestamp(),
-            'sent': false,
-          });
-        }
-      }
+      await FcmPushService().sendPushNotification(
+        targetUid: _ownerUid!,
+        title: title,
+        message: message,
+        data: {
+          'notificationId': notificationRef.id,
+          'type': 'staff_booking_created',
+          'bookingId': bookingId,
+          'bookingCode': bookingCode,
+        },
+      );
+      debugPrint('✅ FCM push notification sent to owner $_ownerUid');
     } catch (e) {
-      debugPrint('Error queuing FCM notification: $e');
+      debugPrint('Error sending FCM notification: $e');
     }
   }
 

@@ -55,21 +55,25 @@ class AppInitializer {
       final type = data['type']?.toString() ?? '';
       
       // Navigate based on notification type
-      if (type == 'booking_approval_request' || 
-          type == 'staff_assignment' || 
-          type == 'staff_reassignment') {
+      if (type == 'booking_approval_request') {
+        // Only booking approval requests go to AppointmentRequestsPage (for staff)
         navigator.push(
           MaterialPageRoute(
             builder: (context) => const AppointmentRequestsPage(),
           ),
         );
-      } else if (type == 'branch_booking_created' || 
+      } else if (type == 'staff_assignment' || 
+                 type == 'staff_reassignment' ||
+                 type == 'branch_booking_created' || 
                  type == 'booking_needs_assignment' ||
                  type == 'booking_confirmed' ||
                  type == 'booking_status_changed' ||
                  type == 'staff_booking_created' ||
-                 type == 'booking_engine_new_booking') {
-        // Navigate to bookings page for owner/branch admin notifications
+                 type == 'booking_engine_new_booking' ||
+                 type == 'booking_assigned' ||
+                 type == 'booking_completed' ||
+                 type == 'booking_canceled') {
+        // All booking-related notifications go to OwnerBookingsPage
         navigator.push(
           MaterialPageRoute(
             builder: (context) => const OwnerBookingsPage(),
@@ -87,21 +91,25 @@ class AppInitializer {
     final type = data['type']?.toString() ?? '';
     
     // Navigate based on notification type
-    if (type == 'booking_approval_request' || 
-        type == 'staff_assignment' || 
-        type == 'staff_reassignment') {
+    if (type == 'booking_approval_request') {
+      // Only booking approval requests go to AppointmentRequestsPage (for staff)
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => const AppointmentRequestsPage(),
         ),
       );
-    } else if (type == 'branch_booking_created' || 
+    } else if (type == 'staff_assignment' || 
+               type == 'staff_reassignment' ||
+               type == 'branch_booking_created' || 
                type == 'booking_needs_assignment' ||
                type == 'booking_confirmed' ||
                type == 'booking_status_changed' ||
                type == 'staff_booking_created' ||
-               type == 'booking_engine_new_booking') {
-      // Navigate to bookings page for owner/branch admin notifications
+               type == 'booking_engine_new_booking' ||
+               type == 'booking_assigned' ||
+               type == 'booking_completed' ||
+               type == 'booking_canceled') {
+      // All booking-related notifications go to OwnerBookingsPage
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => const OwnerBookingsPage(),

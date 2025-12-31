@@ -8,6 +8,7 @@ import 'utils/timezone_helper.dart';
 import 'services/notification_service.dart';
 import 'services/app_initializer.dart';
 import 'services/background_location_service.dart';
+import 'services/permission_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +21,12 @@ void main() async {
   );
   
   // Initialize notification service (registers background handler for notifications when app is closed/terminated)
+  // This will request notification permission
   await NotificationService().initialize();
+  
+  // Request location permission at startup
+  // This will show the system permission dialog for location access
+  await PermissionService().requestLocationPermission();
   
   // Check if app was opened from a notification (when app was closed)
   await AppInitializer().checkInitialNotification();

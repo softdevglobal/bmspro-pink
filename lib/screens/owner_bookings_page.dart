@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'dart:async' show TimeoutException;
 import 'walk_in_booking_page.dart';
 import '../services/audit_log_service.dart';
+import '../services/fcm_push_service.dart';
 
 class OwnerBookingsPage extends StatefulWidget {
   const OwnerBookingsPage({super.key});
@@ -771,12 +772,14 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         
         final servicesList = staffServices.join(', ');
         final time = (booking.rawData['time'] ?? '').toString();
+        final title = 'New Booking Assigned';
+        final message = 'You have been assigned a booking for $servicesList with ${booking.customerName} on ${booking.date} at $time.';
         
         final staffNotifData = {
           'bookingId': bookingId,
           'type': 'booking_assigned',
-          'title': 'New Booking Assigned',
-          'message': 'You have been assigned a booking for $servicesList with ${booking.customerName} on ${booking.date} at $time.',
+          'title': title,
+          'message': message,
           'status': 'Confirmed',
           'ownerUid': ownerUid,
           'staffUid': staffId, // Key field for staff notifications
@@ -795,8 +798,25 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         // Add services array for detailed view
         staffNotifData['services'] = staffServices.map((name) => {'name': name}).toList();
         
-        await db.collection('notifications').add(staffNotifData);
+        final notificationRef = await db.collection('notifications').add(staffNotifData);
         debugPrint("Created staff notification for $staffName ($staffId)");
+        
+        // Send FCM push notification to staff
+        try {
+          await FcmPushService().sendPushNotification(
+            targetUid: staffId,
+            title: title,
+            message: message,
+            data: {
+              'notificationId': notificationRef.id,
+              'type': 'booking_assigned',
+              'bookingId': bookingId,
+            },
+          );
+          debugPrint("✅ FCM push notification sent to staff $staffName ($staffId)");
+        } catch (e) {
+          debugPrint("⚠️ Failed to send FCM push notification to staff: $e");
+        }
       }
     } catch (e) {
       debugPrint("Error creating staff notifications: $e");
