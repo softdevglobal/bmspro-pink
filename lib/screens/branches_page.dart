@@ -32,6 +32,7 @@ class BranchModel {
   final List<String> serviceIds;
   final List<String> staffIds;
   final String? adminStaffId;
+  final String timezone; // IANA timezone string
   // Location data for geofenced check-in
   final double? locationLatitude;
   final double? locationLongitude;
@@ -51,6 +52,7 @@ class BranchModel {
     this.serviceIds = const [],
     this.staffIds = const [],
     this.adminStaffId,
+    this.timezone = 'Australia/Sydney',
     this.locationLatitude,
     this.locationLongitude,
     this.locationAddress,
@@ -75,6 +77,7 @@ class BranchModel {
       serviceIds: List<String>.from(data['serviceIds'] ?? []),
       staffIds: List<String>.from(data['staffIds'] ?? []),
       adminStaffId: data['adminStaffId'],
+      timezone: data['timezone'] ?? 'Australia/Sydney',
       locationLatitude: location?['latitude']?.toDouble(),
       locationLongitude: location?['longitude']?.toDouble(),
       locationAddress: location?['formattedAddress'],
@@ -83,6 +86,31 @@ class BranchModel {
     );
   }
 }
+
+/// Timezone options matching admin panel
+const List<Map<String, String>> kTimezones = [
+  // Australia
+  {'value': 'Australia/Sydney', 'label': '🇦🇺 Sydney (NSW) - AEST/AEDT'},
+  {'value': 'Australia/Melbourne', 'label': '🇦🇺 Melbourne (VIC) - AEST/AEDT'},
+  {'value': 'Australia/Brisbane', 'label': '🇦🇺 Brisbane (QLD) - AEST'},
+  {'value': 'Australia/Perth', 'label': '🇦🇺 Perth (WA) - AWST'},
+  {'value': 'Australia/Adelaide', 'label': '🇦🇺 Adelaide (SA) - ACST/ACDT'},
+  {'value': 'Australia/Darwin', 'label': '🇦🇺 Darwin (NT) - ACST'},
+  {'value': 'Australia/Hobart', 'label': '🇦🇺 Hobart (TAS) - AEST/AEDT'},
+  {'value': 'Australia/Canberra', 'label': '🇦🇺 Canberra (ACT) - AEST/AEDT'},
+  {'value': 'Australia/Lord_Howe', 'label': '🇦🇺 Lord Howe Island - LHST/LHDT'},
+  {'value': 'Australia/Broken_Hill', 'label': '🇦🇺 Broken Hill (NSW) - ACST/ACDT'},
+  // Other countries
+  {'value': 'Pacific/Auckland', 'label': '🇳🇿 Auckland (New Zealand)'},
+  {'value': 'Asia/Singapore', 'label': '🇸🇬 Singapore'},
+  {'value': 'Asia/Hong_Kong', 'label': '🇭🇰 Hong Kong'},
+  {'value': 'Asia/Tokyo', 'label': '🇯🇵 Tokyo (Japan)'},
+  {'value': 'Asia/Colombo', 'label': '🇱🇰 Colombo (Sri Lanka)'},
+  {'value': 'Asia/Dubai', 'label': '🇦🇪 Dubai (UAE)'},
+  {'value': 'Europe/London', 'label': '🇬🇧 London (UK)'},
+  {'value': 'America/New_York', 'label': '🇺🇸 New York (US Eastern)'},
+  {'value': 'America/Los_Angeles', 'label': '🇺🇸 Los Angeles (US Pacific)'},
+];
 
 class ServiceOption {
   final String id;
@@ -692,6 +720,30 @@ class _BranchesPageState extends State<BranchesPage> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 10),
+                // Timezone Row
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(FontAwesomeIcons.globe, size: 11, color: const Color(0xFF10B981)),
+                      const SizedBox(width: 6),
+                      Text(
+                        _getTimezoneShortLabel(branch.timezone),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF10B981),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 14),
                 // Action Buttons
                 Row(
@@ -804,6 +856,27 @@ class _BranchesPageState extends State<BranchesPage> {
         return Colors.grey;
     }
   }
+
+  String _getTimezoneShortLabel(String timezone) {
+    final tz = kTimezones.firstWhere(
+      (t) => t['value'] == timezone,
+      orElse: () => {'value': timezone, 'label': timezone},
+    );
+    String label = tz['label'] ?? timezone;
+    // Extract city name
+    if (label.contains('🇦🇺')) {
+      // Australian timezone - extract city name
+      final match = RegExp(r'🇦🇺\s+(\w+)').firstMatch(label);
+      if (match != null) return match.group(1)!;
+    }
+    // For other timezones, extract the main part
+    if (label.contains(' (')) {
+      label = label.split(' (').first;
+    }
+    // Remove any emoji
+    label = label.replaceAll(RegExp(r'[^\x00-\x7F]+'), '').trim();
+    return label.isEmpty ? timezone.split('/').last.replaceAll('_', ' ') : label;
+  }
 }
 
 // ============================================================================
@@ -846,6 +919,9 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
   late Map<String, Map<String, dynamic>> _hours;
   String? _selectedAdminStaffId;
   
+  // Timezone
+  late String _timezone;
+  
   // Location data
   double? _locationLatitude;
   double? _locationLongitude;
@@ -863,6 +939,9 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     _capacityController = TextEditingController(text: branch?.capacity?.toString() ?? '');
     _status = branch?.status ?? 'Active';
     _selectedAdminStaffId = branch?.adminStaffId;
+    
+    // Initialize timezone
+    _timezone = branch?.timezone ?? 'Australia/Sydney';
     
     // Initialize location data
     _locationLatitude = branch?.locationLatitude;
@@ -928,6 +1007,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
         'email': adminEmail ?? _emailController.text.trim(),
         'capacity': int.tryParse(_capacityController.text) ?? 0,
         'status': _status,
+        'timezone': _timezone,
         'hours': _hours,
         'serviceIds': [],
         'adminStaffId': _selectedAdminStaffId ?? null,
@@ -1176,6 +1256,82 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                         controller: _emailController,
                         decoration: _inputDecoration('Email', 'branch@example.com'),
                         keyboardType: TextInputType.emailAddress,
+                      ),
+                      const SizedBox(height: 16),
+                      // Timezone Selector
+                      DropdownButtonFormField<String>(
+                        value: _timezone,
+                        decoration: InputDecoration(
+                          labelText: 'Time Zone',
+                          hintText: 'Select timezone',
+                          prefixIcon: const Icon(
+                            FontAwesomeIcons.globe,
+                            size: 16,
+                            color: Color(0xFF10B981),
+                          ),
+                          filled: true,
+                          fillColor: Colors.grey.shade50,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade200),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade200),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: Color(0xFF10B981), width: 2),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        ),
+                        isExpanded: true,
+                        items: kTimezones.map((tz) {
+                          return DropdownMenuItem<String>(
+                            value: tz['value'],
+                            child: Text(
+                              tz['label']!,
+                              style: const TextStyle(fontSize: 14),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => _timezone = value);
+                          }
+                        },
+                        validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF10B981).withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: const Color(0xFF10B981).withOpacity(0.2),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              FontAwesomeIcons.circleInfo,
+                              size: 12,
+                              color: const Color(0xFF10B981),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'All booking times will be shown in this timezone',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -1821,6 +1977,34 @@ class _BranchPreviewSheetState extends State<_BranchPreviewSheet> {
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
                                 color: _getStatusColor(widget.branch.status),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(FontAwesomeIcons.globe, size: 12, color: AppColors.muted),
+                              const SizedBox(width: 6),
+                              const Text('Time Zone', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF10B981).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              _getTimezoneLabel(widget.branch.timezone),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF10B981),
                               ),
                             ),
                           ),
@@ -2531,6 +2715,26 @@ class _BranchPreviewSheetState extends State<_BranchPreviewSheet> {
       default:
         return Colors.grey;
     }
+  }
+
+  String _getTimezoneLabel(String timezone) {
+    final tz = kTimezones.firstWhere(
+      (t) => t['value'] == timezone,
+      orElse: () => {'value': timezone, 'label': timezone},
+    );
+    // Return shortened label (remove emoji and extra info)
+    String label = tz['label'] ?? timezone;
+    // Extract just the city/region name
+    if (label.contains(' - ')) {
+      label = label.split(' - ').first;
+    }
+    // Remove emoji if present
+    if (label.contains('🇦🇺') || label.contains('🇳🇿') || label.contains('🇸🇬') ||
+        label.contains('🇭🇰') || label.contains('🇯🇵') || label.contains('🇱🇰') ||
+        label.contains('🇦🇪') || label.contains('🇬🇧') || label.contains('🇺🇸')) {
+      label = label.replaceAll(RegExp(r'[^\x00-\x7F]+'), '').trim();
+    }
+    return label.isEmpty ? timezone : label;
   }
 
   String _getInitials(String name) {
