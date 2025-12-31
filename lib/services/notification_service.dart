@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 import '../screens/appointment_requests_page.dart';
+import '../screens/owner_bookings_page.dart';
 import 'app_initializer.dart';
 
 /// Top-level function to handle background messages
@@ -38,6 +39,7 @@ class NotificationService {
   String? _fcmToken;
   StreamSubscription<QuerySnapshot>? _notificationSubscription;
   StreamSubscription<QuerySnapshot>? _adminNotificationSubscription;
+  StreamSubscription<QuerySnapshot>? _branchAdminNotificationSubscription;
   Function(RemoteMessage)? _onMessageHandler;
   BuildContext? _context;
   final Set<String> _shownNotificationIds = {};
@@ -95,7 +97,7 @@ class NotificationService {
     }
   }
 
-  /// Save FCM token to user document
+  /// Save FCM token to user document (and salon_staff if exists)
   Future<void> _saveFcmToken(String? token) async {
     if (token == null) return;
     
@@ -103,12 +105,39 @@ class NotificationService {
     if (user == null) return;
 
     try {
+      // Save to users collection
       await _db.collection('users').doc(user.uid).update({
         'fcmToken': token,
         'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
       });
+      print('FCM token saved to users collection');
     } catch (e) {
-      print('Error saving FCM token: $e');
+      print('Error saving FCM token to users collection: $e');
+      // Try to create the document if it doesn't exist
+      try {
+        await _db.collection('users').doc(user.uid).set({
+          'fcmToken': token,
+          'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        print('FCM token saved to users collection (merged)');
+      } catch (e2) {
+        print('Error saving FCM token (merge attempt): $e2');
+      }
+    }
+    
+    // Also try to save to salon_staff collection (for branch admins and staff)
+    try {
+      final staffDoc = await _db.collection('salon_staff').doc(user.uid).get();
+      if (staffDoc.exists) {
+        await _db.collection('salon_staff').doc(user.uid).update({
+          'fcmToken': token,
+          'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+        });
+        print('FCM token also saved to salon_staff collection');
+      }
+    } catch (e) {
+      // It's okay if this fails - user might not be in salon_staff collection
+      print('Could not save FCM token to salon_staff (user may not be staff): $e');
     }
   }
 
@@ -126,6 +155,7 @@ class NotificationService {
     // Cancel existing subscriptions
     _notificationSubscription?.cancel();
     _adminNotificationSubscription?.cancel();
+    _branchAdminNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     
     // Track if this is the first snapshot (initial load) - we skip showing those notifications
@@ -243,6 +273,108 @@ class NotificationService {
     }, onError: (e) {
       print('Error listening to admin notifications: $e');
     });
+    
+    // Query for branch admin notifications (branchAdminUid or targetAdminUid)
+    bool isInitialBranchAdminLoad = true;
+    _branchAdminNotificationSubscription = _db
+        .collection('notifications')
+        .where('branchAdminUid', isEqualTo: user.uid)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      // Skip the initial snapshot
+      if (isInitialBranchAdminLoad) {
+        isInitialBranchAdminLoad = false;
+        return;
+      }
+      
+      // Only process NEW notifications
+      for (final change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.added) {
+          final doc = change.doc;
+          final data = doc.data();
+          
+          // Skip if data is null
+          if (data == null) {
+            continue;
+          }
+          
+          // Skip if we've already shown this notification
+          if (_shownNotificationIds.contains(doc.id)) {
+            continue;
+          }
+          
+          // Only show if unread
+          if (data['read'] == true) {
+            continue;
+          }
+          
+          _shownNotificationIds.add(doc.id);
+          _showOnScreenNotification(
+            title: data['title']?.toString() ?? 'New Booking',
+            message: data['message']?.toString() ?? '',
+            notificationId: doc.id,
+            notificationData: data,
+          );
+        }
+      }
+    }, onError: (e) {
+      print('Error listening to branch admin notifications: $e');
+    });
+    
+    // Also listen for targetAdminUid notifications (for reassignments, etc.)
+    bool isInitialTargetAdminLoad = true;
+    _db
+        .collection('notifications')
+        .where('targetAdminUid', isEqualTo: user.uid)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      // Skip the initial snapshot
+      if (isInitialTargetAdminLoad) {
+        isInitialTargetAdminLoad = false;
+        return;
+      }
+      
+      // Only process NEW notifications
+      for (final change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.added) {
+          final doc = change.doc;
+          final data = doc.data();
+          
+          // Skip if data is null
+          if (data == null) {
+            continue;
+          }
+          
+          // Skip if we've already shown this notification
+          if (_shownNotificationIds.contains(doc.id)) {
+            continue;
+          }
+          
+          // Skip if it was already shown via branchAdminUid query
+          final branchAdminUid = data['branchAdminUid']?.toString();
+          if (branchAdminUid == user.uid) {
+            continue; // Already handled by branchAdminUid subscription
+          }
+          
+          // Only show if unread
+          if (data['read'] == true) {
+            continue;
+          }
+          
+          _shownNotificationIds.add(doc.id);
+          _showOnScreenNotification(
+            title: data['title']?.toString() ?? 'New Notification',
+            message: data['message']?.toString() ?? '',
+            notificationId: doc.id,
+            notificationData: data,
+          );
+        }
+      }
+    }, onError: (e) {
+      print('Error listening to target admin notifications: $e');
+    });
   }
 
   /// Show on-screen notification
@@ -310,12 +442,12 @@ class NotificationService {
     }
   }
 
-  /// Handle notification tap from data (marks notification as read only)
-  /// Navigation is handled by AppInitializer.handleNotificationTap
+  /// Handle notification tap from data (marks notification as read and navigates)
   void _handleNotificationTapFromData(Map<String, dynamic>? data) {
     if (data == null) return;
 
     final notificationId = data['notificationId']?.toString() ?? '';
+    final type = data['type']?.toString() ?? '';
     
     // Mark notification as read in Firestore
     if (notificationId.isNotEmpty) {
@@ -323,12 +455,36 @@ class NotificationService {
         debugPrint('Error marking notification as read: $e');
       });
     }
+    
+    // Navigate based on notification type
+    if (_context != null && _context!.mounted) {
+      if (type == 'booking_approval_request' || 
+          type == 'staff_assignment' || 
+          type == 'staff_reassignment') {
+        Navigator.of(_context!).push(
+          MaterialPageRoute(
+            builder: (context) => const AppointmentRequestsPage(),
+          ),
+        );
+      } else if (type == 'branch_booking_created' || 
+                 type == 'booking_needs_assignment' ||
+                 type == 'booking_confirmed' ||
+                 type == 'booking_status_changed') {
+        // Navigate to bookings page for branch admin notifications
+        Navigator.of(_context!).push(
+          MaterialPageRoute(
+            builder: (context) => const OwnerBookingsPage(),
+          ),
+        );
+      }
+    }
   }
 
   /// Dispose resources
   void dispose() {
     _notificationSubscription?.cancel();
     _adminNotificationSubscription?.cancel();
+    _branchAdminNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     _context = null;
   }

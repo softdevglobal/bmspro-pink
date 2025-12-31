@@ -1,6 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import '../screens/appointment_requests_page.dart';
+import '../screens/owner_bookings_page.dart';
 
 /// Service to handle app initialization and notification navigation
 class AppInitializer {
@@ -62,6 +63,16 @@ class AppInitializer {
             builder: (context) => const AppointmentRequestsPage(),
           ),
         );
+      } else if (type == 'branch_booking_created' || 
+                 type == 'booking_needs_assignment' ||
+                 type == 'booking_confirmed' ||
+                 type == 'booking_status_changed') {
+        // Navigate to bookings page for branch admin notifications
+        navigator.push(
+          MaterialPageRoute(
+            builder: (context) => const OwnerBookingsPage(),
+          ),
+        );
       }
     });
   }
@@ -80,6 +91,16 @@ class AppInitializer {
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => const AppointmentRequestsPage(),
+        ),
+      );
+    } else if (type == 'branch_booking_created' || 
+               type == 'booking_needs_assignment' ||
+               type == 'booking_confirmed' ||
+               type == 'booking_status_changed') {
+      // Navigate to bookings page for branch admin notifications
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const OwnerBookingsPage(),
         ),
       );
     }
