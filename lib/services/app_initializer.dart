@@ -66,8 +66,9 @@ class AppInitializer {
       } else if (type == 'branch_booking_created' || 
                  type == 'booking_needs_assignment' ||
                  type == 'booking_confirmed' ||
-                 type == 'booking_status_changed') {
-        // Navigate to bookings page for branch admin notifications
+                 type == 'booking_status_changed' ||
+                 type == 'staff_booking_created') {
+        // Navigate to bookings page for owner/branch admin notifications
         navigator.push(
           MaterialPageRoute(
             builder: (context) => const OwnerBookingsPage(),
@@ -96,8 +97,9 @@ class AppInitializer {
     } else if (type == 'branch_booking_created' || 
                type == 'booking_needs_assignment' ||
                type == 'booking_confirmed' ||
-               type == 'booking_status_changed') {
-      // Navigate to bookings page for branch admin notifications
+               type == 'booking_status_changed' ||
+               type == 'staff_booking_created') {
+      // Navigate to bookings page for owner/branch admin notifications
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => const OwnerBookingsPage(),

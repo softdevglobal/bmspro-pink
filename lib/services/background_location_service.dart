@@ -231,16 +231,23 @@ class BackgroundLocationService {
       final branchLon = (location['longitude'] as num).toDouble();
       final allowedRadius = (branchData['allowedCheckInRadius'] ?? 100).toDouble();
       
+      // Check if activeCheckIn has a valid id
+      final checkInId = activeCheckIn.id;
+      if (checkInId == null) {
+        debugPrint('BackgroundLocationService: Check-in ID is null');
+        return;
+      }
+      
       // Start monitoring
       await startMonitoring(
-        checkInId: activeCheckIn.id,
+        checkInId: checkInId,
         branchId: activeCheckIn.branchId,
         branchLatitude: branchLat,
         branchLongitude: branchLon,
         allowedRadius: allowedRadius,
       );
       
-      debugPrint('BackgroundLocationService: Resumed monitoring for check-in ${activeCheckIn.id}');
+      debugPrint('BackgroundLocationService: Resumed monitoring for check-in $checkInId');
     } catch (e) {
       debugPrint('BackgroundLocationService: Error resuming monitoring: $e');
     }

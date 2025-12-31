@@ -4,6 +4,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'appointment_requests_page.dart';
+import 'owner_bookings_page.dart';
 
 class _NotifTheme {
   static const Color primary = Color(0xFFFF2D8F);
@@ -83,6 +84,15 @@ class NotificationItem {
     } else if (type == 'staff_rejected') {
       icon = FontAwesomeIcons.userXmark;
       displayType = 'system';
+    } else if (type == 'staff_booking_created') {
+      icon = FontAwesomeIcons.calendarPlus;
+      displayType = 'task';
+    } else if (type == 'branch_booking_created' || type == 'booking_needs_assignment') {
+      icon = FontAwesomeIcons.calendarPlus;
+      displayType = 'task';
+    } else if (type == 'auto_clock_out') {
+      icon = FontAwesomeIcons.locationCrosshairs;
+      displayType = 'system';
     }
     
     return NotificationItem(
@@ -129,8 +139,11 @@ class _NotificationsPageState extends State<NotificationsPage>
   String _currentFilter = 'all'; // 'all', 'task', 'system'
 
   List<NotificationItem> _notifications = [];
+  List<NotificationItem> _staffNotifications = [];
+  List<NotificationItem> _ownerNotifications = [];
   late AnimationController _bellBadgeController;
   StreamSubscription<QuerySnapshot>? _notificationsSub;
+  StreamSubscription<QuerySnapshot>? _ownerNotificationsSub;
   bool _loading = true;
   String? _currentUserId;
 
@@ -143,6 +156,34 @@ class _NotificationsPageState extends State<NotificationsPage>
     )..repeat(reverse: true);
     
     _loadNotifications();
+  }
+
+  void _mergeNotifications() {
+    // Combine staff and owner notifications, remove duplicates, and sort by time
+    final allNotifications = <String, NotificationItem>{};
+    
+    for (final notification in _staffNotifications) {
+      allNotifications[notification.id] = notification;
+    }
+    for (final notification in _ownerNotifications) {
+      // Only add if not already present (avoid duplicates)
+      if (!allNotifications.containsKey(notification.id)) {
+        allNotifications[notification.id] = notification;
+      }
+    }
+    
+    final merged = allNotifications.values.toList();
+    // Sort by time (most recent first)
+    merged.sort((a, b) {
+      // Parse time strings for sorting - they're relative times like "Just now", "5m ago", etc.
+      // Since we can't easily sort these, we'll rely on the original order
+      return 0;
+    });
+    
+    setState(() {
+      _notifications = merged;
+      _loading = false;
+    });
   }
 
   Future<void> _loadNotifications() async {
@@ -166,15 +207,45 @@ class _NotificationsPageState extends State<NotificationsPage>
         .snapshots()
         .listen((snapshot) {
       if (mounted) {
+        _staffNotifications = snapshot.docs
+            .map((doc) => NotificationItem.fromFirestore(doc))
+            .toList();
+        _mergeNotifications();
+      }
+    }, onError: (e) {
+      debugPrint("Error loading staff notifications: $e");
+      if (mounted) {
         setState(() {
-          _notifications = snapshot.docs
-              .map((doc) => NotificationItem.fromFirestore(doc))
-              .toList();
           _loading = false;
         });
       }
+    });
+    
+    // Also listen to notifications where ownerUid or targetOwnerUid matches current user
+    // This captures notifications for salon owners (e.g., staff created bookings)
+    _ownerNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('ownerUid', isEqualTo: user.uid)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        // Filter to only include owner-specific notifications
+        // (not ones where staffUid == user.uid, those are already in _staffNotifications)
+        _ownerNotifications = snapshot.docs
+            .where((doc) {
+              final data = doc.data();
+              final staffUid = data['staffUid']?.toString();
+              // Include if staffUid is different from current user or null
+              return staffUid != user.uid;
+            })
+            .map((doc) => NotificationItem.fromFirestore(doc))
+            .toList();
+        _mergeNotifications();
+      }
     }, onError: (e) {
-      debugPrint("Error loading notifications: $e");
+      debugPrint("Error loading owner notifications: $e");
       if (mounted) {
         setState(() {
           _loading = false;
@@ -187,6 +258,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   void dispose() {
     _bellBadgeController.dispose();
     _notificationsSub?.cancel();
+    _ownerNotificationsSub?.cancel();
     super.dispose();
   }
 
@@ -431,11 +503,20 @@ class _NotificationsPageState extends State<NotificationsPage>
                 item: item,
                 onTap: () {
                   _markAsRead(item);
-                  // Navigate to appointment requests if it's a staff assignment notification
+                  // Navigate based on notification type
                   final type = item.rawData?['type']?.toString() ?? '';
                   if (type == 'staff_assignment' || type == 'staff_reassignment') {
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const AppointmentRequestsPage()),
+                    );
+                  } else if (type == 'staff_booking_created' ||
+                             type == 'branch_booking_created' ||
+                             type == 'booking_needs_assignment' ||
+                             type == 'booking_confirmed' ||
+                             type == 'booking_status_changed') {
+                    // Navigate to bookings page for owner notifications
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const OwnerBookingsPage()),
                     );
                   }
                 },

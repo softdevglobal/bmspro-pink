@@ -218,6 +218,7 @@ class NotificationService {
     });
     
     // Query for admin notifications (ownerUid) - only listen for NEW ones
+    // This includes notifications where owner is directly the recipient (staff created bookings, etc.)
     bool isInitialAdminLoad = true;
     _adminNotificationSubscription = _db
         .collection('notifications')
@@ -247,14 +248,26 @@ class NotificationService {
             continue;
           }
           
-          // Only show if it's an admin notification (no staffUid or targetAdminUid matches user)
+          final type = data['type']?.toString() ?? '';
           final staffUid = data['staffUid']?.toString();
           final targetAdminUid = data['targetAdminUid']?.toString();
+          final targetOwnerUid = data['targetOwnerUid']?.toString();
           
-          // Show if: no staffUid assigned, or targetAdminUid matches, or it's a general admin notification
-          if ((staffUid == null || staffUid != user.uid) && 
+          // Show notification if:
+          // 1. It's a staff_booking_created notification and user is the owner, OR
+          // 2. It's a general admin notification (no staffUid or targetAdminUid matches)
+          bool shouldShow = false;
+          
+          if (type == 'staff_booking_created' && targetOwnerUid == user.uid) {
+            // Staff created booking - always show to owner
+            shouldShow = true;
+          } else if ((staffUid == null || staffUid != user.uid) && 
               (targetAdminUid == null || targetAdminUid == user.uid)) {
-            
+            // General admin notification
+            shouldShow = true;
+          }
+          
+          if (shouldShow) {
             // Only show if unread
             if (data['read'] == true) {
               continue;
@@ -469,8 +482,9 @@ class NotificationService {
       } else if (type == 'branch_booking_created' || 
                  type == 'booking_needs_assignment' ||
                  type == 'booking_confirmed' ||
-                 type == 'booking_status_changed') {
-        // Navigate to bookings page for branch admin notifications
+                 type == 'booking_status_changed' ||
+                 type == 'staff_booking_created') {
+        // Navigate to bookings page for owner/branch admin notifications
         Navigator.of(_context!).push(
           MaterialPageRoute(
             builder: (context) => const OwnerBookingsPage(),

@@ -725,6 +725,97 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         // Don't fail the booking creation if audit log fails
       }
     }
+    
+    // Send notification to salon owner for all staff/branch admin created bookings
+    if (_ownerUid != null && _currentUserId != null && _currentUserId != _ownerUid) {
+      try {
+        await _sendOwnerNotification(
+          bookingId: bookingId,
+          bookingCode: bookingCode,
+          clientName: clientName,
+          serviceNames: serviceNames,
+          dateStr: dateStr,
+          timeStr: mainTimeStr,
+          branchName: _selectedBranchLabel ?? 'Branch',
+          creatorName: _currentUserName ?? 'Staff',
+          creatorRole: _userRole ?? 'staff',
+        );
+      } catch (e) {
+        debugPrint('Failed to send owner notification: $e');
+        // Don't fail booking creation if notification fails
+      }
+    }
+  }
+  
+  /// Send notification to salon owner when booking is created by staff
+  Future<void> _sendOwnerNotification({
+    required String bookingId,
+    required String bookingCode,
+    required String clientName,
+    required String serviceNames,
+    required String dateStr,
+    required String timeStr,
+    required String branchName,
+    required String creatorName,
+    required String creatorRole,
+  }) async {
+    if (_ownerUid == null) return;
+    
+    final roleLabel = creatorRole == 'salon_branch_admin' ? 'Branch Admin' : 'Staff';
+    final title = 'New Booking Created by $roleLabel';
+    final message = '$creatorName created a booking for $clientName - $serviceNames at $branchName on $dateStr at $timeStr';
+    
+    // Create notification in Firestore
+    await FirebaseFirestore.instance.collection('notifications').add({
+      'type': 'staff_booking_created',
+      'title': title,
+      'message': message,
+      'ownerUid': _ownerUid,
+      'targetOwnerUid': _ownerUid, // Explicitly target the owner
+      'staffUid': _currentUserId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'read': false,
+      'data': {
+        'bookingId': bookingId,
+        'bookingCode': bookingCode,
+        'clientName': clientName,
+        'serviceName': serviceNames,
+        'date': dateStr,
+        'time': timeStr,
+        'branchName': branchName,
+        'creatorName': creatorName,
+        'creatorRole': creatorRole,
+      },
+    });
+    
+    // Also send FCM push notification if owner has FCM token
+    try {
+      // Get owner's FCM token
+      final ownerDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_ownerUid)
+          .get();
+      
+      if (ownerDoc.exists) {
+        final ownerFcmToken = ownerDoc.data()?['fcmToken'];
+        if (ownerFcmToken != null && ownerFcmToken.isNotEmpty) {
+          // Store pending FCM notification for server to send
+          await FirebaseFirestore.instance.collection('pending_fcm_notifications').add({
+            'token': ownerFcmToken,
+            'title': title,
+            'body': message,
+            'data': {
+              'type': 'staff_booking_created',
+              'bookingId': bookingId,
+            },
+            'createdAt': FieldValue.serverTimestamp(),
+            'sent': false,
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error queuing FCM notification: $e');
+    }
   }
 
   // --- UI Building ---
