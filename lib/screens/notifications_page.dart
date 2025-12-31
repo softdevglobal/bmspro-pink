@@ -90,6 +90,9 @@ class NotificationItem {
     } else if (type == 'branch_booking_created' || type == 'booking_needs_assignment') {
       icon = FontAwesomeIcons.calendarPlus;
       displayType = 'task';
+    } else if (type == 'booking_engine_new_booking') {
+      icon = FontAwesomeIcons.globe;
+      displayType = 'task';
     } else if (type == 'auto_clock_out') {
       icon = FontAwesomeIcons.locationCrosshairs;
       displayType = 'system';
@@ -513,7 +516,8 @@ class _NotificationsPageState extends State<NotificationsPage>
                              type == 'branch_booking_created' ||
                              type == 'booking_needs_assignment' ||
                              type == 'booking_confirmed' ||
-                             type == 'booking_status_changed') {
+                             type == 'booking_status_changed' ||
+                             type == 'booking_engine_new_booking') {
                     // Navigate to bookings page for owner notifications
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const OwnerBookingsPage()),

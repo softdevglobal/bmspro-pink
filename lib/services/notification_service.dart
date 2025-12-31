@@ -254,12 +254,13 @@ class NotificationService {
           final targetOwnerUid = data['targetOwnerUid']?.toString();
           
           // Show notification if:
-          // 1. It's a staff_booking_created notification and user is the owner, OR
+          // 1. It's a staff_booking_created or booking_engine_new_booking notification and user is the owner, OR
           // 2. It's a general admin notification (no staffUid or targetAdminUid matches)
           bool shouldShow = false;
           
-          if (type == 'staff_booking_created' && targetOwnerUid == user.uid) {
-            // Staff created booking - always show to owner
+          if ((type == 'staff_booking_created' || type == 'booking_engine_new_booking') && 
+              (targetOwnerUid == user.uid || data['ownerUid'] == user.uid)) {
+            // Booking created notification - always show to owner
             shouldShow = true;
           } else if ((staffUid == null || staffUid != user.uid) && 
               (targetAdminUid == null || targetAdminUid == user.uid)) {
@@ -483,7 +484,8 @@ class NotificationService {
                  type == 'booking_needs_assignment' ||
                  type == 'booking_confirmed' ||
                  type == 'booking_status_changed' ||
-                 type == 'staff_booking_created') {
+                 type == 'staff_booking_created' ||
+                 type == 'booking_engine_new_booking') {
         // Navigate to bookings page for owner/branch admin notifications
         Navigator.of(_context!).push(
           MaterialPageRoute(

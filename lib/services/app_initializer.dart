@@ -67,7 +67,8 @@ class AppInitializer {
                  type == 'booking_needs_assignment' ||
                  type == 'booking_confirmed' ||
                  type == 'booking_status_changed' ||
-                 type == 'staff_booking_created') {
+                 type == 'staff_booking_created' ||
+                 type == 'booking_engine_new_booking') {
         // Navigate to bookings page for owner/branch admin notifications
         navigator.push(
           MaterialPageRoute(
@@ -98,7 +99,8 @@ class AppInitializer {
                type == 'booking_needs_assignment' ||
                type == 'booking_confirmed' ||
                type == 'booking_status_changed' ||
-               type == 'staff_booking_created') {
+               type == 'staff_booking_created' ||
+               type == 'booking_engine_new_booking') {
       // Navigate to bookings page for owner/branch admin notifications
       Navigator.of(context).push(
         MaterialPageRoute(
