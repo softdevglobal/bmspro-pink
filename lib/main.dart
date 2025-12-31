@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'utils/timezone_helper.dart';
 import 'services/notification_service.dart';
 import 'services/app_initializer.dart';
+import 'services/background_location_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +24,10 @@ void main() async {
   
   // Check if app was opened from a notification (when app was closed)
   await AppInitializer().checkInitialNotification();
+  
+  // Resume background location monitoring if there's an active check-in
+  // This ensures auto clock-out continues working after app restart
+  BackgroundLocationService().resumeMonitoringIfNeeded();
   
   runApp(const BmsproPinkApp());
 }

@@ -21,6 +21,7 @@ import 'more_page.dart';
 import '../services/staff_check_in_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
+import '../services/background_location_service.dart';
 import 'package:geolocator/geolocator.dart';
 
 // --- 1. Theme & Colors (Matching Tailwind Config) ---
@@ -75,8 +76,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   DateTime? _checkInTime; // Store the actual check-in time to prevent recalculation issues
   String? _activeCheckInId; // Store check-in ID for break tracking
   
-  // Location monitoring timer for auto check-out
-  Timer? _locationMonitorTimer;
+  // Background location service for auto check-out
+  final BackgroundLocationService _backgroundLocationService = BackgroundLocationService();
 
   // Role state
   String? _userRole;
@@ -116,6 +117,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _listenToUnreadNotifications();
     _listenToPendingRequests();
     _refreshCheckInStatus(); // Load current check-in status
+    
+    // Set up background location service callbacks
+    _backgroundLocationService.onAutoCheckOut = _handleAutoCheckOut;
+    
+    // Resume background location monitoring if needed
+    _backgroundLocationService.resumeMonitoringIfNeeded();
     
     // Set up notification service for on-screen notifications
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -420,11 +427,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  /// Handle auto clock-out from background location service
+  void _handleAutoCheckOut(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(FontAwesomeIcons.locationCrosshairs, color: Colors.white, size: 18),
+              const SizedBox(width: 12),
+              Expanded(child: Text(message)),
+            ],
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      _refreshCheckInStatus();
+    }
+  }
+
   @override
   void dispose() {
     _pulseController.dispose();
     _workTimer?.cancel();
-    _locationMonitorTimer?.cancel();
+    _backgroundLocationService.stopMonitoring();
     _notificationsSub?.cancel();
     _pendingRequestsSub?.cancel();
     NotificationService().dispose();
@@ -913,68 +941,66 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _startWorkTimer();
           }
           
-          // Start location monitoring for auto check-out
-          _startLocationMonitoring();
+          // Start background location monitoring for auto check-out
+          _startBackgroundLocationMonitoring(activeCheckIn);
         } else {
           _status = ClockStatus.out;
           _selectedBranch = null;
           _checkInTime = null;
           _activeCheckInId = null;
           _resetWorkTimer();
-          _stopLocationMonitoring();
+          _backgroundLocationService.stopMonitoring();
         }
       });
     }
   }
   
-  /// Start periodic location monitoring to auto check-out when radius is exceeded
-  void _startLocationMonitoring() {
-    _stopLocationMonitoring(); // Stop any existing timer
+  /// Start background location monitoring for auto check-out
+  Future<void> _startBackgroundLocationMonitoring(StaffCheckInRecord activeCheckIn) async {
+    // Skip if already monitoring this check-in
+    if (_backgroundLocationService.isMonitoring) {
+      return;
+    }
     
-    // Check location every 60 seconds (1 minute)
-    _locationMonitorTimer = Timer.periodic(const Duration(seconds: 60), (timer) async {
-      if (_activeCheckInId == null || _status != ClockStatus.clockedIn) {
-        _stopLocationMonitoring();
+    try {
+      // Get branch details for location monitoring
+      final branchDoc = await FirebaseFirestore.instance
+          .collection('branches')
+          .doc(activeCheckIn.branchId)
+          .get();
+      
+      if (!branchDoc.exists) {
+        debugPrint('Branch not found for background monitoring');
         return;
       }
       
-      try {
-        // Get current location
-        final position = await LocationService.getCurrentLocation();
-        if (position == null) {
-          return; // Could not get location, skip this check
-        }
-        
-        // Check if still within radius and auto check-out if exceeded
-        final wasAutoCheckedOut = await StaffCheckInService.autoCheckOutIfExceededRadius(
-          checkInId: _activeCheckInId!,
-          currentLatitude: position.latitude,
-          currentLongitude: position.longitude,
-        );
-        
-        if (wasAutoCheckedOut && mounted) {
-          // Show notification to user
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('You have been automatically checked out for exceeding the branch radius.'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 5),
-            ),
-          );
-          
-          // Refresh check-in status
-          _refreshCheckInStatus();
-        }
-      } catch (e) {
-        debugPrint('Error in location monitoring: $e');
+      final branchData = branchDoc.data()!;
+      final location = branchData['location'] as Map<String, dynamic>?;
+      
+      if (location == null ||
+          location['latitude'] == null ||
+          location['longitude'] == null) {
+        debugPrint('Branch location not found for background monitoring');
+        return;
       }
-    });
-  }
-  
-  /// Stop location monitoring
-  void _stopLocationMonitoring() {
-    _locationMonitorTimer?.cancel();
-    _locationMonitorTimer = null;
+      
+      final branchLat = (location['latitude'] as num).toDouble();
+      final branchLon = (location['longitude'] as num).toDouble();
+      final allowedRadius = (branchData['allowedCheckInRadius'] ?? 100).toDouble();
+      
+      // Start background monitoring
+      await _backgroundLocationService.startMonitoring(
+        checkInId: activeCheckIn.id!,
+        branchId: activeCheckIn.branchId,
+        branchLatitude: branchLat,
+        branchLongitude: branchLon,
+        allowedRadius: allowedRadius,
+      );
+      
+      debugPrint('Background location monitoring started for check-in ${activeCheckIn.id}');
+    } catch (e) {
+      debugPrint('Error starting background location monitoring: $e');
+    }
   }
 
   void _handleBreakAction() async {

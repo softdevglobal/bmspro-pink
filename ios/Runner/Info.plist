@@ -48,12 +48,15 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>BMS Pro Pink needs your location to verify your presence at the branch when you check in for work.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>BMS Pro Pink needs your location to verify your presence at the branch when you check in for work.</string>
+	<string>BMS Pro Pink needs background location access to automatically clock you out if you leave the branch area while checked in.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>BMS Pro Pink needs your location to verify your presence at the branch when you check in for work.</string>
+	<string>BMS Pro Pink needs background location access to automatically clock you out if you leave the branch area while checked in.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>location</string>
+		<string>fetch</string>
+		<string>processing</string>
 	</array>
 	<key>io.flutter.embedded_views_preview</key>
 	<true/>

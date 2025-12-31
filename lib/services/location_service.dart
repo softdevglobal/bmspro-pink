@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -28,6 +30,39 @@ class LocationService {
     }
 
     return permission;
+  }
+  
+  /// Request background location permission (needed for auto clock-out)
+  static Future<bool> requestBackgroundLocationPermission() async {
+    // First ensure we have basic location permission
+    final basicPermission = await requestLocationPermission();
+    if (basicPermission == LocationPermission.denied ||
+        basicPermission == LocationPermission.deniedForever) {
+      return false;
+    }
+    
+    // Check if we already have "always" permission
+    if (basicPermission == LocationPermission.always) {
+      return true;
+    }
+    
+    // On Android, we need to explicitly request background location
+    if (Platform.isAndroid) {
+      // Use permission_handler for background location on Android
+      final status = await Permission.locationAlways.request();
+      return status.isGranted;
+    }
+    
+    // On iOS, requestPermission already handles always permission
+    // The system will show the appropriate dialog
+    final alwaysPermission = await Geolocator.requestPermission();
+    return alwaysPermission == LocationPermission.always;
+  }
+  
+  /// Check if background location permission is granted
+  static Future<bool> hasBackgroundLocationPermission() async {
+    final permission = await Geolocator.checkPermission();
+    return permission == LocationPermission.always;
   }
 
   /// Check if location permission is granted
@@ -148,6 +183,46 @@ class LocationService {
   /// Open location settings
   static Future<bool> openLocationSettings() async {
     return await Geolocator.openLocationSettings();
+  }
+  
+  /// Get a stream of position updates for background tracking
+  /// This continues to work when the app is in the background
+  static Stream<Position> getPositionStream({
+    int distanceFilter = 50, // Minimum distance (in meters) before an update is triggered
+    int intervalDuration = 60000, // Time between updates in milliseconds (default 1 minute)
+  }) {
+    late LocationSettings locationSettings;
+    
+    if (Platform.isAndroid) {
+      locationSettings = AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFilter,
+        intervalDuration: Duration(milliseconds: intervalDuration),
+        // Enable foreground notification for background tracking
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationText: 'BMS Pro Pink is monitoring your location for auto clock-out',
+          notificationTitle: 'Location Tracking Active',
+          enableWakeLock: true,
+          notificationIcon: AndroidResource(name: 'ic_launcher', defType: 'mipmap'),
+        ),
+      );
+    } else if (Platform.isIOS) {
+      locationSettings = AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFilter,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
+        activityType: ActivityType.other,
+        allowBackgroundLocationUpdates: true,
+      );
+    } else {
+      locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFilter,
+      );
+    }
+    
+    return Geolocator.getPositionStream(locationSettings: locationSettings);
   }
 }
 
