@@ -63,7 +63,7 @@ class HomeScreen extends StatefulWidget {
 
 enum ClockStatus { out, clockedIn, onBreak }
 
-class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   ClockStatus _status = ClockStatus.out;
   String? _selectedBranch;
   late AnimationController _pulseController;
@@ -103,6 +103,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    
+    // Register app lifecycle observer for foreground/background detection
+    WidgetsBinding.instance.addObserver(this);
+    
     // Setup Pulse Animation for the "Clock In" button
     _pulseController = AnimationController(
       vsync: this,
@@ -121,7 +125,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Set up background location service callbacks
     _backgroundLocationService.onAutoCheckOut = _handleAutoCheckOut;
     
-    // Resume background location monitoring if needed
+    // Resume background location monitoring if needed (with immediate check)
     _backgroundLocationService.resumeMonitoringIfNeeded();
     
     // Set up notification service for on-screen notifications
@@ -129,6 +133,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       NotificationService().setContext(context);
       NotificationService().listenToNotifications();
     });
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    // When app comes to foreground, check location immediately
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('HomeScreen: App resumed - checking location...');
+      _backgroundLocationService.checkLocationNow();
+      // Also refresh check-in status in case auto clock-out happened
+      _refreshCheckInStatus();
+    }
   }
 
   /// Listen to unread notifications for the current staff
@@ -450,6 +467,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _workTimer?.cancel();
     _backgroundLocationService.stopMonitoring();

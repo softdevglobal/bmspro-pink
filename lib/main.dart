@@ -40,7 +40,8 @@ void main() async {
   
   // Resume background location monitoring if there's an active check-in
   // This ensures auto clock-out continues working after app restart
-  BackgroundLocationService().resumeMonitoringIfNeeded();
+  // Also performs an immediate location check to handle out-of-radius cases
+  await BackgroundLocationService().resumeMonitoringIfNeeded();
   
   runApp(const BmsproPinkApp());
 }

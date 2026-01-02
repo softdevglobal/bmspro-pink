@@ -42,7 +42,7 @@ class BranchAdminDashboard extends StatefulWidget {
   State<BranchAdminDashboard> createState() => _BranchAdminDashboardState();
 }
 
-class _BranchAdminDashboardState extends State<BranchAdminDashboard> with TickerProviderStateMixin {
+class _BranchAdminDashboardState extends State<BranchAdminDashboard> with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _loading = true;
   String? _branchId;
   String? _ownerUid;
@@ -92,6 +92,9 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   void initState() {
     super.initState();
     
+    // Register app lifecycle observer for foreground/background detection
+    WidgetsBinding.instance.addObserver(this);
+    
     // Setup pulse animation for clock in button
     _pulseController = AnimationController(
       vsync: this,
@@ -110,7 +113,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     // Set up background location service callbacks
     _backgroundLocationService.onAutoCheckOut = _handleAutoCheckOut;
     
-    // Resume background location monitoring if needed
+    // Resume background location monitoring if needed (with immediate check)
     _backgroundLocationService.resumeMonitoringIfNeeded();
     
     // Set up notification service for on-screen notifications
@@ -118,6 +121,19 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
       NotificationService().setContext(context);
       NotificationService().listenToNotifications();
     });
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    // When app comes to foreground, check location immediately
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('BranchAdminDashboard: App resumed - checking location...');
+      _backgroundLocationService.checkLocationNow();
+      // Also refresh check-in status in case auto clock-out happened
+      _refreshCheckInStatus();
+    }
   }
   
   /// Handle auto clock-out from background location service
@@ -143,6 +159,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _workTimer?.cancel();
     _backgroundLocationService.stopMonitoring();
