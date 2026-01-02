@@ -766,7 +766,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     final title = 'New Booking Created by $roleLabel';
     final message = '$creatorName created a booking for $clientName - $serviceNames at $branchName on $dateStr at $timeStr';
     
-    // Create notification in Firestore
+    // Create notification in Firestore for the owner
     final notificationRef = await FirebaseFirestore.instance.collection('notifications').add({
       'type': 'staff_booking_created',
       'title': title,
@@ -779,13 +779,14 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       'clientName': clientName,
       'serviceName': serviceNames,
       'branchName': branchName,
+      'branchId': _selectedBranchId, // Include branchId for branch filtering
       'bookingDate': dateStr,
       'bookingTime': timeStr,
       'createdAt': FieldValue.serverTimestamp(),
       'read': false,
     });
     
-    // Send FCM push notification via API
+    // Send FCM push notification to owner
     try {
       await FcmPushService().sendPushNotification(
         targetUid: _ownerUid!,
@@ -800,7 +801,105 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       );
       debugPrint('✅ FCM push notification sent to owner $_ownerUid');
     } catch (e) {
-      debugPrint('Error sending FCM notification: $e');
+      debugPrint('Error sending FCM notification to owner: $e');
+    }
+    
+    // Also send notification to branch admin(s) of this branch (if any)
+    await _sendBranchAdminNotifications(
+      bookingId: bookingId,
+      bookingCode: bookingCode,
+      clientName: clientName,
+      serviceNames: serviceNames,
+      dateStr: dateStr,
+      timeStr: timeStr,
+      branchName: branchName,
+      creatorName: creatorName,
+      creatorRole: creatorRole,
+    );
+  }
+  
+  /// Send notification to branch admin(s) when booking is created at their branch
+  Future<void> _sendBranchAdminNotifications({
+    required String bookingId,
+    required String bookingCode,
+    required String clientName,
+    required String serviceNames,
+    required String dateStr,
+    required String timeStr,
+    required String branchName,
+    required String creatorName,
+    required String creatorRole,
+  }) async {
+    if (_ownerUid == null || _selectedBranchId == null) return;
+    
+    try {
+      // Find branch admin(s) for this branch
+      final branchAdminQuery = await FirebaseFirestore.instance
+          .collection('users')
+          .where('ownerUid', isEqualTo: _ownerUid)
+          .where('role', isEqualTo: 'salon_branch_admin')
+          .where('branchId', isEqualTo: _selectedBranchId)
+          .get();
+      
+      if (branchAdminQuery.docs.isEmpty) {
+        debugPrint('No branch admin found for branch $_selectedBranchId');
+        return;
+      }
+      
+      final roleLabel = creatorRole == 'salon_branch_admin' ? 'Branch Admin' : 'Staff';
+      final title = 'New Booking at Your Branch';
+      final message = '$creatorName ($roleLabel) created a booking for $clientName - $serviceNames on $dateStr at $timeStr';
+      
+      for (final adminDoc in branchAdminQuery.docs) {
+        final branchAdminUid = adminDoc.id;
+        
+        // Skip if the branch admin is the one creating the booking
+        if (branchAdminUid == _currentUserId) {
+          debugPrint('Skipping notification to self (branch admin creating booking)');
+          continue;
+        }
+        
+        // Create notification for branch admin
+        final notificationRef = await FirebaseFirestore.instance.collection('notifications').add({
+          'type': 'staff_booking_created',
+          'title': title,
+          'message': message,
+          'ownerUid': _ownerUid,
+          'branchAdminUid': branchAdminUid, // Target branch admin
+          'targetAdminUid': branchAdminUid, // For targeting
+          'staffUid': _currentUserId,
+          'bookingId': bookingId,
+          'bookingCode': bookingCode,
+          'clientName': clientName,
+          'serviceName': serviceNames,
+          'branchName': branchName,
+          'branchId': _selectedBranchId,
+          'bookingDate': dateStr,
+          'bookingTime': timeStr,
+          'createdAt': FieldValue.serverTimestamp(),
+          'read': false,
+        });
+        
+        // Send FCM push notification to branch admin
+        try {
+          await FcmPushService().sendPushNotification(
+            targetUid: branchAdminUid,
+            title: title,
+            message: message,
+            data: {
+              'notificationId': notificationRef.id,
+              'type': 'staff_booking_created',
+              'bookingId': bookingId,
+              'bookingCode': bookingCode,
+            },
+          );
+          debugPrint('✅ FCM push notification sent to branch admin $branchAdminUid');
+        } catch (e) {
+          debugPrint('Error sending FCM notification to branch admin: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error sending branch admin notifications: $e');
     }
   }
 

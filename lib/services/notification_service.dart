@@ -114,9 +114,12 @@ class NotificationService {
   StreamSubscription<QuerySnapshot>? _notificationSubscription;
   StreamSubscription<QuerySnapshot>? _adminNotificationSubscription;
   StreamSubscription<QuerySnapshot>? _branchAdminNotificationSubscription;
+  StreamSubscription<QuerySnapshot>? _branchIdNotificationSubscription; // For branch-filtered notifications
   BuildContext? _context;
   final Set<String> _shownNotificationIds = {};
   bool _isInitialized = false;
+  String? _userBranchId; // Cached branchId for branch admins
+  String? _userRole; // Cached user role
 
   /// Initialize notification service
   Future<void> initialize() async {
@@ -378,7 +381,7 @@ class NotificationService {
 
   /// Listen to Firestore notifications and show on-screen notifications
   /// Only shows NEW notifications that arrive while app is running, not old unread ones
-  void listenToNotifications() {
+  void listenToNotifications() async {
     final user = _auth.currentUser;
     if (user == null) return;
 
@@ -386,7 +389,21 @@ class NotificationService {
     _notificationSubscription?.cancel();
     _adminNotificationSubscription?.cancel();
     _branchAdminNotificationSubscription?.cancel();
+    _branchIdNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
+    
+    // Fetch user role and branchId for branch admin filtering
+    try {
+      final userDoc = await _db.collection('users').doc(user.uid).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data();
+        _userRole = userData?['role']?.toString();
+        _userBranchId = userData?['branchId']?.toString();
+        print('📱 User role: $_userRole, branchId: $_userBranchId');
+      }
+    } catch (e) {
+      print('⚠️ Error fetching user role/branchId: $e');
+    }
     
     // Track if this is the first snapshot (initial load) - we skip showing those notifications
     bool isInitialLoad = true;
@@ -634,6 +651,85 @@ class NotificationService {
     }, onError: (e) {
       print('❌ Error listening to target admin notifications: $e');
     });
+    
+    // For branch admins: Listen for notifications by branchId
+    // This allows branch admins to receive the same notifications as owners for their branch
+    if (_userRole == 'salon_branch_admin' && _userBranchId != null && _userBranchId!.isNotEmpty) {
+      print('🏢 Setting up branch-filtered notifications for branch: $_userBranchId');
+      bool isInitialBranchIdLoad = true;
+      _branchIdNotificationSubscription = _db
+          .collection('notifications')
+          .where('branchId', isEqualTo: _userBranchId)
+          .limit(50)
+          .snapshots()
+          .listen((snapshot) {
+        // Skip the initial snapshot
+        if (isInitialBranchIdLoad) {
+          isInitialBranchIdLoad = false;
+          return;
+        }
+        
+        // Only process NEW notifications
+        for (final change in snapshot.docChanges) {
+          if (change.type == DocumentChangeType.added) {
+            final doc = change.doc;
+            final data = doc.data();
+            
+            // Skip if data is null
+            if (data == null) continue;
+            
+            // Skip if we've already shown this notification
+            if (_shownNotificationIds.contains(doc.id)) continue;
+            
+            // Only show if unread
+            if (data['read'] == true) continue;
+            
+            final type = data['type']?.toString() ?? '';
+            final staffUid = data['staffUid']?.toString();
+            
+            // Skip if the notification was created by the current user
+            if (staffUid == user.uid) continue;
+            
+            // Show these notification types (same as what owners receive)
+            bool shouldShow = false;
+            if (type == 'staff_booking_created' || 
+                type == 'booking_engine_new_booking' ||
+                type == 'booking_needs_assignment' ||
+                type == 'branch_booking_created' ||
+                type == 'booking_confirmed' ||
+                type == 'booking_status_changed' ||
+                type == 'booking_assigned' ||
+                type == 'booking_completed' ||
+                type == 'booking_canceled') {
+              shouldShow = true;
+            }
+            
+            if (shouldShow) {
+              _shownNotificationIds.add(doc.id);
+              _showOnScreenNotification(
+                title: data['title']?.toString() ?? 'New Notification',
+                message: data['message']?.toString() ?? '',
+                notificationId: doc.id,
+                notificationData: data,
+              );
+              
+              // Also show a local notification for better visibility
+              _showLocalNotification(
+                id: doc.id.hashCode,
+                title: data['title']?.toString() ?? 'New Notification',
+                body: data['message']?.toString() ?? '',
+                bookingId: data['bookingId']?.toString(),
+                notificationType: type,
+              );
+              
+              print('🔔 Branch admin notification shown for branch $_userBranchId: $type');
+            }
+          }
+        }
+      }, onError: (e) {
+        print('❌ Error listening to branch-filtered notifications: $e');
+      });
+    }
   }
   
   /// Show a local notification using flutter_local_notifications
@@ -811,8 +907,11 @@ class NotificationService {
     _notificationSubscription?.cancel();
     _adminNotificationSubscription?.cancel();
     _branchAdminNotificationSubscription?.cancel();
+    _branchIdNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     _context = null;
+    _userBranchId = null;
+    _userRole = null;
   }
 }
 
