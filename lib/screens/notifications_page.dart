@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'appointment_requests_page.dart';
 import 'owner_bookings_page.dart';
 
@@ -149,6 +150,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   StreamSubscription<QuerySnapshot>? _ownerNotificationsSub;
   bool _loading = true;
   String? _currentUserId;
+  Set<String> _dismissedNotificationIds = {};
 
   @override
   void initState() {
@@ -158,7 +160,29 @@ class _NotificationsPageState extends State<NotificationsPage>
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
     
+    _loadDismissedNotifications();
     _loadNotifications();
+  }
+
+  Future<void> _loadDismissedNotifications() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final dismissedIds = prefs.getStringList('dismissed_notification_ids') ?? [];
+      setState(() {
+        _dismissedNotificationIds = dismissedIds.toSet();
+      });
+    } catch (e) {
+      debugPrint("Error loading dismissed notifications: $e");
+    }
+  }
+
+  Future<void> _saveDismissedNotifications() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('dismissed_notification_ids', _dismissedNotificationIds.toList());
+    } catch (e) {
+      debugPrint("Error saving dismissed notifications: $e");
+    }
   }
 
   void _mergeNotifications() {
@@ -166,11 +190,15 @@ class _NotificationsPageState extends State<NotificationsPage>
     final allNotifications = <String, NotificationItem>{};
     
     for (final notification in _staffNotifications) {
-      allNotifications[notification.id] = notification;
+      // Filter out dismissed notifications
+      if (!_dismissedNotificationIds.contains(notification.id)) {
+        allNotifications[notification.id] = notification;
+      }
     }
     for (final notification in _ownerNotifications) {
-      // Only add if not already present (avoid duplicates)
-      if (!allNotifications.containsKey(notification.id)) {
+      // Only add if not already present (avoid duplicates) and not dismissed
+      if (!allNotifications.containsKey(notification.id) && 
+          !_dismissedNotificationIds.contains(notification.id)) {
         allNotifications[notification.id] = notification;
       }
     }
@@ -292,25 +320,84 @@ class _NotificationsPageState extends State<NotificationsPage>
   }
 
   Future<void> _clearAll() async {
-    // Mark all as read locally
+    if (_notifications.isEmpty) return;
+    
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All Notifications'),
+        content: const Text('Are you sure you want to clear all notifications? This will hide them from your notification panel.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed != true) return;
+    
+    // Add all current notification IDs to dismissed set
+    final allNotificationIds = _notifications.map((n) => n.id).toSet();
     setState(() {
-      for (final n in _notifications) {
-        n.isRead = true;
-      }
+      _dismissedNotificationIds.addAll(allNotificationIds);
+      _notifications.clear();
     });
     
-    // Batch update in Firestore
+    // Save dismissed IDs to SharedPreferences
+    await _saveDismissedNotifications();
+    
+    // Mark all notifications as read in Firestore (this is allowed by security rules)
     try {
-      final batch = FirebaseFirestore.instance.batch();
-      for (final n in _notifications) {
-        batch.update(
-          FirebaseFirestore.instance.collection('notifications').doc(n.id),
+      WriteBatch? batch = FirebaseFirestore.instance.batch();
+      int batchCount = 0;
+      
+      for (final n in allNotificationIds) {
+        if (batchCount >= 500) {
+          await batch!.commit();
+          batch = FirebaseFirestore.instance.batch();
+          batchCount = 0;
+        }
+        
+        batch!.update(
+          FirebaseFirestore.instance.collection('notifications').doc(n),
           {'read': true},
         );
+        batchCount++;
       }
-      await batch.commit();
+      
+      if (batchCount > 0 && batch != null) {
+        await batch.commit();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All notifications cleared'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     } catch (e) {
-      debugPrint("Error marking all notifications as read: $e");
+      debugPrint("Error marking notifications as read: $e");
+      // Even if marking as read fails, the notifications are already dismissed locally
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All notifications cleared'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 
