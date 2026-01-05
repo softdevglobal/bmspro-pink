@@ -730,6 +730,19 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     // Send notification to salon owner for all staff/branch admin created bookings
     if (_ownerUid != null && _currentUserId != null && _currentUserId != _ownerUid) {
       try {
+        // Check if any services need staff assignment (Any Available)
+        final hasUnassignedServices = servicesArray.any((service) {
+          final staffId = service['staffId'];
+          final staffName = (service['staffName'] ?? '').toString();
+          final approvalStatus = service['approvalStatus'];
+          return approvalStatus == 'needs_assignment' ||
+                 staffId == null ||
+                 staffId == 'null' ||
+                 staffId == 'any' ||
+                 staffName.toLowerCase().contains('any available') ||
+                 staffName.toLowerCase().contains('any staff');
+        });
+        
         await _sendOwnerNotification(
           bookingId: bookingId,
           bookingCode: bookingCode,
@@ -740,6 +753,8 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           branchName: _selectedBranchLabel ?? 'Branch',
           creatorName: _currentUserName ?? 'Staff',
           creatorRole: _userRole ?? 'staff',
+          services: servicesArray,
+          needsStaffAssignment: hasUnassignedServices,
         );
       } catch (e) {
         debugPrint('Failed to send owner notification: $e');
@@ -759,32 +774,94 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     required String branchName,
     required String creatorName,
     required String creatorRole,
+    required List<Map<String, dynamic>> services,
+    required bool needsStaffAssignment,
   }) async {
     if (_ownerUid == null) return;
     
     final roleLabel = creatorRole == 'salon_branch_admin' ? 'Branch Admin' : 'Staff';
-    final title = 'New Booking Created by $roleLabel';
-    final message = '$creatorName created a booking for $clientName - $serviceNames at $branchName on $dateStr at $timeStr';
+    
+    // Determine notification type and message based on whether staff assignment is needed
+    final String notificationType;
+    final String title;
+    final String message;
+    
+    if (needsStaffAssignment) {
+      // Check if all services need assignment or just some
+      final unassignedServices = services.where((service) {
+        final staffId = service['staffId'];
+        final staffName = (service['staffName'] ?? '').toString();
+        final approvalStatus = service['approvalStatus'];
+        return approvalStatus == 'needs_assignment' ||
+               staffId == null ||
+               staffId == 'null' ||
+               staffId == 'any' ||
+               staffName.toLowerCase().contains('any available') ||
+               staffName.toLowerCase().contains('any staff');
+      }).toList();
+      
+      final allUnassigned = unassignedServices.length == services.length;
+      final unassignedServiceNames = unassignedServices
+          .map((s) => s['name'] ?? 'Service')
+          .join(', ');
+      
+      notificationType = 'booking_needs_assignment';
+      title = allUnassigned 
+          ? 'New Booking - Staff Assignment Required'
+          : 'Booking - Partial Staff Assignment Required';
+      message = allUnassigned
+          ? '$creatorName ($roleLabel) created a booking for $clientName - $unassignedServiceNames on $dateStr at $timeStr. Please assign staff to all services.'
+          : '$creatorName ($roleLabel) created a booking for $clientName. Staff assignment needed for: $unassignedServiceNames. Other services have been sent to assigned staff.';
+    } else {
+      notificationType = 'staff_booking_created';
+      title = 'New Booking Created by $roleLabel';
+      message = '$creatorName created a booking for $clientName - $serviceNames at $branchName on $dateStr at $timeStr';
+    }
     
     // Create notification in Firestore for the owner
-    final notificationRef = await FirebaseFirestore.instance.collection('notifications').add({
-      'type': 'staff_booking_created',
+    final notificationData = {
+      'type': notificationType,
       'title': title,
       'message': message,
       'ownerUid': _ownerUid,
       'targetOwnerUid': _ownerUid, // Explicitly target the owner
+      'targetRole': 'admin',
       'staffUid': _currentUserId,
       'bookingId': bookingId,
       'bookingCode': bookingCode,
       'clientName': clientName,
       'serviceName': serviceNames,
+      'services': services.map((s) => {
+        final staffId = s['staffId'];
+        final staffName = (s['staffName'] ?? '').toString();
+        final approvalStatus = s['approvalStatus'];
+        final needsAssignment = approvalStatus == 'needs_assignment' ||
+                                 staffId == null ||
+                                 staffId == 'null' ||
+                                 staffId == 'any' ||
+                                 staffName.toLowerCase().contains('any available') ||
+                                 staffName.toLowerCase().contains('any staff');
+        return {
+          'name': s['name'] ?? 'Service',
+          'staffName': needsAssignment ? 'Needs Assignment' : (staffName != 'Any Available' ? staffName : null),
+          'staffId': staffId,
+          'needsAssignment': needsAssignment,
+        };
+      }).toList(),
       'branchName': branchName,
       'branchId': _selectedBranchId, // Include branchId for branch filtering
       'bookingDate': dateStr,
       'bookingTime': timeStr,
+      'status': _userRole == 'salon_staff' 
+          ? 'Confirmed' 
+          : (_userRole == 'salon_owner' || _userRole == 'salon_branch_admin')
+              ? 'AwaitingStaffApproval'
+              : 'Pending',
       'createdAt': FieldValue.serverTimestamp(),
       'read': false,
-    });
+    };
+    
+    final notificationRef = await FirebaseFirestore.instance.collection('notifications').add(notificationData);
     
     // Send FCM push notification to owner
     try {
@@ -794,12 +871,12 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         message: message,
         data: {
           'notificationId': notificationRef.id,
-          'type': 'staff_booking_created',
+          'type': notificationType,
           'bookingId': bookingId,
           'bookingCode': bookingCode,
         },
       );
-      debugPrint('✅ FCM push notification sent to owner $_ownerUid');
+      debugPrint('✅ FCM push notification sent to owner $_ownerUid (type: $notificationType)');
     } catch (e) {
       debugPrint('Error sending FCM notification to owner: $e');
     }
@@ -815,6 +892,8 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       branchName: branchName,
       creatorName: creatorName,
       creatorRole: creatorRole,
+      services: services,
+      needsStaffAssignment: needsStaffAssignment,
     );
   }
   
@@ -829,6 +908,8 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     required String branchName,
     required String creatorName,
     required String creatorRole,
+    required List<Map<String, dynamic>> services,
+    required bool needsStaffAssignment,
   }) async {
     if (_ownerUid == null || _selectedBranchId == null) return;
     
@@ -847,8 +928,43 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       }
       
       final roleLabel = creatorRole == 'salon_branch_admin' ? 'Branch Admin' : 'Staff';
-      final title = 'New Booking at Your Branch';
-      final message = '$creatorName ($roleLabel) created a booking for $clientName - $serviceNames on $dateStr at $timeStr';
+      
+      // Determine notification type and message based on whether staff assignment is needed
+      final String notificationType;
+      final String title;
+      final String message;
+      
+      if (needsStaffAssignment) {
+        // Check if all services need assignment or just some
+        final unassignedServices = services.where((service) {
+          final staffId = service['staffId'];
+          final staffName = (service['staffName'] ?? '').toString();
+          final approvalStatus = service['approvalStatus'];
+          return approvalStatus == 'needs_assignment' ||
+                 staffId == null ||
+                 staffId == 'null' ||
+                 staffId == 'any' ||
+                 staffName.toLowerCase().contains('any available') ||
+                 staffName.toLowerCase().contains('any staff');
+        }).toList();
+        
+        final allUnassigned = unassignedServices.length == services.length;
+        final unassignedServiceNames = unassignedServices
+            .map((s) => s['name'] ?? 'Service')
+            .join(', ');
+        
+        notificationType = 'booking_needs_assignment';
+        title = allUnassigned 
+            ? 'New Booking - Staff Assignment Required'
+            : 'Booking - Partial Staff Assignment Required';
+        message = allUnassigned
+            ? '$creatorName ($roleLabel) created a booking for $clientName - $unassignedServiceNames on $dateStr at $timeStr. Please assign staff to all services.'
+            : '$creatorName ($roleLabel) created a booking for $clientName. Staff assignment needed for: $unassignedServiceNames. Other services have been sent to assigned staff.';
+      } else {
+        notificationType = 'staff_booking_created';
+        title = 'New Booking at Your Branch';
+        message = '$creatorName ($roleLabel) created a booking for $clientName - $serviceNames on $dateStr at $timeStr';
+      }
       
       for (final adminDoc in branchAdminQuery.docs) {
         final branchAdminUid = adminDoc.id;
@@ -860,25 +976,50 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         }
         
         // Create notification for branch admin
-        final notificationRef = await FirebaseFirestore.instance.collection('notifications').add({
-          'type': 'staff_booking_created',
+        final notificationData = {
+          'type': notificationType,
           'title': title,
           'message': message,
           'ownerUid': _ownerUid,
           'branchAdminUid': branchAdminUid, // Target branch admin
           'targetAdminUid': branchAdminUid, // For targeting
+          'targetRole': 'admin',
           'staffUid': _currentUserId,
           'bookingId': bookingId,
           'bookingCode': bookingCode,
           'clientName': clientName,
           'serviceName': serviceNames,
+          'services': services.map((s) {
+            final staffId = s['staffId'];
+            final staffName = (s['staffName'] ?? '').toString();
+            final approvalStatus = s['approvalStatus'];
+            final needsAssignment = approvalStatus == 'needs_assignment' ||
+                                     staffId == null ||
+                                     staffId == 'null' ||
+                                     staffId == 'any' ||
+                                     staffName.toLowerCase().contains('any available') ||
+                                     staffName.toLowerCase().contains('any staff');
+            return {
+              'name': s['name'] ?? 'Service',
+              'staffName': needsAssignment ? 'Needs Assignment' : (staffName != 'Any Available' ? staffName : null),
+              'staffId': staffId,
+              'needsAssignment': needsAssignment,
+            };
+          }).toList(),
           'branchName': branchName,
           'branchId': _selectedBranchId,
           'bookingDate': dateStr,
           'bookingTime': timeStr,
+          'status': _userRole == 'salon_staff' 
+              ? 'Confirmed' 
+              : (_userRole == 'salon_owner' || _userRole == 'salon_branch_admin')
+                  ? 'AwaitingStaffApproval'
+                  : 'Pending',
           'createdAt': FieldValue.serverTimestamp(),
           'read': false,
-        });
+        };
+        
+        final notificationRef = await FirebaseFirestore.instance.collection('notifications').add(notificationData);
         
         // Send FCM push notification to branch admin
         try {
@@ -888,12 +1029,12 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             message: message,
             data: {
               'notificationId': notificationRef.id,
-              'type': 'staff_booking_created',
+              'type': notificationType,
               'bookingId': bookingId,
               'bookingCode': bookingCode,
             },
           );
-          debugPrint('✅ FCM push notification sent to branch admin $branchAdminUid');
+          debugPrint('✅ FCM push notification sent to branch admin $branchAdminUid (type: $notificationType)');
         } catch (e) {
           debugPrint('Error sending FCM notification to branch admin: $e');
         }
