@@ -831,7 +831,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       'bookingCode': bookingCode,
       'clientName': clientName,
       'serviceName': serviceNames,
-      'services': services.map((s) => {
+      'services': services.map((s) {
         final staffId = s['staffId'];
         final staffName = (s['staffName'] ?? '').toString();
         final approvalStatus = s['approvalStatus'];
