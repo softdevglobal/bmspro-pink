@@ -384,8 +384,13 @@ class NotificationService {
   /// Only shows NEW notifications that arrive while app is running, not old unread ones
   void listenToNotifications() async {
     final user = _auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      print('⚠️ listenToNotifications: No user logged in, skipping');
+      return;
+    }
 
+    print('🔔 listenToNotifications: Starting for user: ${user.uid}');
+    
     // Cancel existing subscriptions
     _notificationSubscription?.cancel();
     _adminNotificationSubscription?.cancel();
@@ -393,6 +398,8 @@ class NotificationService {
     _branchIdNotificationSubscription?.cancel();
     _customerNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
+    
+    print('🔔 listenToNotifications: Cancelled existing subscriptions, starting fresh');
     
     // Fetch user role and branchId for branch admin filtering
     try {
@@ -544,7 +551,9 @@ class NotificationService {
       print('❌ Error listening to admin notifications: $e');
     });
     
-    // Query for branch admin notifications (branchAdminUid or targetAdminUid)
+    // Query for branch admin notifications (branchAdminUid)
+    // IMPORTANT: This listener is set up for ALL users, not just branch admins
+    // It will only match notifications where branchAdminUid == user.uid
     // Note: Removed orderBy to avoid needing composite indexes
     bool isInitialBranchAdminLoad = true;
     print('🔔 Setting up branch admin notification listener for user: ${user.uid}');
@@ -554,11 +563,17 @@ class NotificationService {
         .limit(50)
         .snapshots()
         .listen((snapshot) {
-      print('🔔 Branch admin notification snapshot received - changes: ${snapshot.docChanges.length}, isInitial: $isInitialBranchAdminLoad');
+      print('🔔 Branch admin notification snapshot received - total docs: ${snapshot.docs.length}, changes: ${snapshot.docChanges.length}, isInitial: $isInitialBranchAdminLoad');
+      
+      // Log all documents in snapshot for debugging
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        print('🔔 Branch admin notification doc - id: ${doc.id}, type: ${data['type']}, branchAdminUid: ${data['branchAdminUid']}, branchId: ${data['branchId']}, read: ${data['read']}');
+      }
       
       // Skip the initial snapshot
       if (isInitialBranchAdminLoad) {
-        print('🔔 Skipping initial branch admin notification snapshot');
+        print('🔔 Skipping initial branch admin notification snapshot (${snapshot.docs.length} existing notifications)');
         isInitialBranchAdminLoad = false;
         return;
       }
@@ -571,11 +586,24 @@ class NotificationService {
           final doc = change.doc;
           final data = doc.data();
           
-          print('🔔 Branch admin notification added - docId: ${doc.id}, type: ${data?['type']}, branchAdminUid: ${data?['branchAdminUid']}, branchId: ${data?['branchId']}');
+          print('🔔 Branch admin notification added - docId: ${doc.id}');
+          print('🔔   - type: ${data?['type']}');
+          print('🔔   - branchAdminUid: ${data?['branchAdminUid']} (expected: ${user.uid})');
+          print('🔔   - targetAdminUid: ${data?['targetAdminUid']}');
+          print('🔔   - branchId: ${data?['branchId']}');
+          print('🔔   - read: ${data?['read']}');
+          print('🔔   - title: ${data?['title']}');
           
           // Skip if data is null
           if (data == null) {
             print('⚠️ Branch admin notification data is null, skipping');
+            continue;
+          }
+          
+          // Verify branchAdminUid matches (should always be true due to query, but double-check)
+          final notifBranchAdminUid = data['branchAdminUid']?.toString();
+          if (notifBranchAdminUid != user.uid) {
+            print('⚠️ Branch admin notification branchAdminUid mismatch! Expected: ${user.uid}, Got: $notifBranchAdminUid');
             continue;
           }
           
@@ -609,10 +637,15 @@ class NotificationService {
             bookingId: data['bookingId']?.toString(),
             notificationType: notifType,
           );
+        } else if (change.type == DocumentChangeType.modified) {
+          print('🔔 Branch admin notification modified: ${change.doc.id}');
+        } else if (change.type == DocumentChangeType.removed) {
+          print('🔔 Branch admin notification removed: ${change.doc.id}');
         }
       }
     }, onError: (e) {
       print('❌ Error listening to branch admin notifications: $e');
+      print('❌ Error stack: ${e.toString()}');
     });
     
     // Also listen for targetAdminUid notifications (for reassignments, etc.)
