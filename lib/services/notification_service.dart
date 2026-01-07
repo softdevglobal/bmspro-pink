@@ -547,33 +547,51 @@ class NotificationService {
     // Query for branch admin notifications (branchAdminUid or targetAdminUid)
     // Note: Removed orderBy to avoid needing composite indexes
     bool isInitialBranchAdminLoad = true;
+    print('🔔 Setting up branch admin notification listener for user: ${user.uid}');
     _branchAdminNotificationSubscription = _db
         .collection('notifications')
         .where('branchAdminUid', isEqualTo: user.uid)
         .limit(50)
         .snapshots()
         .listen((snapshot) {
+      print('🔔 Branch admin notification snapshot received - changes: ${snapshot.docChanges.length}, isInitial: $isInitialBranchAdminLoad');
+      
       // Skip the initial snapshot
       if (isInitialBranchAdminLoad) {
+        print('🔔 Skipping initial branch admin notification snapshot');
         isInitialBranchAdminLoad = false;
         return;
       }
       
       // Only process NEW notifications
       for (final change in snapshot.docChanges) {
+        print('🔔 Branch admin notification change - type: ${change.type}, docId: ${change.doc.id}');
+        
         if (change.type == DocumentChangeType.added) {
           final doc = change.doc;
           final data = doc.data();
           
+          print('🔔 Branch admin notification added - docId: ${doc.id}, type: ${data?['type']}, branchAdminUid: ${data?['branchAdminUid']}, branchId: ${data?['branchId']}');
+          
           // Skip if data is null
-          if (data == null) continue;
+          if (data == null) {
+            print('⚠️ Branch admin notification data is null, skipping');
+            continue;
+          }
           
           // Skip if we've already shown this notification
-          if (_shownNotificationIds.contains(doc.id)) continue;
+          if (_shownNotificationIds.contains(doc.id)) {
+            print('⚠️ Branch admin notification already shown: ${doc.id}');
+            continue;
+          }
           
           // Only show if unread
-          if (data['read'] == true) continue;
+          if (data['read'] == true) {
+            print('⚠️ Branch admin notification already read: ${doc.id}');
+            continue;
+          }
           
+          print('✅ Showing branch admin notification: ${doc.id}');
           _shownNotificationIds.add(doc.id);
           _showOnScreenNotification(
             title: data['title']?.toString() ?? 'New Booking',
