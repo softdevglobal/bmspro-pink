@@ -115,6 +115,7 @@ class NotificationService {
   StreamSubscription<QuerySnapshot>? _adminNotificationSubscription;
   StreamSubscription<QuerySnapshot>? _branchAdminNotificationSubscription;
   StreamSubscription<QuerySnapshot>? _branchIdNotificationSubscription; // For branch-filtered notifications
+  StreamSubscription<QuerySnapshot>? _customerNotificationSubscription; // For customer notifications
   BuildContext? _context;
   final Set<String> _shownNotificationIds = {};
   bool _isInitialized = false;
@@ -390,6 +391,7 @@ class NotificationService {
     _adminNotificationSubscription?.cancel();
     _branchAdminNotificationSubscription?.cancel();
     _branchIdNotificationSubscription?.cancel();
+    _customerNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     
     // Fetch user role and branchId for branch admin filtering
@@ -730,6 +732,61 @@ class NotificationService {
         print('❌ Error listening to branch-filtered notifications: $e');
       });
     }
+    
+    // Query for customer notifications (customerUid)
+    // Note: Removed orderBy to avoid needing composite indexes
+    bool isInitialCustomerLoad = true;
+    _customerNotificationSubscription = _db
+        .collection('notifications')
+        .where('customerUid', isEqualTo: user.uid)
+        .limit(50)
+        .snapshots()
+        .listen((snapshot) {
+      // Skip the initial snapshot
+      if (isInitialCustomerLoad) {
+        isInitialCustomerLoad = false;
+        return;
+      }
+      
+      // Only process NEW notifications
+      for (final change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.added) {
+          final doc = change.doc;
+          final data = doc.data();
+          
+          // Skip if data is null
+          if (data == null) continue;
+          
+          // Skip if we've already shown this notification
+          if (_shownNotificationIds.contains(doc.id)) continue;
+          
+          // Only show if unread
+          if (data['read'] == true) continue;
+          
+          _shownNotificationIds.add(doc.id);
+          _showOnScreenNotification(
+            title: data['title']?.toString() ?? 'New Notification',
+            message: data['message']?.toString() ?? '',
+            notificationId: doc.id,
+            notificationData: data,
+          );
+          
+          // Also show a local notification for better visibility
+          final notifType = data['type']?.toString() ?? 'customer_notification';
+          _showLocalNotification(
+            id: doc.id.hashCode,
+            title: data['title']?.toString() ?? 'New Notification',
+            body: data['message']?.toString() ?? '',
+            bookingId: data['bookingId']?.toString(),
+            notificationType: notifType,
+          );
+          
+          print('🔔 Customer notification shown: $notifType');
+        }
+      }
+    }, onError: (e) {
+      print('❌ Error listening to customer notifications: $e');
+    });
   }
   
   /// Show a local notification using flutter_local_notifications
@@ -908,6 +965,7 @@ class NotificationService {
     _adminNotificationSubscription?.cancel();
     _branchAdminNotificationSubscription?.cancel();
     _branchIdNotificationSubscription?.cancel();
+    _customerNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     _context = null;
     _userBranchId = null;

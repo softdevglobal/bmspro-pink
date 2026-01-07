@@ -145,9 +145,11 @@ class _NotificationsPageState extends State<NotificationsPage>
   List<NotificationItem> _notifications = [];
   List<NotificationItem> _staffNotifications = [];
   List<NotificationItem> _ownerNotifications = [];
+  List<NotificationItem> _customerNotifications = [];
   late AnimationController _bellBadgeController;
   StreamSubscription<QuerySnapshot>? _notificationsSub;
   StreamSubscription<QuerySnapshot>? _ownerNotificationsSub;
+  StreamSubscription<QuerySnapshot>? _customerNotificationsSub;
   bool _loading = true;
   String? _currentUserId;
   Set<String> _dismissedNotificationIds = {};
@@ -186,7 +188,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   }
 
   void _mergeNotifications() {
-    // Combine staff and owner notifications, remove duplicates, and sort by time
+    // Combine staff, owner, and customer notifications, remove duplicates, and sort by time
     final allNotifications = <String, NotificationItem>{};
     
     for (final notification in _staffNotifications) {
@@ -196,6 +198,13 @@ class _NotificationsPageState extends State<NotificationsPage>
       }
     }
     for (final notification in _ownerNotifications) {
+      // Only add if not already present (avoid duplicates) and not dismissed
+      if (!allNotifications.containsKey(notification.id) && 
+          !_dismissedNotificationIds.contains(notification.id)) {
+        allNotifications[notification.id] = notification;
+      }
+    }
+    for (final notification in _customerNotifications) {
       // Only add if not already present (avoid duplicates) and not dismissed
       if (!allNotifications.containsKey(notification.id) && 
           !_dismissedNotificationIds.contains(notification.id)) {
@@ -283,6 +292,30 @@ class _NotificationsPageState extends State<NotificationsPage>
         });
       }
     });
+    
+    // Also listen to notifications where customerUid matches current user
+    // This captures customer booking notifications
+    _customerNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('customerUid', isEqualTo: user.uid)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        _customerNotifications = snapshot.docs
+            .map((doc) => NotificationItem.fromFirestore(doc))
+            .toList();
+        _mergeNotifications();
+      }
+    }, onError: (e) {
+      debugPrint("Error loading customer notifications: $e");
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    });
   }
 
   @override
@@ -290,6 +323,7 @@ class _NotificationsPageState extends State<NotificationsPage>
     _bellBadgeController.dispose();
     _notificationsSub?.cancel();
     _ownerNotificationsSub?.cancel();
+    _customerNotificationsSub?.cancel();
     super.dispose();
   }
 
