@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'appointment_requests_page.dart';
@@ -146,10 +147,12 @@ class _NotificationsPageState extends State<NotificationsPage>
   List<NotificationItem> _staffNotifications = [];
   List<NotificationItem> _ownerNotifications = [];
   List<NotificationItem> _customerNotifications = [];
+  List<NotificationItem> _branchAdminNotifications = [];
   late AnimationController _bellBadgeController;
   StreamSubscription<QuerySnapshot>? _notificationsSub;
   StreamSubscription<QuerySnapshot>? _ownerNotificationsSub;
   StreamSubscription<QuerySnapshot>? _customerNotificationsSub;
+  StreamSubscription<QuerySnapshot>? _branchAdminNotificationsSub;
   bool _loading = true;
   String? _currentUserId;
   Set<String> _dismissedNotificationIds = {};
@@ -205,6 +208,13 @@ class _NotificationsPageState extends State<NotificationsPage>
       }
     }
     for (final notification in _customerNotifications) {
+      // Only add if not already present (avoid duplicates) and not dismissed
+      if (!allNotifications.containsKey(notification.id) && 
+          !_dismissedNotificationIds.contains(notification.id)) {
+        allNotifications[notification.id] = notification;
+      }
+    }
+    for (final notification in _branchAdminNotifications) {
       // Only add if not already present (avoid duplicates) and not dismissed
       if (!allNotifications.containsKey(notification.id) && 
           !_dismissedNotificationIds.contains(notification.id)) {
@@ -316,6 +326,83 @@ class _NotificationsPageState extends State<NotificationsPage>
         });
       }
     });
+    
+    // Also listen to notifications where branchAdminUid matches current user
+    // This captures branch admin notifications (e.g., "any-staff" bookings)
+    // Note: Not using orderBy to avoid needing Firestore index (same as notification_service.dart)
+    _branchAdminNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('branchAdminUid', isEqualTo: user.uid)
+        .limit(50)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        // Sort manually by createdAt (descending)
+        final notifications = snapshot.docs
+            .map((doc) => NotificationItem.fromFirestore(doc))
+            .toList();
+        notifications.sort((a, b) {
+          final aTime = a.rawData?['createdAt'] as Timestamp?;
+          final bTime = b.rawData?['createdAt'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return bTime.compareTo(aTime); // Descending (newest first)
+        });
+        _branchAdminNotifications = notifications;
+        _mergeNotifications();
+      }
+    }, onError: (e) {
+      debugPrint("Error loading branch admin notifications: $e");
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    });
+    
+    // Also listen to notifications where targetAdminUid matches current user
+    // This captures notifications targeted to branch admins
+    FirebaseFirestore.instance
+        .collection('notifications')
+        .where('targetAdminUid', isEqualTo: user.uid)
+        .limit(50)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        // Only add notifications that aren't already in branchAdminNotifications
+        final newNotifications = snapshot.docs
+            .where((doc) {
+              final data = doc.data();
+              final branchAdminUid = data['branchAdminUid']?.toString();
+              // Only include if branchAdminUid doesn't match (to avoid duplicates)
+              return branchAdminUid != user.uid;
+            })
+            .map((doc) => NotificationItem.fromFirestore(doc))
+            .toList();
+        
+        // Merge with existing branch admin notifications
+        final allBranchAdminNotifs = <String, NotificationItem>{};
+        for (final notif in _branchAdminNotifications) {
+          allBranchAdminNotifs[notif.id] = notif;
+        }
+        for (final notif in newNotifications) {
+          if (!allBranchAdminNotifs.containsKey(notif.id)) {
+            allBranchAdminNotifs[notif.id] = notif;
+          }
+        }
+        // Sort by createdAt
+        final sorted = allBranchAdminNotifs.values.toList();
+        sorted.sort((a, b) {
+          final aTime = a.rawData?['createdAt'] as Timestamp?;
+          final bTime = b.rawData?['createdAt'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return bTime.compareTo(aTime); // Descending
+        });
+        _branchAdminNotifications = sorted;
+        _mergeNotifications();
+      }
+    }, onError: (e) {
+      debugPrint("Error loading targetAdminUid notifications: $e");
+    });
   }
 
   @override
@@ -324,6 +411,7 @@ class _NotificationsPageState extends State<NotificationsPage>
     _notificationsSub?.cancel();
     _ownerNotificationsSub?.cancel();
     _customerNotificationsSub?.cancel();
+    _branchAdminNotificationsSub?.cancel();
     super.dispose();
   }
 
