@@ -3,8 +3,10 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'location_service.dart';
 import 'staff_check_in_service.dart';
+import 'audit_log_service.dart';
 
 /// Service for background location tracking and auto clock-out
 /// This service monitors the user's location even when the app is in the background
@@ -15,6 +17,7 @@ class BackgroundLocationService {
   BackgroundLocationService._internal();
   
   StreamSubscription<Position>? _positionSubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   Timer? _periodicCheckTimer;
   String? _activeCheckInId;
   String? _activeBranchId;
@@ -23,6 +26,7 @@ class BackgroundLocationService {
   double? _allowedRadius;
   bool _isMonitoring = false;
   bool _isCheckingLocation = false; // Prevent concurrent checks
+  bool _hasNetworkConnection = true; // Track network connection status
   
   // Callbacks
   Function(String message)? onAutoCheckOut;
@@ -88,11 +92,17 @@ class BackgroundLocationService {
       // This ensures checks happen even when user is not moving
       _startPeriodicCheck();
       
+      // Start monitoring network connectivity
+      _startConnectivityMonitoring();
+      
       _isMonitoring = true;
       debugPrint('BackgroundLocationService: Started monitoring for check-in $checkInId');
       
       // Perform immediate location check
       await _performImmediateLocationCheck();
+      
+      // Check initial connectivity status
+      await _checkInitialConnectivity();
       
       return true;
     } catch (e) {
@@ -162,10 +172,208 @@ class BackgroundLocationService {
     }
   }
   
+  /// Start monitoring network connectivity
+  void _startConnectivityMonitoring() {
+    _connectivitySubscription?.cancel();
+    
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+      (List<ConnectivityResult> results) {
+        _handleConnectivityChange(results);
+      },
+      onError: (error) {
+        debugPrint('BackgroundLocationService: Connectivity stream error: $error');
+        // If there's an error reading connectivity, assume connection is lost
+        _handleConnectivityLost();
+      },
+    );
+    
+    debugPrint('BackgroundLocationService: Started connectivity monitoring');
+  }
+  
+  /// Check initial connectivity status
+  Future<void> _checkInitialConnectivity() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      _handleConnectivityChange(results);
+    } catch (e) {
+      debugPrint('BackgroundLocationService: Error checking initial connectivity: $e');
+      // If we can't check connectivity, assume connection might be lost
+      _handleConnectivityLost();
+    }
+  }
+  
+  /// Handle connectivity changes
+  void _handleConnectivityChange(List<ConnectivityResult> results) {
+    final hasConnection = results.any((result) => 
+      result != ConnectivityResult.none
+    );
+    
+    if (!hasConnection && _hasNetworkConnection) {
+      // Connection was lost
+      debugPrint('BackgroundLocationService: Network connection lost!');
+      _hasNetworkConnection = false;
+      _handleConnectivityLost();
+    } else if (hasConnection && !_hasNetworkConnection) {
+      // Connection was restored
+      debugPrint('BackgroundLocationService: Network connection restored');
+      _hasNetworkConnection = true;
+    }
+  }
+  
+  /// Handle network connection loss - auto check-out immediately
+  Future<void> _handleConnectivityLost() async {
+    if (_activeCheckInId == null || !_isMonitoring) {
+      return;
+    }
+    
+    debugPrint('BackgroundLocationService: Connection lost! Auto clock-out triggered');
+    
+    try {
+      // Try to get last known location if available
+      Position? lastKnownPosition;
+      try {
+        lastKnownPosition = await LocationService.getCurrentLocation();
+      } catch (e) {
+        debugPrint('BackgroundLocationService: Could not get location for check-out: $e');
+      }
+      
+      // Perform auto check-out due to network loss
+      await _performAutoCheckOutDueToNetworkLoss(lastKnownPosition);
+    } catch (e) {
+      debugPrint('BackgroundLocationService: Error during network loss check-out: $e');
+    }
+  }
+  
+  /// Perform auto check-out due to network connection loss
+  Future<void> _performAutoCheckOutDueToNetworkLoss(Position? position) async {
+    if (_activeCheckInId == null) return;
+    
+    final checkInId = _activeCheckInId!;
+    
+    try {
+      // Get check-in document
+      final checkInDoc = await FirebaseFirestore.instance
+          .collection('staff_check_ins')
+          .doc(checkInId)
+          .get();
+      
+      if (!checkInDoc.exists) {
+        debugPrint('BackgroundLocationService: Check-in document not found');
+        await stopMonitoring();
+        return;
+      }
+      
+      final checkInData = checkInDoc.data()!;
+      
+      // Only process if still checked in
+      if (checkInData['status'] != 'checked_in') {
+        debugPrint('BackgroundLocationService: Check-in already completed');
+        await stopMonitoring();
+        return;
+      }
+      
+      // Calculate hours worked (excluding breaks)
+      final checkInTime = (checkInData['checkInTime'] as Timestamp).toDate();
+      final now = DateTime.now();
+      final totalDiff = now.difference(checkInTime);
+      
+      // Calculate total break time
+      int totalBreakSeconds = 0;
+      if (checkInData['breakPeriods'] != null && checkInData['breakPeriods'] is List) {
+        final breaks = checkInData['breakPeriods'] as List;
+        for (final breakData in breaks) {
+          if (breakData is Map) {
+            final breakStart = (breakData['startTime'] as Timestamp).toDate();
+            final breakEnd = breakData['endTime'] != null
+                ? (breakData['endTime'] as Timestamp).toDate()
+                : null;
+            if (breakEnd != null) {
+              totalBreakSeconds += breakEnd.difference(breakStart).inSeconds;
+            }
+          }
+        }
+      }
+      
+      // Subtract break time
+      final workingSeconds = totalDiff.inSeconds - totalBreakSeconds;
+      final hours = workingSeconds > 0 ? workingSeconds ~/ 3600 : 0;
+      final minutes = workingSeconds > 0 ? (workingSeconds % 3600) ~/ 60 : 0;
+      final hoursWorked = '${hours}h ${minutes}m';
+      
+      // Update check-in record with auto check-out due to network loss
+      final updateData = <String, dynamic>{
+        'checkOutTime': FieldValue.serverTimestamp(),
+        'status': 'auto_checked_out',
+        'updatedAt': FieldValue.serverTimestamp(),
+        'autoCheckOutReason': 'Network connection lost',
+        'autoCheckOutLocation': position != null
+            ? {
+                'latitude': position.latitude,
+                'longitude': position.longitude,
+              }
+            : null,
+      };
+      
+      await FirebaseFirestore.instance
+          .collection('staff_check_ins')
+          .doc(checkInId)
+          .update(updateData);
+      
+      debugPrint('BackgroundLocationService: Auto check-out successful (network loss)');
+      
+      // Get check-in details for audit log
+      final staffName = checkInData['staffName'] ?? 'Unknown';
+      final branchId = checkInData['branchId'] ?? '';
+      final branchName = checkInData['branchName'] ?? 'Unknown Branch';
+      final ownerUid = checkInData['ownerUid'] ?? '';
+      final staffRole = checkInData['staffRole'] ?? 'Staff';
+      
+      // Try to log to audit log (may fail if still offline)
+      try {
+        await AuditLogService.logStaffCheckOut(
+          ownerUid: ownerUid,
+          checkInId: checkInId,
+          staffId: checkInData['staffId'] ?? '',
+          staffName: staffName,
+          branchId: branchId,
+          branchName: branchName,
+          performedBy: 'system',
+          performedByName: 'System (Auto)',
+          performedByRole: 'System',
+          hoursWorked: hoursWorked,
+        );
+      } catch (e) {
+        debugPrint('BackgroundLocationService: Could not log to audit (offline): $e');
+        // This is expected when network is lost - Firestore update will sync when connection is restored
+      }
+      
+      // Create notification for the user (may fail if offline, but will sync when back online)
+      try {
+        await _createAutoCheckOutNotification(0, 'Network connection lost');
+      } catch (e) {
+        debugPrint('BackgroundLocationService: Could not create notification (offline): $e');
+      }
+      
+      // Notify callback
+      onAutoCheckOut?.call(
+        'You have been automatically clocked out because your network connection was lost',
+      );
+      
+      // Stop monitoring since user is checked out
+      await stopMonitoring();
+    } catch (e) {
+      debugPrint('BackgroundLocationService: Error during network loss auto check-out: $e');
+      // Even if update fails (e.g., still offline), stop monitoring to prevent retries
+      await stopMonitoring();
+    }
+  }
+  
   /// Stop monitoring location
   Future<void> stopMonitoring() async {
     await _positionSubscription?.cancel();
     _positionSubscription = null;
+    await _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     _periodicCheckTimer?.cancel();
     _periodicCheckTimer = null;
     _activeCheckInId = null;
@@ -175,6 +383,7 @@ class BackgroundLocationService {
     _allowedRadius = null;
     _isMonitoring = false;
     _isCheckingLocation = false;
+    _hasNetworkConnection = true;
     debugPrint('BackgroundLocationService: Stopped monitoring');
   }
   
@@ -247,7 +456,7 @@ class BackgroundLocationService {
   }
   
   /// Create a notification for the auto check-out
-  Future<void> _createAutoCheckOutNotification(double distance) async {
+  Future<void> _createAutoCheckOutNotification(double distance, [String? reason]) async {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
@@ -264,10 +473,17 @@ class BackgroundLocationService {
         }
       }
       
+      String message;
+      if (reason != null && reason.contains('Network')) {
+        message = 'You were automatically clocked out from $branchName because your network connection was lost.';
+      } else {
+        message = 'You were automatically clocked out from $branchName because you exceeded the branch radius (${distance.toStringAsFixed(0)}m away).';
+      }
+      
       await FirebaseFirestore.instance.collection('notifications').add({
         'type': 'auto_clock_out',
         'title': 'Auto Clock-Out',
-        'message': 'You were automatically clocked out from $branchName because you exceeded the branch radius (${distance.toStringAsFixed(0)}m away).',
+        'message': message,
         'staffUid': user.uid,
         'createdAt': FieldValue.serverTimestamp(),
         'read': false,
@@ -275,6 +491,7 @@ class BackgroundLocationService {
           'checkInId': _activeCheckInId,
           'branchId': _activeBranchId,
           'distance': distance,
+          'reason': reason ?? 'Exceeded branch radius',
         },
       });
     } catch (e) {
