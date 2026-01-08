@@ -278,6 +278,9 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       {List<Map<String, dynamic>>? updatedServices}) async {
     final db = FirebaseFirestore.instance;
     try {
+      // Store previous status for email triggering
+      final String previousStatus = booking.status;
+      
       // Check if services need update
       final bool hasServicesUpdate = updatedServices != null && updatedServices.isNotEmpty;
       
@@ -383,6 +386,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
               booking: booking,
               newStatus: 'Confirmed',
               updatedServices: updatedServices,
+              previousStatus: previousStatus,
             );
             
             // Audit log for confirmation
@@ -491,6 +495,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
             booking: booking,
             newStatus: notifStatus,
             updatedServices: updatedServices,
+            previousStatus: previousStatus,
           );
           
           // Audit log for status change
@@ -668,6 +673,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
     required _Booking booking,
     required String newStatus,
     List<Map<String, dynamic>>? updatedServices,
+    String? previousStatus,
   }) async {
     try {
       final db = FirebaseFirestore.instance;
@@ -736,9 +742,77 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
           ownerUid: raw['ownerUid']?.toString() ?? '',
         );
       }
+      
+      // Send email when status changes to Confirmed or Completed
+      // This ensures emails are sent even when status is updated directly from mobile app
+      // Only send if this is an actual status change (not already at target status)
+      final String currentBookingId = bookingId;
+      final String currentPreviousStatus = previousStatus ?? booking.status;
+      if ((newStatus == 'Confirmed' || newStatus == 'Completed') && 
+          currentPreviousStatus.toLowerCase() != newStatus.toLowerCase()) {
+        await _sendBookingStatusEmail(
+          bookingId: currentBookingId,
+          status: newStatus,
+          booking: booking,
+          finalServices: finalServices,
+          previousStatus: currentPreviousStatus,
+        );
+      }
     } catch (e) {
       debugPrint("Error creating notification: $e");
     }
+  }
+  
+  /// Send booking status email via API
+  /// This is called when status changes to Confirmed or Completed from mobile app
+  Future<void> _sendBookingStatusEmail({
+    required String bookingId,
+    required String status,
+    required _Booking booking,
+    required List<Map<String, dynamic>> finalServices,
+    required String previousStatus,
+  }) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        debugPrint("⚠️ Cannot send email - user not authenticated");
+        return;
+      }
+      
+      final token = await user.getIdToken();
+      final apiBaseUrl = _getApiBaseUrl();
+      
+      debugPrint("📧 Triggering email for booking $bookingId: $previousStatus -> $status");
+      
+      // Call the status update API endpoint which will trigger email sending
+      // We pass the previous status in the body so the API knows this is a transition
+      final response = await http.patch(
+        Uri.parse('$apiBaseUrl/api/bookings/$bookingId/status'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'status': status,
+          'previousStatus': previousStatus, // Help API detect this is a transition
+        }),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        debugPrint("✅ Email trigger sent successfully for booking $bookingId (status: $status)");
+      } else {
+        debugPrint("⚠️ Failed to trigger email for booking $bookingId: ${response.statusCode} - ${response.body}");
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error triggering email for booking $bookingId: $e");
+      // Don't fail the operation if email trigger fails
+    }
+  }
+  
+  /// Get API base URL
+  String _getApiBaseUrl() {
+    // Use the same API base URL as other screens
+    return 'https://bmspro-pink-adminpanel.vercel.app';
   }
 
   /// Create notifications for each staff member assigned to a confirmed booking
