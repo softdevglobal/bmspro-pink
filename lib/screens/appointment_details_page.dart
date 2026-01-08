@@ -365,13 +365,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
     super.dispose();
   }
 
-  void _showPointsModal() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) => const PointsModal(),
-    );
-  }
-
   Future<void> _contactCustomer() async {
     if (_customerPhone.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -536,7 +529,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
                          _bookingData?['clientPhone']?.toString() ?? '';
     final visits = (_customerData?['visits'] ?? 0) as int;
     final loyaltyStatus = _getLoyaltyStatus(visits);
-    final fullName = customerName;
     final initials = _getInitials(customerName);
 
     return Container(
@@ -598,38 +590,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
               ),
             ],
           ),
-          if (customerEmail.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('ACSU:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.text)),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(20)),
-                        child: const Text('✔ Member', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    fullName,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.text),
-                  ),
-                  Text(
-                    customerEmail,
-                    style: const TextStyle(fontSize: 14, color: AppColors.muted),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -779,12 +739,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with Ti
             style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primary),
           ),
           const Text('Staff Point Balance', style: TextStyle(fontSize: 14, color: AppColors.muted)),
-          const SizedBox(height: 24),
-          _GradientButton(
-            text: 'Send ACSU Points to Customer',
-            icon: FontAwesomeIcons.gift,
-            onPressed: _showPointsModal,
-          ),
         ],
       ),
     );
@@ -970,131 +924,4 @@ class _GradientButton extends StatelessWidget {
     );
   }
 }
-
-// --- Helper: Points Modal ---
-class PointsModal extends StatefulWidget {
-  const PointsModal({super.key});
-
-  @override
-  State<PointsModal> createState() => _PointsModalState();
-}
-
-class _PointsModalState extends State<PointsModal> {
-  String _selectedOption = ''; // '20', '50', '100', 'custom'
-  bool _isLoading = false;
-
-  void _sendPoints() {
-    if (_selectedOption.isEmpty) return;
-    setState(() => _isLoading = true);
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.green,
-            content: Row(children: const [Icon(FontAwesomeIcons.check, color: Colors.white, size: 16), SizedBox(width: 8), Text("Points sent successfully!")]),
-          ),
-        );
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Send Points to Customer', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            GridView.count(
-              shrinkWrap: true,
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 2.5,
-              children: [
-                _optionBtn('20', 'Points'),
-                _optionBtn('50', 'Points'),
-                _optionBtn('100', 'Points'),
-                _optionBtn('custom', 'Custom'),
-              ],
-            ),
-            if (_selectedOption == 'custom')
-              Padding(
-                padding: const EdgeInsets.only(top: 16.0),
-                child: TextField(
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    hintText: 'Enter amount',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-            const SizedBox(height: 16),
-            TextField(
-              maxLines: 3,
-              decoration: InputDecoration(
-                hintText: 'Optional note...',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(context), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: const Text('Cancel', style: TextStyle(color: AppColors.muted)))),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _sendPoints,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      padding: EdgeInsets.zero,
-                      shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: Ink(
-                      decoration: BoxDecoration(gradient: const LinearGradient(colors: [AppColors.primary, AppColors.accent]), borderRadius: BorderRadius.circular(12)),
-                      child: Container(
-                        alignment: Alignment.center,
-                        height: 50,
-                        child: _isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text('Send Points', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _optionBtn(String value, String label) {
-    final isSelected = _selectedOption == value;
-    return InkWell(
-      onTap: () => setState(() => _selectedOption = value),
-      child: Container(
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : Colors.white,
-          border: Border.all(color: isSelected ? AppColors.primary : AppColors.border),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(value == 'custom' ? 'Custom' : value, style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? Colors.white : AppColors.text)),
-            Text(value == 'custom' ? 'Amount' : label, style: TextStyle(fontSize: 10, color: isSelected ? Colors.white : AppColors.muted)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 
