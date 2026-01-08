@@ -691,6 +691,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     };
 
     debugPrint('Creating booking with data: $bookingData');
+    debugPrint('📧 Email field check: email="${email}", isEmpty=${email.isEmpty}, clientEmail in bookingData=${bookingData['clientEmail']}');
 
     // Create booking via API endpoint to ensure emails are sent
     String bookingId;
@@ -709,6 +710,15 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       apiBookingData.remove('bookingCode'); // API generates this
       apiBookingData.remove('bookingSource'); // API generates this based on user role
       
+      // Ensure clientEmail is included (even if null, so API knows to skip email)
+      // Don't remove it - the API needs it to send emails
+      if (!apiBookingData.containsKey('clientEmail')) {
+        apiBookingData['clientEmail'] = email.isNotEmpty ? email : null;
+      }
+      
+      debugPrint('📤 Sending booking to API with clientEmail: ${apiBookingData['clientEmail']}');
+      debugPrint('📤 API booking data keys: ${apiBookingData.keys.toList()}');
+      
       // Call the API endpoint
       const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
       final response = await http.post(
@@ -720,11 +730,15 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         body: jsonEncode(apiBookingData),
       ).timeout(const Duration(seconds: 30));
       
+      debugPrint('📥 API response status: ${response.statusCode}');
+      debugPrint('📥 API response body: ${response.body}');
+      
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseData = jsonDecode(response.body);
         bookingId = responseData['id']?.toString() ?? '';
         debugPrint('✅ Booking created successfully via API: $bookingId');
       } else {
+        debugPrint('❌ API error response: ${response.statusCode} - ${response.body}');
         throw Exception('Failed to create booking: ${response.statusCode} - ${response.body}');
       }
     } catch (apiError) {
