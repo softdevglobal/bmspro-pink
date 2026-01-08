@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'edit_profile_page.dart';
 import 'settings_page.dart';
+import 'privacy_policy_page.dart';
 import '../services/audit_log_service.dart';
 
 class AppColors {
@@ -950,8 +951,12 @@ class _ProfileScreenState extends State<ProfileScreen>
                   iconBgColor: const Color(0xFFD1FAE5),
                   iconColor: const Color(0xFF10B981),
                   title: 'Help & Support',
-                  subtitle: 'FAQ, contact us',
-                  onTap: () {},
+                  subtitle: 'Privacy Policy',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const PrivacyPolicyPage()),
+                    );
+                  },
                 ),
                 _buildDivider(),
                 _buildMenuTile(
