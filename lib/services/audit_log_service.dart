@@ -374,6 +374,29 @@ class AuditLogService {
     );
   }
 
+  static Future<bool> logPasswordChanged({
+    String? ownerUid,
+    String? userId,
+    String? userName,
+    String? performedByRole,
+  }) {
+    if (ownerUid == null || userId == null) {
+      return Future.value(false);
+    }
+    return createAuditLog(
+      ownerUid: ownerUid,
+      action: 'Password changed: ${userName ?? "User"}',
+      actionType: 'update',
+      entityType: 'auth',
+      entityId: userId,
+      entityName: userName ?? 'User',
+      performedBy: userId,
+      performedByName: userName,
+      performedByRole: performedByRole,
+      details: 'User changed their account password',
+    );
+  }
+
   static Future<bool> logBookingStatusChanged({
     String? ownerUid,
     required String bookingId,

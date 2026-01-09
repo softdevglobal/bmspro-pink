@@ -1,8 +1,11 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../routes.dart';
+import '../services/audit_log_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -186,6 +189,41 @@ class _ChangePasswordPageState extends State<ChangePasswordPage>
 
       // 2. Update password
       await user.updatePassword(newPassword);
+
+      // 3. Log password change to audit log
+      try {
+        // Get user document to find ownerUid, name, and role
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        if (userDoc.exists) {
+          final userData = userDoc.data()!;
+          String ownerUid = user.uid;
+          final role = (userData['role'] ?? '').toString();
+          
+          // Determine ownerUid based on role
+          if (role == 'salon_owner') {
+            ownerUid = user.uid;
+          } else if (userData['ownerUid'] != null && userData['ownerUid'].toString().isNotEmpty) {
+            ownerUid = userData['ownerUid'].toString();
+          }
+
+          final userName = (userData['displayName'] ?? userData['name'] ?? email ?? 'User').toString();
+          
+          // Create audit log entry
+          await AuditLogService.logPasswordChanged(
+            ownerUid: ownerUid,
+            userId: user.uid,
+            userName: userName,
+            performedByRole: role.isNotEmpty ? role : null,
+          );
+        }
+      } catch (auditError) {
+        // Don't fail password change if audit log fails
+        debugPrint('Failed to create password change audit log: $auditError');
+      }
 
       if (!mounted) return;
       setState(() => _isUpdating = false);
