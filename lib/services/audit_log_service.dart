@@ -397,6 +397,30 @@ class AuditLogService {
     );
   }
 
+  static Future<bool> logProfilePictureChanged({
+    String? ownerUid,
+    String? userId,
+    String? userName,
+    String? performedByRole,
+    required String pictureType, // 'logo' or 'avatar'
+  }) {
+    if (ownerUid == null || userId == null) {
+      return Future.value(false);
+    }
+    return createAuditLog(
+      ownerUid: ownerUid,
+      action: 'Profile $pictureType changed: ${userName ?? "User"}',
+      actionType: 'update',
+      entityType: 'user_profile',
+      entityId: userId,
+      entityName: userName ?? 'User',
+      performedBy: userId,
+      performedByName: userName,
+      performedByRole: performedByRole,
+      details: 'User changed their profile $pictureType',
+    );
+  }
+
   static Future<bool> logBookingStatusChanged({
     String? ownerUid,
     required String bookingId,

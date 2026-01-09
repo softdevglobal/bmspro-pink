@@ -1515,6 +1515,53 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
         performedByRole: currentUserRole,
       );
 
+      // Send welcome email to new staff member
+      try {
+        // Get salon name from owner document
+        String? salonName;
+        try {
+          final ownerDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(widget.ownerUid)
+              .get();
+          if (ownerDoc.exists) {
+            final ownerData = ownerDoc.data();
+            salonName = ownerData?['salonName'] ?? 
+                       ownerData?['name'] ?? 
+                       ownerData?['businessName'] ?? 
+                       ownerData?['displayName'];
+          }
+        } catch (e) {
+          debugPrint('Failed to fetch salon name: $e');
+        }
+        
+        const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+        final emailResponse = await http.post(
+          Uri.parse('$apiBaseUrl/api/staff/welcome-email'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $ownerToken',
+          },
+          body: json.encode({
+            'email': email.trim().toLowerCase(),
+            'password': password,
+            'staffName': name,
+            'role': _selectedRole,
+            'salonName': salonName,
+            'branchName': branchName.isNotEmpty ? branchName : null,
+          }),
+        ).timeout(const Duration(seconds: 10));
+        
+        if (emailResponse.statusCode == 200) {
+          debugPrint('Welcome email sent successfully to $email');
+        } else {
+          debugPrint('Failed to send welcome email: ${emailResponse.statusCode} - ${emailResponse.body}');
+        }
+      } catch (emailError) {
+        debugPrint('Error sending welcome email: $emailError');
+        // Don't block staff creation if email fails
+      }
+
       // Staff account created successfully - admin stays logged in
       // The new staff member will need to sign in separately with their credentials
       

@@ -275,8 +275,11 @@ class _ProfileScreenState extends State<ProfileScreen>
                         _buildProfileCard(),
                         const SizedBox(height: 24),
                         _buildStatsRow(),
-                        const SizedBox(height: 24),
-                        _buildQuickActions(),
+                        // Only show Edit Profile button for non-salon owners
+                        if (_systemRole != 'salon_owner') ...[
+                          const SizedBox(height: 24),
+                          _buildQuickActions(),
+                        ],
                         const SizedBox(height: 24),
                         _buildMenuSection(),
                         const SizedBox(height: 32),

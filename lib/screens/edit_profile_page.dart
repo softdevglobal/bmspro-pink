@@ -11,6 +11,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
+import '../services/audit_log_service.dart';
 
 // --- 1. Theme & Colors ---
 class AppColors {
@@ -393,36 +394,87 @@ class _EditProfilePageState extends State<EditProfilePage>
       final ext = picked.path.split('.').last;
       String url;
       
-      // For salon owners, use API endpoint to bypass storage permission issues
+      // For salon owners, try API endpoint first, fallback to direct storage
       // For staff, use direct storage upload (should work with current rules)
       if (isSalonOwner) {
-        // Use API endpoint for salon owner logo upload
-        final token = await user.getIdToken();
-        final imageBytes = await file.readAsBytes();
-        final base64Image = base64Encode(imageBytes);
-        
-        const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
-        final response = await http.post(
-          Uri.parse('$apiBaseUrl/api/upload/logo'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode({
-            'imageData': 'data:image/$ext;base64,$base64Image',
-            'fileExtension': ext,
-          }),
-        ).timeout(const Duration(seconds: 30));
-
-        if (response.statusCode == 200) {
-          final responseData = jsonDecode(response.body);
-          url = responseData['logoUrl']?.toString() ?? '';
-          if (url.isEmpty) {
-            throw Exception('No logo URL returned from API');
+        // Try API endpoint first for salon owner logo upload
+        try {
+          final token = await user.getIdToken();
+          final imageBytes = await file.readAsBytes();
+          
+          // Check file size (max 5MB)
+          if (imageBytes.length > 5 * 1024 * 1024) {
+            throw Exception('Image size must be less than 5MB');
           }
-        } else {
-          final errorData = jsonDecode(response.body);
-          throw Exception(errorData['error']?.toString() ?? 'Failed to upload logo: ${response.statusCode}');
+          
+          final base64Image = base64Encode(imageBytes);
+          
+          const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+          debugPrint('Uploading logo to API: $apiBaseUrl/api/upload/logo');
+          debugPrint('Image size: ${imageBytes.length} bytes, Base64 length: ${base64Image.length}');
+          
+          final response = await http.post(
+            Uri.parse('$apiBaseUrl/api/upload/logo'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'imageData': 'data:image/$ext;base64,$base64Image',
+              'fileExtension': ext,
+            }),
+          ).timeout(const Duration(seconds: 30));
+
+          debugPrint('API Response status: ${response.statusCode}');
+          debugPrint('API Response body length: ${response.body.length}');
+
+          if (response.statusCode == 200) {
+            if (response.body.isEmpty) {
+              throw Exception('Empty response from API');
+            }
+            
+            try {
+              final responseData = jsonDecode(response.body);
+              url = responseData['logoUrl']?.toString() ?? '';
+              if (url.isEmpty) {
+                throw Exception('No logo URL returned from API');
+              }
+              debugPrint('Logo URL received from API: $url');
+            } catch (e) {
+              debugPrint('Error parsing API response: $e');
+              throw Exception('Invalid response from API');
+            }
+          } else {
+            String errorMessage = 'API returned status ${response.statusCode}';
+            if (response.body.isNotEmpty) {
+              try {
+                final errorData = jsonDecode(response.body);
+                errorMessage = errorData['error']?.toString() ?? 
+                              errorData['details']?.toString() ?? 
+                              errorMessage;
+              } catch (e) {
+                // Response is not JSON, use raw body if short enough
+                errorMessage = response.body.length < 200 
+                    ? 'Server error: ${response.body}' 
+                    : 'Server error: ${response.statusCode}';
+              }
+            }
+            debugPrint('API Error: $errorMessage');
+            throw Exception(errorMessage);
+          }
+        } catch (apiError) {
+          debugPrint('API upload failed, trying direct storage upload: $apiError');
+          // Fallback to direct storage upload
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final storageRef = FirebaseStorage.instance
+              .ref()
+              .child('salon-logos')
+              .child(user.uid)
+              .child('logo-$timestamp.$ext');
+          
+          await storageRef.putFile(file);
+          url = await storageRef.getDownloadURL();
+          debugPrint('Logo uploaded via direct storage: $url');
         }
       } else {
         // Direct storage upload for staff avatars
@@ -453,6 +505,40 @@ class _EditProfilePageState extends State<EditProfilePage>
           'logoUrl': url,
           'updatedAt': FieldValue.serverTimestamp(),
         });
+      }
+
+      // Log audit trail
+      try {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        if (userDoc.exists) {
+          final userData = userDoc.data()!;
+          String ownerUid = user.uid;
+          String userName = (userData['displayName'] ?? 
+                            userData['name'] ?? 
+                            user.email ?? 
+                            'User').toString();
+          final role = (userData['role'] ?? '').toString();
+          
+          // For non-salon owners, get ownerUid from the document
+          if (!isSalonOwner && userData['ownerUid'] != null) {
+            ownerUid = userData['ownerUid'].toString();
+          }
+          
+          await AuditLogService.logProfilePictureChanged(
+            ownerUid: ownerUid,
+            userId: user.uid,
+            userName: userName,
+            performedByRole: role.isNotEmpty ? role : null,
+            pictureType: isSalonOwner ? 'logo' : 'avatar',
+          );
+        }
+      } catch (auditError) {
+        debugPrint('Failed to create profile picture change audit log: $auditError');
+        // Don't block the upload if audit logging fails
       }
 
       if (!mounted) return;
