@@ -379,6 +379,35 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _deleteBranch(BranchModel branch) async {
     try {
       final user = FirebaseAuth.instance.currentUser;
+      
+      // Get branch data to check for admin
+      final branchDoc = await FirebaseFirestore.instance
+          .collection('branches')
+          .doc(branch.id)
+          .get();
+      final branchData = branchDoc.data();
+      final adminStaffId = branchData?['adminStaffId'] as String?;
+
+      // Demote branch admin to regular staff before deleting branch
+      if (adminStaffId != null && adminStaffId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(adminStaffId)
+              .update({
+            'role': 'salon_staff',
+            'systemRole': 'salon_staff',
+            'branchId': FieldValue.delete(),
+            'branchName': FieldValue.delete(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          debugPrint('Demoted branch admin $adminStaffId to regular staff');
+        } catch (e) {
+          debugPrint('Error demoting branch admin: $e');
+          // Continue with deletion even if demotion fails
+        }
+      }
+
       if (user != null) {
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
         final userData = userDoc.data();
