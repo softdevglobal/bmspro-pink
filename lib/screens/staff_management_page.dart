@@ -394,6 +394,222 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
     }
   }
 
+  void _showDeleteConfirmation(StaffMember staff) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                FontAwesomeIcons.trash,
+                size: 18,
+                color: Colors.red.shade600,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Delete Staff?',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to permanently delete ${staff.name}? This action cannot be undone.',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.red.shade200,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    FontAwesomeIcons.triangleExclamation,
+                    size: 14,
+                    color: Colors.red.shade600,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'This will permanently delete their account, remove them from all branches, and delete their Firebase Auth account.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.red.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteStaff(staff);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+            child: const Text(
+              'Delete',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteStaff(StaffMember staff) async {
+    try {
+      // Get current owner's auth token for API call
+      final currentOwner = FirebaseAuth.instance.currentUser;
+      if (currentOwner == null) {
+        _showToast('You must be logged in to delete staff');
+        return;
+      }
+      final ownerToken = await currentOwner.getIdToken();
+
+      // Delete Firebase Auth account via API
+      try {
+        final apiUrl = 'https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/delete';
+        final response = await http.post(
+          Uri.parse(apiUrl),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $ownerToken',
+          },
+          body: json.encode({
+            'uid': staff.id,
+            'email': staff.email,
+            'staffName': staff.name,
+          }),
+        );
+
+        if (response.statusCode != 200) {
+          final errorData = json.decode(response.body);
+          String message = errorData['error'] ?? 'Failed to delete staff account';
+          _showToast(message);
+          return;
+        }
+      } catch (e) {
+        debugPrint('Error deleting auth account: $e');
+        // Continue with Firestore deletion even if auth deletion fails
+      }
+
+      // Remove staff from all branches
+      if (_ownerUid != null) {
+        try {
+          final branchesSnapshot = await FirebaseFirestore.instance
+              .collection('branches')
+              .where('ownerUid', isEqualTo: _ownerUid)
+              .get();
+
+          for (var branchDoc in branchesSnapshot.docs) {
+            final branchData = branchDoc.data();
+            final staffIds = List<String>.from(branchData['staffIds'] ?? []);
+            if (staffIds.contains(staff.id)) {
+              staffIds.remove(staff.id);
+              await branchDoc.reference.update({
+                'staffIds': staffIds,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
+            // Also remove from adminStaffId if they are the branch admin
+            if (branchData['adminStaffId'] == staff.id) {
+              await branchDoc.reference.update({
+                'adminStaffId': null,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
+          }
+        } catch (e) {
+          debugPrint('Error removing staff from branches: $e');
+        }
+      }
+
+      // Delete Firestore user document
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(staff.id)
+          .delete();
+
+      // Create audit log
+      if (currentOwner != null && _ownerUid != null) {
+        try {
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(currentOwner.uid)
+              .get();
+          final userData = userDoc.data();
+          final userName = userData?['displayName'] ?? 
+              userData?['name'] ?? 
+              currentOwner.email ?? 
+              'Unknown';
+          final userRole = userData?['role'] ?? 'unknown';
+
+          await AuditLogService.logStaffDeleted(
+            ownerUid: _ownerUid!,
+            staffId: staff.id,
+            staffName: staff.name,
+            performedBy: currentOwner.uid,
+            performedByName: userName,
+            performedByRole: userRole,
+          );
+        } catch (e) {
+          debugPrint('Error creating audit log: $e');
+        }
+      }
+
+      _showToast('${staff.name} has been deleted');
+    } catch (e) {
+      debugPrint('Error deleting staff: $e');
+      _showToast('Failed to delete staff');
+    }
+  }
+
   void _showToast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -847,6 +1063,20 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
                             ? const Color(0xFF10B981).withOpacity(0.3) 
                             : const Color(0xFFEF4444).withOpacity(0.3),
                       ),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showDeleteConfirmation(staff),
+                    icon: const Icon(FontAwesomeIcons.trash, size: 12),
+                    label: const Text('Delete'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFDC2626),
+                      side: BorderSide(color: const Color(0xFFDC2626).withOpacity(0.3)),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
@@ -1350,7 +1580,8 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
   
   bool _saving = false;
   bool _showPassword = false;
-  String _selectedRole = 'salon_staff';
+  // Only allow Standard Staff creation from mobile app
+  final String _selectedRole = 'salon_staff';
   String? _selectedBranchId;
   Map<String, String?> _weeklySchedule = {
     'Monday': null,
@@ -1360,6 +1591,11 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
     'Friday': null,
     'Saturday': null,
     'Sunday': null,
+  };
+  Map<String, bool> _training = {
+    'ohs': false,
+    'prod': false,
+    'tool': false,
   };
 
   @override
@@ -1381,10 +1617,8 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
     final password = _passwordController.text.trim();
     final staffRole = _roleController.text.trim();
 
-    if (_selectedRole == 'salon_branch_admin' && _selectedBranchId == null) {
-      widget.onError('Branch Admins must be assigned to a branch');
-      return;
-    }
+    // Only Standard Staff can be created from mobile app
+    // Branch Admin role is not available in mobile app
 
     setState(() => _saving = true);
 
@@ -1429,31 +1663,16 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
       final responseData = json.decode(response.body);
       final uid = responseData['uid'] as String;
 
-      // Build weekly schedule
+      // Build weekly schedule - only for Standard Staff
       Map<String, dynamic> finalSchedule = {};
-      if (_selectedRole == 'salon_branch_admin' && _selectedBranchId != null) {
-        final branch = widget.branches.firstWhere((b) => b.id == _selectedBranchId);
-        final branchAssignment = {'branchId': branch.id, 'branchName': branch.name};
-        finalSchedule = {
-          'Monday': branchAssignment,
-          'Tuesday': branchAssignment,
-          'Wednesday': branchAssignment,
-          'Thursday': branchAssignment,
-          'Friday': branchAssignment,
-          'Saturday': branchAssignment,
-          'Sunday': branchAssignment,
-        };
-      } else {
-        // For regular staff, use selected schedule
-        _weeklySchedule.forEach((day, branchId) {
-          if (branchId != null) {
-            final branch = widget.branches.firstWhere((b) => b.id == branchId);
-            finalSchedule[day] = {'branchId': branch.id, 'branchName': branch.name};
-          } else {
-            finalSchedule[day] = null;
-          }
-        });
-      }
+      _weeklySchedule.forEach((day, branchId) {
+        if (branchId != null) {
+          final branch = widget.branches.firstWhere((b) => b.id == branchId);
+          finalSchedule[day] = {'branchId': branch.id, 'branchName': branch.name};
+        } else {
+          finalSchedule[day] = null;
+        }
+      });
 
       // Create user document
       await FirebaseFirestore.instance.collection('users').doc(uid).set({
@@ -1474,19 +1693,13 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
             ? widget.branches.firstWhere((b) => b.id == _selectedBranchId).name 
             : '',
         'weeklySchedule': finalSchedule,
-        'training': {'ohs': false, 'prod': false, 'tool': false},
+        'training': _training,
         'mobile': mobile,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // Update branch if branch admin
-      if (_selectedRole == 'salon_branch_admin' && _selectedBranchId != null) {
-        await FirebaseFirestore.instance
-            .collection('branches')
-            .doc(_selectedBranchId)
-            .update({'adminStaffId': uid});
-      }
+      // Branch admin assignment removed - only Standard Staff can be created from mobile app
 
       // Create audit log (using owner's info before we switch users)
       final currentUserDoc = await FirebaseFirestore.instance
@@ -1671,8 +1884,12 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
                         decoration: _inputDecoration('Email Address', 'staff@example.com'),
                         keyboardType: TextInputType.emailAddress,
                         validator: (v) {
-                          if (v!.isEmpty) return 'Required';
-                          if (!v.contains('@')) return 'Invalid email';
+                          if (v == null || v.isEmpty) return 'Email is required';
+                          // Proper email validation regex
+                          final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+                          if (!emailRegex.hasMatch(v.trim())) {
+                            return 'Please enter a valid email address';
+                          }
                           return null;
                         },
                       ),
@@ -1710,7 +1927,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
                   ),
                   const SizedBox(height: 16),
 
-                  // System Role Section
+                  // System Role Section - Only Standard Staff allowed
                   _buildSectionCard(
                     title: 'System Role',
                     icon: FontAwesomeIcons.userShield,
@@ -1722,43 +1939,13 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
                         'Regular staff with basic access',
                         FontAwesomeIcons.user,
                       ),
-                      const SizedBox(height: 10),
-                      _buildRoleOption(
-                        'salon_branch_admin',
-                        'Branch Admin',
-                        'Can manage a specific branch',
-                        FontAwesomeIcons.userTie,
-                      ),
+                      // Branch Admin option removed - only Standard Staff can be created from mobile app
                     ],
                   ),
                   const SizedBox(height: 16),
 
-                  // Branch Assignment Section
-                  if (_selectedRole == 'salon_branch_admin')
-                    _buildSectionCard(
-                      title: 'Branch Assignment',
-                      icon: FontAwesomeIcons.building,
-                      iconColor: const Color(0xFF10B981),
-                      children: [
-                        ...widget.branches.map((branch) => RadioListTile<String>(
-                          value: branch.id,
-                          groupValue: _selectedBranchId,
-                          onChanged: (v) => setState(() => _selectedBranchId = v),
-                          title: Text(branch.name, style: const TextStyle(fontSize: 14)),
-                          controlAffinity: ListTileControlAffinity.leading,
-                          dense: true,
-                          activeColor: AppColors.primary,
-                        )),
-                        if (widget.branches.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text('No branches available', style: TextStyle(color: AppColors.muted)),
-                          ),
-                      ],
-                    ),
-
-                  // Weekly Schedule Section (for regular staff)
-                  if (_selectedRole == 'salon_staff') ...[
+                  // Weekly Schedule Section
+                  ...[
                     _buildSectionCard(
                       title: 'Weekly Schedule',
                       icon: FontAwesomeIcons.calendarWeek,
@@ -1812,6 +1999,19 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
                       ],
                     ),
                   ],
+                  const SizedBox(height: 16),
+
+                  // Training Section
+                  _buildSectionCard(
+                    title: 'Training Qualifications',
+                    icon: FontAwesomeIcons.graduationCap,
+                    iconColor: const Color(0xFF10B981),
+                    children: [
+                      _buildTrainingCheckbox('ohs', 'Occupational Health & Safety'),
+                      _buildTrainingCheckbox('prod', 'Product Knowledge'),
+                      _buildTrainingCheckbox('tool', 'Tools & Equipment'),
+                    ],
+                  ),
                   const SizedBox(height: 24),
                 ],
               ),
@@ -1904,11 +2104,11 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
 
   Widget _buildRoleOption(String value, String title, String subtitle, IconData icon) {
     final isSelected = _selectedRole == value;
+    // Role is fixed to salon_staff, so no need for tap handler
     return GestureDetector(
-      onTap: () => setState(() {
-        _selectedRole = value;
-        if (value == 'salon_staff') _selectedBranchId = null;
-      }),
+      onTap: () {
+        // Role selection disabled - only Standard Staff allowed
+      },
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -2000,6 +2200,18 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTrainingCheckbox(String key, String label) {
+    return CheckboxListTile(
+      value: _training[key] ?? false,
+      onChanged: (v) => setState(() => _training[key] = v ?? false),
+      title: Text(label, style: const TextStyle(fontSize: 14)),
+      controlAffinity: ListTileControlAffinity.leading,
+      dense: true,
+      activeColor: const Color(0xFF10B981),
+      contentPadding: EdgeInsets.zero,
     );
   }
 

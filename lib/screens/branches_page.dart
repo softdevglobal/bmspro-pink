@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../services/audit_log_service.dart';
 import 'branch_location_picker_page.dart';
 
@@ -911,7 +913,6 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
   late TextEditingController _nameController;
   late TextEditingController _addressController;
   late TextEditingController _phoneController;
-  late TextEditingController _emailController;
   late TextEditingController _capacityController;
 
   bool _saving = false;
@@ -935,7 +936,6 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     _nameController = TextEditingController(text: branch?.name ?? '');
     _addressController = TextEditingController(text: branch?.address ?? '');
     _phoneController = TextEditingController(text: branch?.phone ?? '');
-    _emailController = TextEditingController(text: branch?.email ?? '');
     _capacityController = TextEditingController(text: branch?.capacity?.toString() ?? '');
     _status = branch?.status ?? 'Active';
     _selectedAdminStaffId = branch?.adminStaffId;
@@ -974,7 +974,6 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     _nameController.dispose();
     _addressController.dispose();
     _phoneController.dispose();
-    _emailController.dispose();
     _capacityController.dispose();
     super.dispose();
   }
@@ -985,7 +984,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     setState(() => _saving = true);
 
     try {
-      // Get admin staff email if selected
+      // Get admin staff email - required for branch email
       String? adminEmail;
       String? managerName;
       if (_selectedAdminStaffId != null && _selectedAdminStaffId!.isNotEmpty) {
@@ -1000,11 +999,18 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
         }
       }
 
+      // For new branches, email must come from branch admin
+      if (widget.branch == null && (adminEmail == null || adminEmail.isEmpty)) {
+        widget.onError('Branch Admin must have an email address');
+        setState(() => _saving = false);
+        return;
+      }
+
       final data = {
         'name': _nameController.text.trim(),
         'address': _addressController.text.trim(),
         'phone': _phoneController.text.trim(),
-        'email': adminEmail ?? _emailController.text.trim(),
+        'email': adminEmail ?? widget.branch?.email ?? '',
         'capacity': int.tryParse(_capacityController.text) ?? 0,
         'status': _status,
         'timezone': _timezone,
@@ -1041,6 +1047,36 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
 
         final docRef = await FirebaseFirestore.instance.collection('branches').add(data);
         final branchId = docRef.id;
+
+        // If admin was assigned, call API to promote staff and send email
+        if (_selectedAdminStaffId != null && _selectedAdminStaffId!.isNotEmpty) {
+          try {
+            final ownerToken = await user!.getIdToken();
+            final branchHours = data['hours'] as Map<String, dynamic>?;
+            
+            final apiResponse = await http.post(
+              Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/branches/assign-admin'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $ownerToken',
+              },
+              body: json.encode({
+                'branchId': branchId,
+                'adminStaffId': _selectedAdminStaffId,
+                'branchName': data['name'].toString(),
+                'branchHours': branchHours,
+              }),
+            );
+
+            if (apiResponse.statusCode != 200) {
+              debugPrint('Failed to assign branch admin via API: ${apiResponse.body}');
+            } else {
+              debugPrint('Branch admin assigned and email sent successfully');
+            }
+          } catch (e) {
+            debugPrint('Error calling branch admin assignment API: $e');
+          }
+        }
 
         // Create audit log
         if (user != null) {
@@ -1100,6 +1136,40 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
             }
           } else {
             changes.add('Admin removed');
+          }
+        }
+
+        // If admin changed, call API to promote staff and send email
+        if (widget.branch!.adminStaffId != _selectedAdminStaffId && 
+            _selectedAdminStaffId != null && 
+            _selectedAdminStaffId!.isNotEmpty) {
+          try {
+            final ownerToken = await user!.getIdToken();
+            final branchHours = data['hours'] as Map<String, dynamic>?;
+            
+            final apiResponse = await http.post(
+              Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/branches/assign-admin'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $ownerToken',
+              },
+              body: json.encode({
+                'branchId': branchId,
+                'adminStaffId': _selectedAdminStaffId,
+                'branchName': data['name'].toString(),
+                'branchHours': branchHours,
+              }),
+            );
+
+            if (apiResponse.statusCode != 200) {
+              debugPrint('Failed to assign branch admin via API: ${apiResponse.body}');
+              // Continue with direct update if API fails
+            } else {
+              debugPrint('Branch admin assigned and email sent successfully');
+            }
+          } catch (e) {
+            debugPrint('Error calling branch admin assignment API: $e');
+            // Continue with direct update if API fails
           }
         }
 
@@ -1239,6 +1309,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                               controller: _phoneController,
                               decoration: _inputDecoration('Phone', '(03) 1234 5678'),
                               keyboardType: TextInputType.phone,
+                              validator: (v) => v!.isEmpty ? 'Required' : null,
                             ),
                           ),
                           const SizedBox(width: 16),
@@ -1247,15 +1318,17 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                               controller: _capacityController,
                               decoration: _inputDecoration('Capacity', '10'),
                               keyboardType: TextInputType.number,
+                              validator: (v) {
+                                if (v == null || v.isEmpty) return 'Required';
+                                final capacity = int.tryParse(v);
+                                if (capacity == null || capacity <= 0) {
+                                  return 'Must be a positive number';
+                                }
+                                return null;
+                              },
                             ),
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _emailController,
-                        decoration: _inputDecoration('Email', 'branch@example.com'),
-                        keyboardType: TextInputType.emailAddress,
                       ),
                       const SizedBox(height: 16),
                       // Timezone Selector
@@ -1407,24 +1480,18 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                                   );
                                 }),
                               ],
-                              onChanged: (value) {
-                                setState(() {
-                                  _selectedAdminStaffId = value;
-                                  // Auto-fill email if admin has email
-                                  if (value != null) {
-                                    try {
-                                      final adminStaff = widget.staff.firstWhere(
-                                        (s) => s.id == value,
-                                      );
-                                      if (adminStaff.email != null && adminStaff.email!.isNotEmpty) {
-                                        _emailController.text = adminStaff.email!;
-                                      }
-                                    } catch (e) {
-                                      debugPrint('Admin staff not found: $e');
-                                    }
+                                onChanged: (value) {
+                                  setState(() {
+                                    _selectedAdminStaffId = value;
+                                  });
+                                },
+                                validator: (v) {
+                                  // Branch admin is required when creating a new branch
+                                  if (widget.branch == null && (v == null || v.isEmpty)) {
+                                    return 'Branch Admin is required';
                                   }
-                                });
-                              },
+                                  return null;
+                                },
                             ),
                             const SizedBox(height: 8),
                             Text(
