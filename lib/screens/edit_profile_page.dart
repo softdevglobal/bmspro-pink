@@ -1,13 +1,16 @@
 import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:math' as math;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'change_password_page.dart';
+import 'package:http/http.dart' as http;
 
 // --- 1. Theme & Colors ---
 class AppColors {
@@ -33,6 +36,8 @@ class _EditProfilePageState extends State<EditProfilePage>
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _abnController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
 
   String _avatarUrl = '';
   String _logoUrl = '';
@@ -57,11 +62,16 @@ class _EditProfilePageState extends State<EditProfilePage>
       'name': '',
       'email': '',
       'phone': '',
+      'abn': '',
+      'address': '',
       'avatar': '',
+      'logo': '',
     };
     _nameController.addListener(_checkForChanges);
     _emailController.addListener(_checkForChanges);
     _phoneController.addListener(_checkForChanges);
+    _abnController.addListener(_checkForChanges);
+    _addressController.addListener(_checkForChanges);
 
     _avatarPulseController = AnimationController(
       vsync: this,
@@ -77,7 +87,8 @@ class _EditProfilePageState extends State<EditProfilePage>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    for (int i = 0; i < 3; i++) {
+    // Support up to 5 fields (name, email, phone, abn, address)
+    for (int i = 0; i < 5; i++) {
       final double start = 0.1 + (i * 0.1);
       final double end = start + 0.4;
       _slideAnimations.add(
@@ -105,6 +116,8 @@ class _EditProfilePageState extends State<EditProfilePage>
     _nameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
+    _abnController.dispose();
+    _addressController.dispose();
     _avatarPulseController.dispose();
     _savePulseController.dispose();
     _entranceController.dispose();
@@ -112,11 +125,17 @@ class _EditProfilePageState extends State<EditProfilePage>
   }
 
   void _checkForChanges() {
+    final bool isSalonOwner = _userRole.toLowerCase() == 'salon_owner';
+    final String imageValue = isSalonOwner ? _logoUrl : _avatarUrl;
+    final String originalImageValue = isSalonOwner ? _originalValues['logo'] ?? '' : _originalValues['avatar'] ?? '';
+    
     final bool hasChanges =
         _nameController.text != _originalValues['name'] ||
         _emailController.text != _originalValues['email'] ||
         _phoneController.text != _originalValues['phone'] ||
-        _avatarUrl != _originalValues['avatar'];
+        _abnController.text != _originalValues['abn'] ||
+        _addressController.text != _originalValues['address'] ||
+        imageValue != originalImageValue;
     if (hasChanges != _hasChanges) {
       setState(() {
         _hasChanges = hasChanges;
@@ -139,6 +158,8 @@ class _EditProfilePageState extends State<EditProfilePage>
       String email = user.email ?? '';
       String phone = '';
       String avatarUrl = user.photoURL ?? '';
+      String abn = '';
+      String address = '';
 
       String logoUrl = '';
       String userRole = '';
@@ -150,18 +171,37 @@ class _EditProfilePageState extends State<EditProfilePage>
             .get();
         if (snap.exists) {
           final data = snap.data() as Map<String, dynamic>? ?? {};
-          name = (data['displayName'] ??
-                  data['name'] ??
-                  name ??
-                  email ??
-                  'Staff Member')
-              .toString();
+          userRole = (data['role'] ?? '').toString();
+          final bool isSalonOwner = userRole.toLowerCase() == 'salon_owner';
+          
+          // For salon owners, prioritize business name (name field) over displayName
+          if (isSalonOwner) {
+            name = (data['name'] ?? 
+                    data['displayName'] ?? 
+                    name ?? 
+                    email ?? 
+                    'Business')
+                .toString();
+          } else {
+            name = (data['displayName'] ??
+                    data['name'] ??
+                    name ??
+                    email ??
+                    'Staff Member')
+                .toString();
+          }
+          
           email = (data['email'] ?? email).toString();
-          phone = (data['phone'] ?? data['clientPhone'] ?? '').toString();
+          phone = (data['phone'] ?? data['clientPhone'] ?? data['contactPhone'] ?? '').toString();
           avatarUrl =
               (data['photoURL'] ?? data['avatarUrl'] ?? avatarUrl).toString();
           logoUrl = (data['logoUrl'] ?? '').toString();
-          userRole = (data['role'] ?? '').toString();
+          
+          // Load salon owner specific fields
+          if (isSalonOwner) {
+            abn = (data['abn'] ?? '').toString();
+            address = (data['locationText'] ?? data['address'] ?? '').toString();
+          }
         }
       } catch (e) {
         debugPrint('Error loading profile in edit page: $e');
@@ -172,6 +212,8 @@ class _EditProfilePageState extends State<EditProfilePage>
         _nameController.text = name;
         _emailController.text = email;
         _phoneController.text = phone;
+        _abnController.text = abn;
+        _addressController.text = address;
         _avatarUrl = avatarUrl;
         _logoUrl = logoUrl;
         _userRole = userRole;
@@ -179,7 +221,10 @@ class _EditProfilePageState extends State<EditProfilePage>
           'name': name,
           'email': email,
           'phone': phone,
+          'abn': abn,
+          'address': address,
           'avatar': avatarUrl,
+          'logo': logoUrl,
         };
         _hasChanges = false;
         _loadingProfile = false;
@@ -203,13 +248,19 @@ class _EditProfilePageState extends State<EditProfilePage>
       final String name = _nameController.text.trim();
       final String email = _emailController.text.trim();
       final String phone = _phoneController.text.trim();
+      final String abn = _abnController.text.trim();
+      final String address = _addressController.text.trim();
 
       // Update auth profile (display name & photo)
       if (name.isNotEmpty && name != user.displayName) {
         await user.updateDisplayName(name);
       }
-      if (_avatarUrl.isNotEmpty && _avatarUrl != (user.photoURL ?? '')) {
-        await user.updatePhotoURL(_avatarUrl);
+      
+      final bool isSalonOwner = _userRole.toLowerCase() == 'salon_owner';
+      final String imageUrl = isSalonOwner ? _logoUrl : _avatarUrl;
+      
+      if (imageUrl.isNotEmpty && imageUrl != (user.photoURL ?? '')) {
+        await user.updatePhotoURL(imageUrl);
       }
 
       // Update Firestore user document
@@ -220,22 +271,46 @@ class _EditProfilePageState extends State<EditProfilePage>
         'name': name,
         'email': email,
         'phone': phone,
+        'contactPhone': phone,
+        'updatedAt': FieldValue.serverTimestamp(),
       };
-      if (_avatarUrl.isNotEmpty) {
-        update['photoURL'] = _avatarUrl;
-        update['avatarUrl'] = _avatarUrl;
+      
+      // Add salon owner specific fields
+      if (isSalonOwner) {
+        if (abn.isNotEmpty) {
+          update['abn'] = abn;
+        }
+        if (address.isNotEmpty) {
+          update['locationText'] = address;
+          update['address'] = address;
+        }
+        // Save logo URL for salon owners
+        if (_logoUrl.isNotEmpty) {
+          update['logoUrl'] = _logoUrl;
+        }
+      } else {
+        // Save avatar URL for non-salon owners
+        if (_avatarUrl.isNotEmpty) {
+          update['photoURL'] = _avatarUrl;
+          update['avatarUrl'] = _avatarUrl;
+        }
       }
+      
       await docRef.set(update, SetOptions(merge: true));
 
       if (!mounted) return;
       setState(() {
         _isSaving = false;
         _hasChanges = false;
+        final bool isSalonOwner = _userRole.toLowerCase() == 'salon_owner';
         _originalValues = {
           'name': name,
           'email': email,
           'phone': phone,
+          'abn': abn,
+          'address': address,
           'avatar': _avatarUrl,
+          'logo': _logoUrl,
         };
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -283,31 +358,140 @@ class _EditProfilePageState extends State<EditProfilePage>
 
     try {
       final picker = ImagePicker();
-      final XFile? picked =
-          await picker.pickImage(source: source, imageQuality: 85);
+      final bool isSalonOwner = _userRole.toLowerCase() == 'salon_owner';
+      
+      final XFile? picked = await picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: isSalonOwner ? 512 : 1024,
+        maxHeight: isSalonOwner ? 512 : 1024,
+      );
       if (picked == null) return;
 
-      final file = File(picked.path);
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('staff_avatars')
-          .child('${user.uid}.jpg');
+      // Show loading indicator
+      if (!mounted) return;
+      setState(() => _isSaving = true);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              ),
+              const SizedBox(width: 12),
+              Text('Uploading ${isSalonOwner ? 'logo' : 'picture'}...'),
+            ],
+          ),
+          duration: const Duration(seconds: 30),
+        ),
+      );
 
-      await storageRef.putFile(file);
-      final url = await storageRef.getDownloadURL();
+      final file = File(picked.path);
+      final ext = picked.path.split('.').last;
+      String url;
+      
+      // For salon owners, use API endpoint to bypass storage permission issues
+      // For staff, use direct storage upload (should work with current rules)
+      if (isSalonOwner) {
+        // Use API endpoint for salon owner logo upload
+        final token = await user.getIdToken();
+        final imageBytes = await file.readAsBytes();
+        final base64Image = base64Encode(imageBytes);
+        
+        const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+        final response = await http.post(
+          Uri.parse('$apiBaseUrl/api/upload/logo'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'imageData': 'data:image/$ext;base64,$base64Image',
+            'fileExtension': ext,
+          }),
+        ).timeout(const Duration(seconds: 30));
+
+        if (response.statusCode == 200) {
+          final responseData = jsonDecode(response.body);
+          url = responseData['logoUrl']?.toString() ?? '';
+          if (url.isEmpty) {
+            throw Exception('No logo URL returned from API');
+          }
+        } else {
+          final errorData = jsonDecode(response.body);
+          throw Exception(errorData['error']?.toString() ?? 'Failed to upload logo: ${response.statusCode}');
+        }
+      } else {
+        // Direct storage upload for staff avatars
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('staff_avatars')
+            .child('${user.uid}.jpg');
+
+        await storageRef.putFile(file);
+        url = await storageRef.getDownloadURL();
+
+        // Update Firestore immediately after upload
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .update({
+          'avatarUrl': url,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Update local state and Firestore for salon owners
+      if (isSalonOwner) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .update({
+          'logoUrl': url,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       if (!mounted) return;
       setState(() {
-        _avatarUrl = url;
+        if (isSalonOwner) {
+          _logoUrl = url;
+          _originalValues['logo'] = url;
+        } else {
+          _avatarUrl = url;
+          _originalValues['avatar'] = url;
+        }
         _hasChanges = true;
+        _isSaving = false;
       });
+      
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check, color: Colors.white),
+              const SizedBox(width: 8),
+              Text('${isSalonOwner ? 'Logo' : 'Picture'} uploaded successfully!'),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
     } catch (e) {
       debugPrint('Error picking/uploading image: $e');
       if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to update picture: $e'),
+          content: Text('Failed to upload ${_userRole.toLowerCase() == 'salon_owner' ? 'logo' : 'picture'}. Error: ${e.toString()}'),
           backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 4),
         ),
       );
     }
@@ -316,7 +500,12 @@ class _EditProfilePageState extends State<EditProfilePage>
   void _removePhoto() {
     Navigator.pop(context);
     setState(() {
-      _avatarUrl = '';
+      final bool isSalonOwner = _userRole.toLowerCase() == 'salon_owner';
+      if (isSalonOwner) {
+        _logoUrl = '';
+      } else {
+        _avatarUrl = '';
+      }
       _hasChanges = true;
     });
   }
@@ -336,10 +525,6 @@ class _EditProfilePageState extends State<EditProfilePage>
                     if (!_loadingProfile) _buildProfilePictureSection(),
                     const SizedBox(height: 24),
                     _buildPersonalInfoSection(),
-                    const SizedBox(height: 24),
-                    _buildPasswordSection(),
-                    const SizedBox(height: 24),
-                    _buildPointsSection(),
                     const SizedBox(height: 24),
                     _buildSaveButton(),
                     const SizedBox(height: 40),
@@ -399,17 +584,35 @@ class _EditProfilePageState extends State<EditProfilePage>
       decoration: _cardDecoration(),
       child: Column(
         children: [
-          // Show "Salon Logo" label for salon owner
+          // Show "Salon Logo" label and business name for salon owner
           if (isSalonOwner) ...[
             const Text(
               'Salon Logo',
               style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: AppColors.muted,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: AppColors.text,
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _nameController,
+              builder: (context, value, child) {
+                final businessName = value.text.trim();
+                return businessName.isNotEmpty
+                    ? Text(
+                        businessName,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.primary,
+                        ),
+                        textAlign: TextAlign.center,
+                      )
+                    : const SizedBox.shrink();
+              },
+            ),
+            const SizedBox(height: 16),
           ],
           Stack(
             alignment: Alignment.center,
@@ -471,25 +674,75 @@ class _EditProfilePageState extends State<EditProfilePage>
             ],
           ),
           const SizedBox(height: 16),
-          if (isSalonOwner && _logoUrl.isNotEmpty) ...[
-            const Text(
-              'Update logo from Admin Panel',
-              style: TextStyle(
-                color: AppColors.muted,
-                fontWeight: FontWeight.w400,
-                fontSize: 12,
+          GestureDetector(
+            onTap: _showPictureModal,
+            child: Text(
+              isSalonOwner ? 'Change Logo' : 'Change Picture',
+              style: const TextStyle(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w500,
+                fontSize: 14,
               ),
             ),
-          ] else ...[
-            GestureDetector(
-              onTap: _showPictureModal,
-              child: const Text(
-                'Change Picture',
-                style: TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
-                    fontSize: 14),
-              ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPersonalInfoSection() {
+    final bool isSalonOwner = _userRole.toLowerCase() == 'salon_owner';
+    
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            isSalonOwner ? 'Business Information' : 'Personal Information',
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildAnimatedField(
+            0, 
+            isSalonOwner ? 'Business Name' : 'Full Name', 
+            _nameController,
+            TextInputType.name,
+          ),
+          const SizedBox(height: 16),
+          _buildAnimatedField(
+            1, 
+            'Email Address', 
+            _emailController,
+            TextInputType.emailAddress,
+          ),
+          const SizedBox(height: 16),
+          _buildAnimatedField(
+            2, 
+            'Phone Number', 
+            _phoneController, 
+            TextInputType.phone,
+          ),
+          if (isSalonOwner) ...[
+            const SizedBox(height: 16),
+            _buildAnimatedField(
+              3, 
+              'ABN', 
+              _abnController, 
+              TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            _buildAnimatedField(
+              4, 
+              'Address', 
+              _addressController, 
+              TextInputType.streetAddress,
+              maxLines: 2,
             ),
           ],
         ],
@@ -497,34 +750,55 @@ class _EditProfilePageState extends State<EditProfilePage>
     );
   }
 
-  Widget _buildPersonalInfoSection() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: _cardDecoration(),
-      child: Column(
+  Widget _buildAnimatedField(
+    int index, 
+    String label,
+    TextEditingController controller, 
+    TextInputType type, {
+    int maxLines = 1,
+  }) {
+    // Ensure animations list has enough items
+    if (index >= _fadeAnimations.length || index >= _slideAnimations.length) {
+      // Return non-animated version if animation doesn't exist
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Personal Information',
-              style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.text)),
-          const SizedBox(height: 16),
-          _buildAnimatedField(0, 'Full Name', _nameController,
-              TextInputType.name),
-          const SizedBox(height: 16),
-          _buildAnimatedField(1, 'Email Address', _emailController,
-              TextInputType.emailAddress),
-          const SizedBox(height: 16),
-          _buildAnimatedField(
-              2, 'Phone Number', _phoneController, TextInputType.phone),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: controller,
+            keyboardType: type,
+            maxLines: maxLines,
+            style: const TextStyle(color: AppColors.text),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: AppColors.background,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.primary),
+              ),
+            ),
+          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAnimatedField(int index, String label,
-      TextEditingController controller, TextInputType type) {
+      );
+    }
+    
     return FadeTransition(
       opacity: _fadeAnimations[index],
       child: SlideTransition(
@@ -532,168 +806,44 @@ class _EditProfilePageState extends State<EditProfilePage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label,
-                style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.text)),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppColors.text,
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: controller,
               keyboardType: type,
+              maxLines: maxLines,
               style: const TextStyle(color: AppColors.text),
               decoration: InputDecoration(
                 filled: true,
                 fillColor: AppColors.background,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: AppColors.border)),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: AppColors.border)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: AppColors.primary)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPasswordSection() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [AppColors.primary, AppColors.accent]),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      padding: const EdgeInsets.all(2),
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
-              );
-            },
-            borderRadius: BorderRadius.circular(16),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [AppColors.primary, AppColors.accent],
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Center(
-                            child: Icon(FontAwesomeIcons.lock,
-                                color: Colors.white, size: 20)),
-                      ),
-                      const SizedBox(width: 16),
-                      const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Change Password',
-                              style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.text)),
-                          Text('Update your account password',
-                              style:
-                                  TextStyle(fontSize: 14, color: AppColors.muted)),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const Icon(FontAwesomeIcons.chevronRight,
-                      color: AppColors.muted, size: 16),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPointsSection() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppColors.primary.withOpacity(0.1),
-            AppColors.accent.withOpacity(0.1)
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [AppColors.primary, AppColors.accent],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: AppColors.border),
                 ),
-                child: const Center(
-                    child: Icon(FontAwesomeIcons.star,
-                        color: Colors.white, size: 20)),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: AppColors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: AppColors.primary),
+                ),
               ),
-              const SizedBox(width: 12),
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('ACSU Staff Points',
-                      style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.text)),
-                  Text('Your reward balance',
-                      style: TextStyle(fontSize: 14, color: AppColors.muted)),
-                ],
-              ),
-            ],
-          ),
-          const Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _ShimmerText('1,540'),
-              Text('points',
-                  style: TextStyle(fontSize: 14, color: AppColors.muted)),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
+
 
   Widget _buildSaveButton() {
     return AnimatedBuilder(
@@ -771,57 +921,6 @@ class _EditProfilePageState extends State<EditProfilePage>
           offset: const Offset(0, 8),
         ),
       ],
-    );
-  }
-}
-
-// --- Helper: Shimmer Text Effect ---
-class _ShimmerText extends StatefulWidget {
-  final String text;
-  const _ShimmerText(this.text);
-
-  @override
-  State<_ShimmerText> createState() => _ShimmerTextState();
-}
-
-class _ShimmerTextState extends State<_ShimmerText>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller =
-        AnimationController(vsync: this, duration: const Duration(seconds: 2))
-          ..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        return ShaderMask(
-          shaderCallback: (bounds) {
-            return LinearGradient(
-              colors: const [AppColors.primary, AppColors.accent, AppColors.primary],
-              stops: const [0.0, 0.5, 1.0],
-              transform: GradientRotation(_controller.value * 2 * math.pi),
-            ).createShader(bounds);
-          },
-          child: const Text(
-            '1,540',
-            style: TextStyle(
-                fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-          ),
-        );
-      },
     );
   }
 }

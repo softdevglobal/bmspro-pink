@@ -14,25 +14,25 @@ class AppColors {
   static const border = Color(0xFFF2D2E9);
 }
 
-class PrivacyPolicyPage extends StatefulWidget {
-  const PrivacyPolicyPage({super.key});
+class TermsOfServicePage extends StatefulWidget {
+  const TermsOfServicePage({super.key});
 
   @override
-  State<PrivacyPolicyPage> createState() => _PrivacyPolicyPageState();
+  State<TermsOfServicePage> createState() => _TermsOfServicePageState();
 }
 
-class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
+class _TermsOfServicePageState extends State<TermsOfServicePage> {
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _openPrivacyURL();
+    _openTermsURL();
   }
 
-  Future<void> _openPrivacyURL() async {
+  Future<void> _openTermsURL() async {
     setState(() => _isLoading = true);
-    final Uri url = Uri.parse('https://bmspros.com.au/privacy');
+    final Uri url = Uri.parse('https://bmspros.com.au/terms');
     
     try {
       // Try launching directly with external application mode first
@@ -61,7 +61,7 @@ class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Unable to open Privacy Policy. Please tap "Open Link" to try again.'),
+              content: Text('Unable to open Terms of Service. Please tap "Open Link" to try again.'),
               backgroundColor: Colors.orange,
               duration: Duration(seconds: 4),
             ),
@@ -69,7 +69,7 @@ class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
         }
       }
     } catch (e) {
-      debugPrint('Error opening Privacy Policy: $e');
+      debugPrint('Error opening Terms of Service: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -96,7 +96,7 @@ class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
                     CircularProgressIndicator(color: AppColors.primary),
                     SizedBox(height: 16),
                     Text(
-                      'Opening Privacy Policy...',
+                      'Opening Terms of Service...',
                       style: TextStyle(color: AppColors.muted),
                     ),
                   ],
@@ -111,7 +111,7 @@ class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
                     ),
                     const SizedBox(height: 24),
                     const Text(
-                      'Privacy Policy',
+                      'Terms of Service',
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w700,
@@ -132,7 +132,7 @@ class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
                     ),
                     const SizedBox(height: 32),
                     InkWell(
-                      onTap: _openPrivacyURL,
+                      onTap: _openTermsURL,
                       borderRadius: BorderRadius.circular(14),
                       child: Ink(
                         decoration: BoxDecoration(
@@ -170,4 +170,5 @@ class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
       ),
     );
   }
+
 }

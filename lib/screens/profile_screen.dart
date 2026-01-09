@@ -4,8 +4,11 @@ import 'dart:math' as math;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'edit_profile_page.dart';
-import 'settings_page.dart';
+import 'change_password_page.dart';
 import 'privacy_policy_page.dart';
+import 'terms_of_service_page.dart';
+import 'help_support_page.dart';
+import '../utils/timezone_helper.dart';
 import '../services/audit_log_service.dart';
 
 class AppColors {
@@ -45,6 +48,16 @@ class _ProfileScreenState extends State<ProfileScreen>
   String? _experienceLabel;
   int _totalBookings = 0;
   bool _loadingProfile = true;
+  
+  // Salon owner details
+  String _ownerEmail = '';
+  String _ownerPhone = '';
+  String _ownerAddress = '';
+  String _ownerABN = '';
+  
+  // Timezone state
+  String _selectedTimezone = 'Australia/Sydney';
+  bool _isLoadingTimezone = true;
 
   @override
   void initState() {
@@ -192,6 +205,27 @@ class _ProfileScreenState extends State<ProfileScreen>
               totalBookings = bookingsSnap.docs.length;
             }
           }
+          
+          // Load timezone
+          if (data['timezone'] != null) {
+            _selectedTimezone = data['timezone'] as String;
+          }
+          
+          // Load salon owner details if user is a salon owner
+          if (systemRole == 'salon_owner') {
+            final ownerEmail = user.email ?? data['email'] ?? '';
+            final ownerPhone = data['contactPhone'] ?? data['phone'] ?? '';
+            final ownerAddress = data['locationText'] ?? data['address'] ?? '';
+            final ownerABN = data['abn'] ?? '';
+            
+            if (!mounted) return;
+            setState(() {
+              _ownerEmail = ownerEmail;
+              _ownerPhone = ownerPhone.toString();
+              _ownerAddress = ownerAddress.toString();
+              _ownerABN = ownerABN.toString();
+            });
+          }
         }
       } catch (e) {
         debugPrint('Error loading profile from Firestore: $e');
@@ -208,6 +242,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         _experienceLabel = experienceLabel;
         _totalBookings = totalBookings;
         _loadingProfile = false;
+        _isLoadingTimezone = false;
       });
     } catch (e) {
       debugPrint('Error loading profile: $e');
@@ -536,12 +571,94 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                     ],
                   ),
+                  // Salon owner details section
+                  if (_systemRole == 'salon_owner') ...[
+                    const SizedBox(height: 20),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.2),
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_name.isNotEmpty) ...[
+                            _buildOwnerDetailRow(
+                              FontAwesomeIcons.store,
+                              _name,
+                            ),
+                            if (_ownerEmail.isNotEmpty || _ownerPhone.isNotEmpty || _ownerAddress.isNotEmpty || _ownerABN.isNotEmpty)
+                              const SizedBox(height: 12),
+                          ],
+                          if (_ownerEmail.isNotEmpty) ...[
+                            _buildOwnerDetailRow(
+                              FontAwesomeIcons.envelope,
+                              _ownerEmail,
+                            ),
+                            if (_ownerPhone.isNotEmpty || _ownerAddress.isNotEmpty || _ownerABN.isNotEmpty)
+                              const SizedBox(height: 12),
+                          ],
+                          if (_ownerPhone.isNotEmpty) ...[
+                            _buildOwnerDetailRow(
+                              FontAwesomeIcons.phone,
+                              _ownerPhone,
+                            ),
+                            if (_ownerAddress.isNotEmpty || _ownerABN.isNotEmpty)
+                              const SizedBox(height: 12),
+                          ],
+                          if (_ownerAddress.isNotEmpty) ...[
+                            _buildOwnerDetailRow(
+                              FontAwesomeIcons.locationDot,
+                              _ownerAddress,
+                            ),
+                            if (_ownerABN.isNotEmpty)
+                              const SizedBox(height: 12),
+                          ],
+                          if (_ownerABN.isNotEmpty)
+                            _buildOwnerDetailRow(
+                              FontAwesomeIcons.hashtag,
+                              'ABN: $_ownerABN',
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildOwnerDetailRow(IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          icon,
+          size: 14,
+          color: Colors.white.withOpacity(0.9),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withOpacity(0.9),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -825,29 +942,15 @@ class _ProfileScreenState extends State<ProfileScreen>
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Row(
-            children: [
-              Expanded(
-                child: _buildQuickActionButton(
-                  icon: FontAwesomeIcons.penToSquare,
-                  label: 'Edit Profile',
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const EditProfilePage()),
-                    );
-                    _loadProfile();
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildQuickActionButton(
-                  icon: FontAwesomeIcons.shareNodes,
-                  label: 'Share',
-                  onTap: () {},
-                ),
-              ),
-            ],
+          child: _buildQuickActionButton(
+            icon: FontAwesomeIcons.penToSquare,
+            label: 'Edit Profile',
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const EditProfilePage()),
+              );
+              _loadProfile();
+            },
           ),
         ),
       ),
@@ -925,25 +1028,63 @@ class _ProfileScreenState extends State<ProfileScreen>
             child: Column(
               children: [
                 _buildMenuTile(
-                  icon: FontAwesomeIcons.userGear,
-                  iconBgColor: const Color(0xFFEDE9FE),
-                  iconColor: const Color(0xFF8B5CF6),
-                  title: 'Account Settings',
-                  subtitle: 'Privacy, security, language',
+                  icon: FontAwesomeIcons.lock,
+                  iconBgColor: const Color(0xFFFFF3E0),
+                  iconColor: const Color(0xFFFF9800),
+                  title: 'Change Password',
+                  subtitle: 'Update your account password',
                   onTap: () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const SettingsPage()),
+                      MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
                     );
                   },
                 ),
                 _buildDivider(),
                 _buildMenuTile(
-                  icon: FontAwesomeIcons.palette,
-                  iconBgColor: const Color(0xFFDDEEFF),
-                  iconColor: const Color(0xFF3B82F6),
-                  title: 'Appearance',
-                  subtitle: 'Theme, colors, display',
-                  onTap: () {},
+                  icon: FontAwesomeIcons.clock,
+                  iconBgColor: const Color(0xFFE3F2FD),
+                  iconColor: const Color(0xFF2196F3),
+                  title: 'Time Zone',
+                  subtitle: _isLoadingTimezone 
+                      ? 'Loading...' 
+                      : TimezoneHelper.getTimezoneLabel(_selectedTimezone),
+                  onTap: () async {
+                    final String? selected = await showModalBottomSheet(
+                      context: context,
+                      backgroundColor: Colors.transparent,
+                      isScrollControlled: true,
+                      builder: (_) => _TimezoneSheet(current: _selectedTimezone),
+                    );
+                    if (selected != null && selected != _selectedTimezone) {
+                      _saveTimezone(selected);
+                    }
+                  },
+                ),
+                _buildDivider(),
+                _buildMenuTile(
+                  icon: FontAwesomeIcons.fileLines,
+                  iconBgColor: const Color(0xFFEDE9FE),
+                  iconColor: const Color(0xFF8B5CF6),
+                  title: 'Terms of Service',
+                  subtitle: 'Read our terms and conditions',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const TermsOfServicePage()),
+                    );
+                  },
+                ),
+                _buildDivider(),
+                _buildMenuTile(
+                  icon: FontAwesomeIcons.userShield,
+                  iconBgColor: const Color(0xFFE0F2F1),
+                  iconColor: const Color(0xFF009688),
+                  title: 'Privacy Policy',
+                  subtitle: 'Learn how we protect your data',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const PrivacyPolicyPage()),
+                    );
+                  },
                 ),
                 _buildDivider(),
                 _buildMenuTile(
@@ -951,10 +1092,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                   iconBgColor: const Color(0xFFD1FAE5),
                   iconColor: const Color(0xFF10B981),
                   title: 'Help & Support',
-                  subtitle: 'Privacy Policy',
+                  subtitle: 'Contact us for assistance',
                   onTap: () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const PrivacyPolicyPage()),
+                      MaterialPageRoute(builder: (_) => const HelpSupportPage()),
                     );
                   },
                 ),
@@ -1217,6 +1358,186 @@ class _ProfileScreenState extends State<ProfileScreen>
           ),
         );
       },
+    );
+  }
+
+  Future<void> _saveTimezone(String timezone) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .update({'timezone': timezone});
+        setState(() => _selectedTimezone = timezone);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Timezone updated to ${TimezoneHelper.getTimezoneLabel(timezone)}'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error saving timezone: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save timezone'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+}
+
+class _TimezoneSheet extends StatelessWidget {
+  final String current;
+  const _TimezoneSheet({required this.current});
+  
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: AppColors.border),
+              ),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  width: 48,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.muted.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Icon(FontAwesomeIcons.clock, size: 18, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Select Time Zone',
+                      style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.text, fontSize: 16),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(FontAwesomeIcons.xmark, size: 18),
+                      color: AppColors.muted,
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          
+          // Timezone List
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [
+                // Australia Section
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    '🇦🇺 AUSTRALIA',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                ...TimezoneHelper.australianTimezones.entries.map((entry) => 
+                  _buildTimezoneItem(context, entry.key, '🇦🇺 ${entry.value}', current == entry.key),
+                ),
+                
+                const Divider(height: 24),
+                
+                // Other Timezones Section
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    '🌍 OTHER TIME ZONES',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.muted,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                ...TimezoneHelper.otherTimezones.entries.map((entry) => 
+                  _buildTimezoneItem(context, entry.key, entry.value, current == entry.key),
+                ),
+                
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildTimezoneItem(BuildContext context, String value, String label, bool isSelected) {
+    return InkWell(
+      onTap: () => Navigator.pop(context, value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary.withOpacity(0.08) : Colors.transparent,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? FontAwesomeIcons.solidCircleCheck : FontAwesomeIcons.circle,
+              size: 16,
+              color: isSelected ? AppColors.primary : AppColors.muted.withOpacity(0.4),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      color: isSelected ? AppColors.primary : AppColors.text,
+                    ),
+                  ),
+                  Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Icon(FontAwesomeIcons.check, size: 14, color: AppColors.primary),
+          ],
+        ),
+      ),
     );
   }
 }
