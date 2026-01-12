@@ -3,6 +3,8 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:math' as math;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'edit_profile_page.dart';
 import 'change_password_page.dart';
 import 'privacy_policy_page.dart';
@@ -58,6 +60,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   // Timezone state
   String _selectedTimezone = 'Australia/Sydney';
   bool _isLoadingTimezone = true;
+  String? _branchId; // For branch admins to update branch timezone
 
   @override
   void initState() {
@@ -206,9 +209,53 @@ class _ProfileScreenState extends State<ProfileScreen>
             }
           }
           
-          // Load timezone
-          if (data['timezone'] != null) {
-            _selectedTimezone = data['timezone'] as String;
+          // Load timezone and branchId for branch admins
+          if (systemRole == 'salon_branch_admin') {
+            // For branch admins, load branch timezone instead of user timezone
+            _branchId = data['branchId']?.toString();
+            debugPrint('ProfileScreen: Branch admin detected, branchId: $_branchId');
+            
+            if (_branchId != null && _branchId!.isNotEmpty) {
+              try {
+                final branchDoc = await FirebaseFirestore.instance
+                    .collection('branches')
+                    .doc(_branchId)
+                    .get();
+                if (branchDoc.exists) {
+                  final branchData = branchDoc.data();
+                  debugPrint('ProfileScreen: Branch found, timezone: ${branchData?['timezone']}');
+                  if (branchData != null && branchData['timezone'] != null) {
+                    _selectedTimezone = branchData['timezone'] as String;
+                  } else {
+                    // Branch exists but no timezone set, use default
+                    _selectedTimezone = 'Australia/Sydney';
+                  }
+                } else {
+                  debugPrint('ProfileScreen: Branch document not found for branchId: $_branchId');
+                  // Fallback to user timezone if branch not found
+                  if (data['timezone'] != null) {
+                    _selectedTimezone = data['timezone'] as String;
+                  }
+                }
+              } catch (e) {
+                debugPrint('Error loading branch timezone: $e');
+                // Fallback to user timezone if branch not found
+                if (data['timezone'] != null) {
+                  _selectedTimezone = data['timezone'] as String;
+                }
+              }
+            } else {
+              debugPrint('ProfileScreen: Branch admin but no branchId found in user document');
+              // Fallback to user timezone if no branchId
+              if (data['timezone'] != null) {
+                _selectedTimezone = data['timezone'] as String;
+              }
+            }
+          } else {
+            // For other users, load user timezone
+            if (data['timezone'] != null) {
+              _selectedTimezone = data['timezone'] as String;
+            }
           }
           
           // Load salon owner details if user is a salon owner
@@ -243,6 +290,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         _totalBookings = totalBookings;
         _loadingProfile = false;
         _isLoadingTimezone = false;
+        // _branchId is already set in the timezone loading section above
       });
     } catch (e) {
       debugPrint('Error loading profile: $e');
@@ -1042,28 +1090,31 @@ class _ProfileScreenState extends State<ProfileScreen>
                     );
                   },
                 ),
-                _buildDivider(),
-                _buildMenuTile(
-                  icon: FontAwesomeIcons.clock,
-                  iconBgColor: const Color(0xFFE3F2FD),
-                  iconColor: const Color(0xFF2196F3),
-                  title: 'Time Zone',
-                  subtitle: _isLoadingTimezone 
-                      ? 'Loading...' 
-                      : TimezoneHelper.getTimezoneLabel(_selectedTimezone),
-                  onTap: () async {
-                    final String? selected = await showModalBottomSheet(
-                      context: context,
-                      backgroundColor: Colors.transparent,
-                      isScrollControlled: true,
-                      builder: (_) => _TimezoneSheet(current: _selectedTimezone),
-                    );
-                    if (selected != null && selected != _selectedTimezone) {
-                      _saveTimezone(selected);
-                    }
-                  },
-                ),
-                _buildDivider(),
+                // Only show timezone for salon owners and branch admins (not salon staff)
+                if (_systemRole != 'salon_staff') ...[
+                  _buildDivider(),
+                  _buildMenuTile(
+                    icon: FontAwesomeIcons.clock,
+                    iconBgColor: const Color(0xFFE3F2FD),
+                    iconColor: const Color(0xFF2196F3),
+                    title: _systemRole == 'salon_branch_admin' ? 'Branch Time Zone' : 'Time Zone',
+                    subtitle: _isLoadingTimezone 
+                        ? 'Loading...' 
+                        : TimezoneHelper.getTimezoneLabel(_selectedTimezone),
+                    onTap: () async {
+                      final String? selected = await showModalBottomSheet(
+                        context: context,
+                        backgroundColor: Colors.transparent,
+                        isScrollControlled: true,
+                        builder: (_) => _TimezoneSheet(current: _selectedTimezone),
+                      );
+                      if (selected != null && selected != _selectedTimezone) {
+                        _saveTimezone(selected);
+                      }
+                    },
+                  ),
+                  _buildDivider(),
+                ],
                 _buildMenuTile(
                   icon: FontAwesomeIcons.fileLines,
                   iconBgColor: const Color(0xFFEDE9FE),
@@ -1367,7 +1418,89 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<void> _saveTimezone(String timezone) async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
+      if (user == null) {
+        debugPrint('ProfileScreen: Cannot save timezone - user is null');
+        return;
+      }
+
+      debugPrint('ProfileScreen: Saving timezone - role: $_systemRole, branchId: $_branchId, timezone: $timezone');
+
+      // For branch admins, update branch timezone via API (they don't have direct Firestore write permission)
+      if (_systemRole == 'salon_branch_admin') {
+        // Try to get branchId from user document if not already set
+        if (_branchId == null || _branchId!.isEmpty) {
+          try {
+            final userDoc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(user.uid)
+                .get();
+            final userData = userDoc.data();
+            _branchId = userData?['branchId']?.toString();
+            debugPrint('ProfileScreen: Retrieved branchId from user document: $_branchId');
+          } catch (e) {
+            debugPrint('ProfileScreen: Error getting branchId: $e');
+          }
+        }
+
+        if (_branchId != null && _branchId!.isNotEmpty) {
+          debugPrint('ProfileScreen: Updating branch timezone via API for branchId: $_branchId');
+          
+          // Use API endpoint to update branch timezone (branch admins don't have direct Firestore write permission)
+          try {
+            final token = await user.getIdToken();
+            final apiUrl = 'https://bmspro-pink-adminpanel.vercel.app/api/branches/$_branchId/timezone';
+            
+            final response = await http.patch(
+              Uri.parse(apiUrl),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({'timezone': timezone}),
+            );
+
+            if (response.statusCode == 200) {
+              debugPrint('ProfileScreen: Branch timezone updated successfully via API');
+              setState(() => _selectedTimezone = timezone);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Branch timezone updated to ${TimezoneHelper.getTimezoneLabel(timezone)}'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            } else {
+              final errorBody = jsonDecode(response.body);
+              throw Exception(errorBody['error'] ?? 'Failed to update branch timezone');
+            }
+          } catch (e) {
+            debugPrint('ProfileScreen: Error updating branch timezone via API: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to update branch timezone: ${e.toString()}'),
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            }
+            return; // Don't update user timezone if branch update failed
+          }
+        } else {
+          debugPrint('ProfileScreen: Branch admin but no branchId available');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Cannot update timezone: Branch ID not found'),
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+          return;
+        }
+      } else {
+        // For salon owners and others, update user timezone
+        debugPrint('ProfileScreen: Updating user timezone for role: $_systemRole');
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
@@ -1386,9 +1519,9 @@ class _ProfileScreenState extends State<ProfileScreen>
       debugPrint('Error saving timezone: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to save timezone'),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text('Failed to save timezone: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
           ),
         );
       }
