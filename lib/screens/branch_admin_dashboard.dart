@@ -1097,8 +1097,8 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
           }
         } catch (_) {}
 
-        // Count completed bookings
-        if (status == 'completed' || status == 'confirmed') {
+        // Count only completed bookings for revenue (not confirmed or cancelled)
+        if (status == 'completed') {
           completedBookings++;
           totalRevenue += price;
 

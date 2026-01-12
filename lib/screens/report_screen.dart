@@ -360,7 +360,8 @@ class _ReportScreenState extends State<ReportScreen> {
         } else {
           // For owners/admins, count all bookings
           totalBookings++;
-          if (status == 'completed' || status == 'confirmed') {
+          // Only count completed bookings for revenue (not confirmed or cancelled)
+          if (status == 'completed') {
             completedBookings++;
             completedServices++;
             revenue += _getPrice(data['price']);

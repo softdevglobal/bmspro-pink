@@ -682,7 +682,8 @@ class _MySummaryPageState extends State<MySummaryPage> {
         final bookingPrice = _getPrice(data['price']);
         totalBookingValue += bookingPrice;
         
-        if (status == 'completed' || status == 'confirmed') {
+        // Only count completed bookings for revenue (not confirmed or cancelled)
+        if (status == 'completed') {
           completedServices++;
           revenue += bookingPrice;
           
@@ -710,7 +711,8 @@ class _MySummaryPageState extends State<MySummaryPage> {
             weeklyRevenue.add(0.0);
           }
           
-          if (status == 'completed' || status == 'confirmed') {
+          // Only count completed bookings for revenue
+          if (status == 'completed') {
             weeklyRevenue[weekOfMonth] += bookingPrice;
           }
         }
@@ -1394,8 +1396,8 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
             branchPending++;
           }
           
-          // Revenue for completed and confirmed bookings
-          if (status == 'completed' || status == 'confirmed') {
+          // Revenue for completed bookings only (not confirmed or cancelled)
+          if (status == 'completed') {
             branchRevenue += _getPrice(data['price']);
           }
         }

@@ -932,9 +932,13 @@ class _CalenderScreenState extends State<CalenderScreen> {
       }).toList();
       
       bookingCount = filteredItems.length;
-      // Calculate day's total revenue for filtered items
+      // Calculate day's total revenue for filtered items (only completed bookings)
       for (final appt in filteredItems) {
-        dayRevenue += appt.price;
+        // Only count completed bookings for revenue
+        final status = (appt.status ?? '').toString().toLowerCase();
+        if (status == 'completed') {
+          dayRevenue += appt.price;
+        }
       }
     }
     

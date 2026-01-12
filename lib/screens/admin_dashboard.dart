@@ -97,10 +97,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
       for (final doc in qs.docs) {
         final data = doc.data();
 
-        // Only confirmed / completed bookings
+        // Only completed bookings count for revenue (not confirmed or cancelled)
         final status =
             (data['status'] ?? '').toString().toLowerCase().trim();
-        if (status != 'confirmed' && status != 'completed') continue;
+        if (status != 'completed') continue;
 
         bookingCount++;
 

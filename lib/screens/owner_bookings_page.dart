@@ -2619,7 +2619,8 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
 
     double revenue = 0.0;
     for (final b in _bookings) {
-      if (b.status == 'confirmed' || b.status == 'completed') {
+      // Only count completed bookings for revenue (not confirmed or cancelled)
+      if (b.status == 'completed') {
         revenue += b.priceValue;
       }
     }
