@@ -1191,6 +1191,17 @@ class _ServiceFormSheetState extends State<ServiceFormSheet> {
   Future<void> _saveService() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Validate that at least one branch is selected
+    if (_selectedBranches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select at least one branch for this service'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     setState(() => _saving = true);
 
     try {

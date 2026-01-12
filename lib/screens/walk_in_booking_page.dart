@@ -1280,14 +1280,14 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
     // Filter services by selected branch.
     // Service.branches is a List<String> of branch document IDs.
-    // - If the list is empty or null → service is available for ALL branches.
+    // - If the list is empty or null → service is NOT available (must be assigned to at least one branch).
     // - If the list is non-empty → service is only available for those specific branch IDs.
     final List<Map<String, dynamic>> visibleServices = _services.where((srv) {
       final dynamic branchesRaw = srv['branches'];
-      // If branches field is missing, null, or empty list → available everywhere
-      if (branchesRaw == null) return true;
-      if (branchesRaw is! List) return true;
-      if (branchesRaw.isEmpty) return true;
+      // If branches field is missing, null, or empty list → NOT available (must be assigned to branches)
+      if (branchesRaw == null) return false;
+      if (branchesRaw is! List) return false;
+      if (branchesRaw.isEmpty) return false;
 
       // branches is non-empty → check if selected branch is in the list
       final List<String> branchIds = branchesRaw.map((e) => e.toString()).toList();
