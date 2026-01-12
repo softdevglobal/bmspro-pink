@@ -2629,8 +2629,18 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         revenue > 0 ? '\$${revenue.toStringAsFixed(0)}' : '\$0';
 
     final filtered = _bookings.where((b) {
-      final matchesStatus =
-          _statusFilter == 'all' ? true : b.status == _statusFilter;
+      bool matchesStatus;
+      if (_statusFilter == 'all') {
+        matchesStatus = true;
+      } else if (_statusFilter == 'pending') {
+        // Booking Requests: Show all statuses before confirmed (matching admin panel)
+        matchesStatus = b.status == 'pending' ||
+            b.status == 'awaitingstaffapproval' ||
+            b.status == 'partiallyapproved' ||
+            b.status == 'staffrejected';
+      } else {
+        matchesStatus = b.status == _statusFilter;
+      }
       final term = _searchController.text.trim().toLowerCase();
       if (term.isEmpty) return matchesStatus;
       final inText =
@@ -2872,39 +2882,6 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
                                     size: 14, color: Color(0xFFD97706)),
                                 SizedBox(width: 12),
                                 Text('Booking Requests'),
-                              ],
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'awaitingstaffapproval',
-                            child: Row(
-                              children: [
-                                Icon(FontAwesomeIcons.userClock,
-                                    size: 14, color: Color(0xFF2563EB)),
-                                SizedBox(width: 12),
-                                Text('Awaiting Staff'),
-                              ],
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'partiallyapproved',
-                            child: Row(
-                              children: [
-                                Icon(FontAwesomeIcons.userCheck,
-                                    size: 14, color: Color(0xFF0891B2)),
-                                SizedBox(width: 12),
-                                Text('Partially Approved'),
-                              ],
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'staffrejected',
-                            child: Row(
-                              children: [
-                                Icon(FontAwesomeIcons.userXmark,
-                                    size: 14, color: Color(0xFFEA580C)),
-                                SizedBox(width: 12),
-                                Text('Staff Rejected'),
                               ],
                             ),
                           ),

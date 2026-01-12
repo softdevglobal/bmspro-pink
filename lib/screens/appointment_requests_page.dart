@@ -80,6 +80,8 @@ class _AppointmentRequestsPageState extends State<AppointmentRequestsPage> {
   List<ServiceRequest> _pendingRequests = [];
   bool _isLoading = true;
   String? _ownerUid;
+  String? _userRole;
+  String? _userBranchId;
 
   @override
   void initState() {
@@ -95,7 +97,7 @@ class _AppointmentRequestsPageState extends State<AppointmentRequestsPage> {
         return;
       }
 
-      // Get user document to find ownerUid
+      // Get user document to find ownerUid, role, and branchId
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
@@ -104,8 +106,12 @@ class _AppointmentRequestsPageState extends State<AppointmentRequestsPage> {
       if (userDoc.exists) {
         final data = userDoc.data()!;
         _ownerUid = data['ownerUid']?.toString() ?? user.uid;
+        _userRole = (data['role'] ?? '').toString();
+        _userBranchId = data['branchId']?.toString();
       } else {
         _ownerUid = user.uid;
+        _userRole = null;
+        _userBranchId = null;
       }
 
       _listenToPendingRequests();
@@ -126,18 +132,27 @@ class _AppointmentRequestsPageState extends State<AppointmentRequestsPage> {
     debugPrint('=== FETCHING BOOKINGS ===');
     debugPrint('Current user UID: ${user.uid}');
     debugPrint('Owner UID: $_ownerUid');
+    debugPrint('User Role: $_userRole');
+    debugPrint('User Branch ID: $_userBranchId');
     
-    FirebaseFirestore.instance
+    // Build query with constraints - branch admin should only see bookings for their branch
+    Query query = FirebaseFirestore.instance
         .collection('bookings')
         .where('ownerUid', isEqualTo: _ownerUid)
-        .where('status', whereIn: ['AwaitingStaffApproval', 'PartiallyApproved'])
-        .snapshots()
-        .listen((snap) {
+        .where('status', whereIn: ['AwaitingStaffApproval', 'PartiallyApproved']);
+    
+    // Branch admin should only see bookings for their branch (matching admin panel logic)
+    if (_userRole == 'salon_branch_admin' && _userBranchId != null && _userBranchId!.isNotEmpty) {
+      query = query.where('branchId', isEqualTo: _userBranchId);
+      debugPrint('Added branchId filter: $_userBranchId');
+    }
+    
+    query.snapshots().listen((snap) {
       debugPrint('Found ${snap.docs.length} bookings with pending/partial status');
       final List<ServiceRequest> requests = [];
 
       for (final doc in snap.docs) {
-        final data = doc.data();
+        final data = doc.data() as Map<String, dynamic>;
         final bookingId = doc.id;
         debugPrint('--- Booking: ${data['bookingCode']} (status: ${data['status']}) ---');
 
