@@ -1167,7 +1167,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             onPressed: () {
               setState(() {
                 _currentStep = 0;
+                _selectedBranchId = null;
                 _selectedBranchLabel = null;
+                _selectedBranchTimezone = null;
                 _selectedServiceIds = {};
                 _selectedDate = null;
                 _serviceTimeSelections = {};
@@ -1816,16 +1818,6 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
               ),
               const SizedBox(height: 16),
 
-              // Time selector
-              const Text(
-                'Select Time',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted),
-              ),
-              const SizedBox(height: 8),
-              _buildTimeSlots(serviceId, duration),
-
-              const SizedBox(height: 16),
-
               // Staff selector - hidden for salon_staff (they are auto-assigned)
               if (_userRole == 'salon_staff') ...[
                 Container(
@@ -1860,6 +1852,16 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
                 const SizedBox(height: 8),
                 _buildStaffChips(serviceId, availableStaff, selectedStaffId),
               ],
+
+              const SizedBox(height: 16),
+
+              // Time selector
+              const Text(
+                'Select Time',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted),
+              ),
+              const SizedBox(height: 8),
+              _buildTimeSlots(serviceId, duration),
             ],
           ),
         );
