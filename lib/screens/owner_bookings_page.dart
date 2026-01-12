@@ -743,16 +743,18 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
         );
       }
       
-      // Send email when status changes to Confirmed or Completed
+      // Send email when status changes to Confirmed, Completed, or Canceled
       // This ensures emails are sent even when status is updated directly from mobile app
       // Only send if this is an actual status change (not already at target status)
       final String currentBookingId = bookingId;
       final String currentPreviousStatus = previousStatus ?? booking.status;
-      if ((newStatus == 'Confirmed' || newStatus == 'Completed') && 
-          currentPreviousStatus.toLowerCase() != newStatus.toLowerCase()) {
+      // Normalize status for API call (API expects "Canceled" not "cancelled")
+      final String normalizedStatus = (newStatus.toLowerCase() == 'cancelled') ? 'Canceled' : newStatus;
+      if ((normalizedStatus == 'Confirmed' || normalizedStatus == 'Completed' || normalizedStatus == 'Canceled') && 
+          currentPreviousStatus.toLowerCase() != normalizedStatus.toLowerCase()) {
         await _sendBookingStatusEmail(
           bookingId: currentBookingId,
-          status: newStatus,
+          status: normalizedStatus,
           booking: booking,
           finalServices: finalServices,
           previousStatus: currentPreviousStatus,
@@ -764,7 +766,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   }
   
   /// Send booking status email via API
-  /// This is called when status changes to Confirmed or Completed from mobile app
+  /// This is called when status changes to Confirmed, Completed, or Canceled from mobile app
   Future<void> _sendBookingStatusEmail({
     required String bookingId,
     required String status,
