@@ -12,6 +12,7 @@ import 'terms_of_service_page.dart';
 import 'help_support_page.dart';
 import '../utils/timezone_helper.dart';
 import '../services/audit_log_service.dart';
+import '../services/staff_check_in_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -1351,6 +1352,17 @@ class _ProfileScreenState extends State<ProfileScreen>
                         onTap: () async {
                           final user = FirebaseAuth.instance.currentUser;
                           if (user != null) {
+                            // Check if staff has an active check-in and check them out
+                            try {
+                              final activeCheckIn = await StaffCheckInService.getActiveCheckIn();
+                              if (activeCheckIn != null && activeCheckIn.id != null) {
+                                await StaffCheckInService.checkOut(activeCheckIn.id!);
+                              }
+                            } catch (e) {
+                              // Log error but continue with logout even if checkout fails
+                              debugPrint('Error checking out on logout: $e');
+                            }
+
                             final userDoc = await FirebaseFirestore.instance
                                 .collection('users')
                                 .doc(user.uid)
