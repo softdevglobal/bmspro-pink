@@ -37,6 +37,7 @@ class Appointment {
   final String email;
   final String bookingId;
   final List<ServiceDetail> services;
+  final String? branchName; // Store the branch name for this specific appointment
   
   Appointment({
     required this.time,
@@ -52,6 +53,7 @@ class Appointment {
     this.email = '',
     this.bookingId = '',
     this.services = const [],
+    this.branchName,
   });
 }
 
@@ -126,6 +128,10 @@ class _CalenderScreenState extends State<CalenderScreen> {
   String? _bookingsError;
   final List<Map<String, dynamic>> _allBookings = [];
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingsSub;
+  
+  // Branches state
+  final Map<String, BranchTheme> _branchThemes = {};
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _branchesSub;
 
   @override
   void initState() {
@@ -153,6 +159,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
           });
 
           _startBookingsListener();
+          _startBranchesListener();
         }
       } else {
          if (mounted) setState(() => _isLoadingRole = false);
@@ -167,10 +174,85 @@ class _CalenderScreenState extends State<CalenderScreen> {
   void dispose() {
     _bookingsSub?.cancel();
     _bookingRequestsSub?.cancel();
+    _branchesSub?.cancel();
     super.dispose();
   }
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _bookingRequestsSub;
+  
+  // Predefined color palette for branches
+  static final List<Color> _branchColorPalette = [
+    const Color(0xFFFF2D8F), // Pink
+    const Color(0xFF3B82F6), // Blue
+    const Color(0xFF10B981), // Green
+    const Color(0xFF8B5CF6), // Purple
+    const Color(0xFFF59E0B), // Amber
+    const Color(0xFFEF4444), // Red
+    const Color(0xFF06B6D4), // Cyan
+    const Color(0xFFEC4899), // Pink-500
+    const Color(0xFF6366F1), // Indigo
+    const Color(0xFF14B8A6), // Teal
+  ];
+  
+  void _startBranchesListener() {
+    final ownerUid = _ownerUid;
+    if (ownerUid == null || ownerUid.isEmpty) {
+      return;
+    }
+    
+    _branchesSub?.cancel();
+    _branchesSub = FirebaseFirestore.instance
+        .collection('branches')
+        .where('ownerUid', isEqualTo: ownerUid)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      
+      final Map<String, BranchTheme> newThemes = {};
+      int colorIndex = 0;
+      
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final branchName = (data['name'] ?? '').toString();
+        
+        if (branchName.isNotEmpty) {
+          // Assign color from palette (cycle through if more branches than colors)
+          final baseColor = _branchColorPalette[colorIndex % _branchColorPalette.length];
+          
+          // Create light background color (lighter version of base color with opacity)
+          final lightBg = Color.fromRGBO(
+            baseColor.red,
+            baseColor.green,
+            baseColor.blue,
+            0.1,
+          );
+          
+          // Create gradient (base color to lighter version)
+          final lighterColor = Color.fromRGBO(
+            (baseColor.red + 255) ~/ 2,
+            (baseColor.green + 255) ~/ 2,
+            (baseColor.blue + 255) ~/ 2,
+            1.0,
+          );
+          
+          newThemes[branchName] = BranchTheme(
+            color: baseColor,
+            lightBg: lightBg,
+            gradient: [baseColor, lighterColor],
+          );
+          
+          colorIndex++;
+        }
+      }
+      
+      setState(() {
+        _branchThemes.clear();
+        _branchThemes.addAll(newThemes);
+      });
+    }, onError: (e) {
+      debugPrint('Error listening to branches: $e');
+    });
+  }
   
   void _startBookingsListener() {
     final ownerUid = _ownerUid;
@@ -418,6 +500,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
               email: clientEmail,
               bookingId: bookingId,
               services: [serviceDetail],
+              branchName: branchName.isNotEmpty ? branchName : null,
             );
 
             addAppointmentToDay(appt);
@@ -453,6 +536,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
           email: clientEmail,
           bookingId: bookingId,
           services: [],
+          branchName: branchName.isNotEmpty ? branchName : null,
         );
 
         addAppointmentToDay(appt);
@@ -660,16 +744,17 @@ class _CalenderScreenState extends State<CalenderScreen> {
           ),
         ),
         if (!_isBranchView || !isBranchAdmin) // Only show legend if complicated, or always? Keeping it simple.
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _legendItem(AppConfig.branches['Main St']!.color, 'Main St'),
-              const SizedBox(width: 16),
-              _legendItem(AppConfig.branches['Downtown']!.color, 'Downtown'),
-              const SizedBox(width: 16),
-              _legendItem(AppConfig.branches['Westside']!.color, 'Westside'),
-            ],
-          )
+          _branchThemes.isEmpty
+              ? const SizedBox.shrink()
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: _branchThemes.entries.map((entry) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: _legendItem(entry.value.color, entry.key),
+                    );
+                  }).toList(),
+                )
       ],
     );
   }
@@ -777,16 +862,28 @@ class _CalenderScreenState extends State<CalenderScreen> {
               int userBookingCount = 0;
               if (dayData != null) {
                 // Filter bookings for current user based on role
-                userBookingCount = dayData.items.where((appt) {
+                final filteredItems = dayData.items.where((appt) {
                   if (_currentUserRole == 'salon_owner') return true;
                   if (_currentUserRole == 'salon_branch_admin' && _isBranchView) return true;
                   return _currentUserId != null && appt.staffId == _currentUserId;
-                }).length;
+                }).toList();
+                
+                userBookingCount = filteredItems.length;
                 
                 // Only show branch color if user has bookings
-                if (userBookingCount > 0 && dayData.branch != null) {
-                  final branchTheme = AppConfig.branches[dayData.branch];
-                  branchColor = branchTheme?.color ?? AppConfig.primary;
+                // Use the first appointment's branch color for the calendar indicator
+                if (userBookingCount > 0 && filteredItems.isNotEmpty) {
+                  final firstApptBranch = filteredItems.first.branchName;
+                  if (firstApptBranch != null && firstApptBranch.isNotEmpty) {
+                    final branchTheme = _branchThemes[firstApptBranch];
+                    branchColor = branchTheme?.color ?? AppConfig.primary;
+                  } else {
+                    // Fallback to day's merged branch if appointment doesn't have branch
+                    if (dayData.branch != null && dayData.branch != 'Multiple Branches') {
+                      final branchTheme = _branchThemes[dayData.branch];
+                      branchColor = branchTheme?.color ?? AppConfig.primary;
+                    }
+                  }
                 }
               }
               return GestureDetector(
@@ -914,15 +1011,6 @@ class _CalenderScreenState extends State<CalenderScreen> {
     double dayRevenue = 0;
     
     if (data != null) {
-      if (data.isOffDay) {
-        branchName = "Day Off";
-        gradient = [Colors.grey.shade400, Colors.grey.shade300];
-      } else if (data.branch != null) {
-        branchName = "${data.branch} Branch";
-        final theme = _resolveBranchTheme(data.branch);
-        gradient = theme.gradient;
-      }
-      
       // Filter items based on role & view mode (same logic as _buildAppointmentsList)
       final filteredItems = data.items.where((appt) {
         if (_currentUserRole == 'salon_owner') return true;
@@ -932,6 +1020,39 @@ class _CalenderScreenState extends State<CalenderScreen> {
       }).toList();
       
       bookingCount = filteredItems.length;
+      
+      if (data.isOffDay) {
+        branchName = "Day Off";
+        gradient = [Colors.grey.shade400, Colors.grey.shade300];
+      } else if (filteredItems.isNotEmpty) {
+        // Get unique branch names from filtered appointments
+        final branchNames = filteredItems
+            .where((appt) => appt.branchName != null && appt.branchName!.isNotEmpty)
+            .map((appt) => appt.branchName!)
+            .toSet()
+            .toList();
+        
+        if (branchNames.length == 1) {
+          // Single branch - show branch name and use its color
+          branchName = "${branchNames.first} Branch";
+          final theme = _resolveBranchTheme(branchNames.first);
+          gradient = theme.gradient;
+        } else if (branchNames.length > 1) {
+          // Multiple branches - show "Multiple Branches" but use first branch's color
+          branchName = "Multiple Branches";
+          final theme = _resolveBranchTheme(branchNames.first);
+          gradient = theme.gradient;
+        } else {
+          // No branch info - use default
+          branchName = "Salon";
+          gradient = [AppConfig.primary, AppConfig.accent];
+        }
+      } else {
+        // No bookings but not an off day
+        branchName = "No Bookings";
+        gradient = [Colors.grey.shade400, Colors.grey.shade300];
+      }
+      
       // Calculate day's total revenue for filtered items (only completed bookings)
       for (final appt in filteredItems) {
         // Only count completed bookings for revenue
@@ -1123,7 +1244,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
 
     return Column(
       children: filteredItems.map((appt) {
-        final theme = _resolveBranchTheme(data.branch);
+        // Use the appointment's specific branch name for its color
+        final theme = _resolveBranchTheme(appt.branchName);
         
         // Dynamic status colors
         Color statusBgColor;
@@ -1210,7 +1332,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
                                   spacing: 6,
                                   runSpacing: 4,
                                   children: [
-                                    if (data.branch != null)
+                                    if (appt.branchName != null && appt.branchName!.isNotEmpty)
                                       Container(
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 8, vertical: 2),
@@ -1219,7 +1341,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
                                           borderRadius: BorderRadius.circular(6),
                                         ),
                                         child: Text(
-                                          data.branch!.toUpperCase(),
+                                          appt.branchName!.toUpperCase(),
                                           style: TextStyle(
                                               fontSize: 10,
                                               fontWeight: FontWeight.bold,
@@ -1569,7 +1691,9 @@ class _CalenderScreenState extends State<CalenderScreen> {
   }
   
   Widget _buildTimeSlotView(List<Appointment> appointments, String? branchName, {bool isBranchView = false}) {
-    final theme = _resolveBranchTheme(branchName);
+    // Use first appointment's branch color for header, or fallback to day's branch
+    final firstApptBranch = appointments.isNotEmpty ? appointments.first.branchName : null;
+    final theme = _resolveBranchTheme(firstApptBranch ?? branchName);
     
     // Generate time slots from 9 AM to 6 PM (in minutes from midnight) - 15 min intervals
     final List<int> timeSlotMinutes = [];
@@ -1719,7 +1843,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
                     // Appointment slot
                     Expanded(
                       child: appointment != null
-                          ? _buildTimeSlotAppointment(appointment, theme)
+                          ? _buildTimeSlotAppointment(appointment, _resolveBranchTheme(appointment.branchName))
                           : Container(
                                   height: 44,
                                   margin: const EdgeInsets.all(4),
@@ -1932,6 +2056,11 @@ class _CalenderScreenState extends State<CalenderScreen> {
   }
 
   BranchTheme _resolveBranchTheme(String? branchName) {
+    // First check dynamic branch themes from database
+    if (branchName != null && _branchThemes.containsKey(branchName)) {
+      return _branchThemes[branchName]!;
+    }
+    // Fallback to hardcoded branches if not found in database
     if (branchName != null && AppConfig.branches.containsKey(branchName)) {
       return AppConfig.branches[branchName]!;
     }
