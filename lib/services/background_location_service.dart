@@ -155,15 +155,24 @@ class BackgroundLocationService {
         _branchLongitude!,
       );
       
-      debugPrint('BackgroundLocationService: Immediate check - Distance: ${distance.toStringAsFixed(1)}m, allowed: ${_allowedRadius!.toStringAsFixed(1)}m');
+      // Get GPS accuracy (in meters), use default buffer if not available
+      final gpsAccuracy = position.accuracy > 0 ? position.accuracy : 15.0;
+      // Use GPS accuracy as buffer, with minimum of 10m and maximum of 30m for safety
+      final gpsAccuracyBuffer = gpsAccuracy.clamp(10.0, 30.0);
+      
+      debugPrint('BackgroundLocationService: Immediate check - Distance: ${distance.toStringAsFixed(1)}m, allowed: ${_allowedRadius!.toStringAsFixed(1)}m, GPS accuracy: ${gpsAccuracy.toStringAsFixed(1)}m');
       
       // Notify about distance update
       onDistanceUpdate?.call(distance, _allowedRadius!);
       
-      // Check if outside radius
-      if (distance > _allowedRadius!) {
-        debugPrint('BackgroundLocationService: Outside radius! Auto clock-out triggered (immediate check)');
+      // Check if outside radius (with buffer for GPS accuracy)
+      // Only trigger auto check-out if distance exceeds radius by more than GPS accuracy buffer
+      final threshold = _allowedRadius! + gpsAccuracyBuffer;
+      if (distance > threshold) {
+        debugPrint('BackgroundLocationService: Outside radius! Auto clock-out triggered (immediate check) - Distance: ${distance.toStringAsFixed(1)}m, Threshold: ${threshold.toStringAsFixed(1)}m (radius: ${_allowedRadius!.toStringAsFixed(1)}m + buffer: ${gpsAccuracyBuffer.toStringAsFixed(1)}m)');
         await _performAutoCheckOut(position, distance);
+      } else if (distance > _allowedRadius!) {
+        debugPrint('BackgroundLocationService: Near radius boundary but within GPS accuracy buffer - Distance: ${distance.toStringAsFixed(1)}m, Allowed: ${_allowedRadius!.toStringAsFixed(1)}m, Buffer: ${gpsAccuracyBuffer.toStringAsFixed(1)}m');
       }
     } catch (e) {
       debugPrint('BackgroundLocationService: Error in immediate location check: $e');
@@ -404,15 +413,24 @@ class BackgroundLocationService {
       _branchLongitude!,
     );
     
-    debugPrint('BackgroundLocationService: Distance from branch: ${distance.toStringAsFixed(1)}m, allowed: ${_allowedRadius!.toStringAsFixed(1)}m');
+    // Get GPS accuracy (in meters), use default buffer if not available
+    final gpsAccuracy = position.accuracy > 0 ? position.accuracy : 15.0;
+    // Use GPS accuracy as buffer, with minimum of 10m and maximum of 30m for safety
+    final gpsAccuracyBuffer = gpsAccuracy.clamp(10.0, 30.0);
+    
+    debugPrint('BackgroundLocationService: Distance from branch: ${distance.toStringAsFixed(1)}m, allowed: ${_allowedRadius!.toStringAsFixed(1)}m, GPS accuracy: ${gpsAccuracy.toStringAsFixed(1)}m');
     
     // Notify about distance update
     onDistanceUpdate?.call(distance, _allowedRadius!);
     
-    // Check if outside radius
-    if (distance > _allowedRadius!) {
-      debugPrint('BackgroundLocationService: Outside radius! Auto clock-out triggered');
+    // Check if outside radius (with buffer for GPS accuracy)
+    // Only trigger auto check-out if distance exceeds radius by more than GPS accuracy buffer
+    final threshold = _allowedRadius! + gpsAccuracyBuffer;
+    if (distance > threshold) {
+      debugPrint('BackgroundLocationService: Outside radius! Auto clock-out triggered - Distance: ${distance.toStringAsFixed(1)}m, Threshold: ${threshold.toStringAsFixed(1)}m (radius: ${_allowedRadius!.toStringAsFixed(1)}m + buffer: ${gpsAccuracyBuffer.toStringAsFixed(1)}m)');
       await _performAutoCheckOut(position, distance);
+    } else if (distance > _allowedRadius!) {
+      debugPrint('BackgroundLocationService: Near radius boundary but within GPS accuracy buffer - Distance: ${distance.toStringAsFixed(1)}m, Allowed: ${_allowedRadius!.toStringAsFixed(1)}m, Buffer: ${gpsAccuracyBuffer.toStringAsFixed(1)}m');
     }
   }
   

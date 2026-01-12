@@ -729,8 +729,10 @@ class StaffCheckInService {
         branchLon,
       );
 
-      // If outside radius, auto check-out
-      if (distance > allowedRadius) {
+      // If outside radius, auto check-out (with buffer for GPS accuracy - typically 10-15m error)
+      // Only trigger auto check-out if distance exceeds radius by more than 15 meters
+      const gpsAccuracyBuffer = 15.0; // meters
+      if (distance > (allowedRadius + gpsAccuracyBuffer)) {
         // Calculate hours worked (excluding breaks)
         final checkInTime = (checkInData['checkInTime'] as Timestamp).toDate();
         final now = DateTime.now();
