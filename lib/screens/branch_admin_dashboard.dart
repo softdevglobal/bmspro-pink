@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'profile_screen.dart' as profile_screen;
 import 'appointment_requests_page.dart';
 import 'all_appointments_page.dart';
+import 'other_staff_appointments_page.dart';
 import 'appointment_details_page.dart';
 import '../services/staff_check_in_service.dart';
 import '../services/location_service.dart';
@@ -1884,10 +1885,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   }
 
   Widget _buildOtherStaffAppointmentsSection() {
-    // Get pending/confirmed appointments for other staff
+    // Get only confirmed appointments for other staff (no pending)
     final otherStaffAppointments = _otherStaffAppointments.where((a) {
       final status = (a['status'] ?? '').toString().toLowerCase();
-      return status == 'pending' || status == 'confirmed' || status == 'awaitingstaffapproval' || status == 'partiallyapproved';
+      return status == 'confirmed' || status == 'completed';
     }).toList();
     
     if (otherStaffAppointments.isEmpty) {
@@ -1969,16 +1970,22 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               appointmentData: appointment,
             );
           }),
-          if (otherStaffAppointments.length > 5)
-            const SizedBox(height: 8),
-          if (otherStaffAppointments.length > 5)
+          if (otherStaffAppointments.isNotEmpty) ...[
+            const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton(
                 onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const AllAppointmentsPage()),
-                  );
+                  if (_branchId != null && _ownerUid != null) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => OtherStaffAppointmentsPage(
+                          branchId: _branchId!,
+                          ownerUid: _ownerUid!,
+                        ),
+                      ),
+                    );
+                  }
                 },
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
@@ -1988,11 +1995,14 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
                   ),
                 ),
                 child: Text(
-                  'View All (${otherStaffAppointments.length} more)',
+                  otherStaffAppointments.length > 5
+                      ? 'View All (${otherStaffAppointments.length - 5} more)'
+                      : 'View All',
                   style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
                 ),
               ),
-            )
+            ),
+          ]
         ],
       ),
     );
