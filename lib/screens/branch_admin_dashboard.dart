@@ -1082,28 +1082,91 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
 
       for (var doc in bookingsSnap.docs) {
         final data = doc.data();
-        double price = (data['price'] as num?)?.toDouble() ?? 0;
+        final status = (data['status'] ?? '').toString().toLowerCase();
         
-        // If price not set or is 0, derive from services list if present
-        if (price == 0 && data['services'] is List) {
+        // Check if this booking is assigned to the branch admin (current user)
+        bool isMyBooking = false;
+        double myServiceRevenue = 0;
+        List<String> myServiceNames = [];
+        
+        // Check top-level staffId
+        if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
+          isMyBooking = true;
+          myServiceRevenue = (data['price'] as num?)?.toDouble() ?? 0;
+          
+          // Get service name for single-service bookings
+          final serviceName = (data['serviceName'] ?? '').toString();
+          if (serviceName.isNotEmpty) {
+            myServiceNames.addAll(serviceName.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty));
+          }
+        }
+        
+        // Check services array for multi-service bookings
+        if (data['services'] is List) {
           final servicesList = data['services'] as List;
           for (final item in servicesList) {
-            if (item is Map && item['price'] != null) {
-              final p = item['price'];
-              if (p is num) {
-                price += p.toDouble();
-              } else if (p is String) {
-                price += double.tryParse(p) ?? 0;
+            if (item is Map) {
+              final svcStaffId = item['staffId']?.toString();
+              final svcStaffAuthUid = item['staffAuthUid']?.toString();
+              if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
+                isMyBooking = true;
+                final servicePrice = (item['price'] as num?)?.toDouble() ?? 0;
+                myServiceRevenue += servicePrice;
+                
+                // Get service name
+                final svcName = (item['serviceName'] ?? item['name'] ?? '').toString();
+                if (svcName.isNotEmpty) {
+                  myServiceNames.add(svcName);
+                }
               }
             }
           }
         }
         
-        final status = (data['status'] ?? '').toString().toLowerCase();
+        // Only count bookings assigned to the branch admin
+        if (!isMyBooking) {
+          continue;
+        }
+        
+        // For multi-service bookings, check individual service completion status
+        double completedServiceRevenue = 0;
+        List<String> completedServiceNames = [];
+        
+        if (data['services'] is List) {
+          // Multi-service booking - check individual service completion
+          final servicesList = data['services'] as List;
+          for (final item in servicesList) {
+            if (item is Map) {
+              final svcStaffId = item['staffId']?.toString();
+              final svcStaffAuthUid = item['staffAuthUid']?.toString();
+              if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
+                final completionStatus = (item['completionStatus'] ?? '').toString().toLowerCase();
+                if (completionStatus == 'completed') {
+                  final servicePrice = (item['price'] as num?)?.toDouble() ?? 0;
+                  completedServiceRevenue += servicePrice;
+                  
+                  // Get service name
+                  final svcName = (item['serviceName'] ?? item['name'] ?? '').toString();
+                  if (svcName.isNotEmpty) {
+                    completedServiceNames.add(svcName);
+                  }
+                }
+              }
+            }
+          }
+        } else if (status == 'completed') {
+          // Single service booking - check booking status
+          completedServiceRevenue = myServiceRevenue;
+          completedServiceNames = myServiceNames;
+        }
+        
+        // Only count if there are completed services
+        if (completedServiceRevenue == 0) {
+          continue;
+        }
+        
         final dateStr = (data['date'] ?? '').toString();
         final client = (data['client'] ?? '').toString();
-        final serviceName = (data['serviceName'] ?? '').toString();
-        final staffName = (data['staffName'] ?? 'Unassigned').toString();
 
         // Parse date
         DateTime? bookingDate;
@@ -1113,49 +1176,41 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
           }
         } catch (_) {}
 
-        // Count only completed bookings for revenue (not confirmed or cancelled)
-        if (status == 'completed') {
-          completedBookings++;
-          totalRevenue += price;
+        // Count only completed bookings/services for revenue
+        completedBookings++;
+        totalRevenue += completedServiceRevenue;
 
-          // Track client
-          if (client.isNotEmpty) {
-            uniqueClients.add(client.toLowerCase());
-            clientBookingCount[client.toLowerCase()] = 
-                (clientBookingCount[client.toLowerCase()] ?? 0) + 1;
-          }
+        // Track client
+        if (client.isNotEmpty) {
+          uniqueClients.add(client.toLowerCase());
+          clientBookingCount[client.toLowerCase()] = 
+              (clientBookingCount[client.toLowerCase()] ?? 0) + 1;
+        }
 
-          // Service revenue
-          if (serviceName.isNotEmpty) {
-            // Split if multiple services
-            for (var svc in serviceName.split(',')) {
-              final svcName = svc.trim();
-              if (svcName.isNotEmpty) {
-                serviceRevenue[svcName] = (serviceRevenue[svcName] ?? 0) + (price / serviceName.split(',').length);
-              }
-            }
+        // Service revenue - only count completed services assigned to branch admin
+        for (var svcName in completedServiceNames) {
+          if (svcName.isNotEmpty) {
+            // Distribute revenue evenly across services if multiple
+            final servicePrice = completedServiceNames.length > 1 
+                ? completedServiceRevenue / completedServiceNames.length 
+                : completedServiceRevenue;
+            serviceRevenue[svcName] = (serviceRevenue[svcName] ?? 0) + servicePrice;
           }
+        }
 
-          // Staff performance
-          if (staffName.isNotEmpty && staffName != 'Any Available' && staffName != 'Multiple Staff') {
-            staffRevenue[staffName] = (staffRevenue[staffName] ?? 0) + price;
-            staffBookingCount[staffName] = (staffBookingCount[staffName] ?? 0) + 1;
+        // Daily revenue (last 30 days)
+        if (bookingDate != null && bookingDate.isAfter(thirtyDaysAgo)) {
+          final dayIndex = now.difference(bookingDate).inDays;
+          if (dayIndex >= 0 && dayIndex < 30) {
+            dailyRevenue[29 - dayIndex] += completedServiceRevenue;
           }
+        }
 
-          // Daily revenue (last 30 days)
-          if (bookingDate != null && bookingDate.isAfter(thirtyDaysAgo)) {
-            final dayIndex = now.difference(bookingDate).inDays;
-            if (dayIndex >= 0 && dayIndex < 30) {
-              dailyRevenue[29 - dayIndex] += price;
-            }
-          }
-
-          // Last month revenue (30-60 days ago)
-          if (bookingDate != null && 
-              bookingDate.isAfter(sixtyDaysAgo) && 
-              bookingDate.isBefore(thirtyDaysAgo)) {
-            lastMonthRevenue += price;
-          }
+        // Last month revenue (30-60 days ago)
+        if (bookingDate != null && 
+            bookingDate.isAfter(sixtyDaysAgo) && 
+            bookingDate.isBefore(thirtyDaysAgo)) {
+          lastMonthRevenue += completedServiceRevenue;
         }
       }
 

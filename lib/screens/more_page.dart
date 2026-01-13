@@ -1346,7 +1346,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
         final bookingBranchId = (data['branchId'] ?? '').toString();
         
         // ============== MY SUMMARY ==============
-        // Check if this booking is assigned to me (staff)
+        // Check if this booking is assigned to me (staff/branch admin)
         bool isMyBooking = false;
         double myServiceRevenue = 0;
         
@@ -1356,7 +1356,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
           myServiceRevenue = _getPrice(data['price']);
         }
         
-        // Check services array
+        // Check services array for multi-service bookings
         if (data['services'] is List) {
           for (final service in (data['services'] as List)) {
             if (service is Map) {
@@ -1372,7 +1372,28 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
 
         if (isMyBooking) {
           myTotal++;
-          if (status == 'completed') {
+          
+          // For multi-service bookings, check individual service completion status
+          if (data['services'] is List) {
+            double completedServiceRevenue = 0;
+            for (final service in (data['services'] as List)) {
+              if (service is Map) {
+                final svcStaffId = service['staffId']?.toString();
+                final svcStaffAuthUid = service['staffAuthUid']?.toString();
+                if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
+                  final completionStatus = (service['completionStatus'] ?? '').toString().toLowerCase();
+                  if (completionStatus == 'completed') {
+                    completedServiceRevenue += _getPrice(service['price']);
+                  }
+                }
+              }
+            }
+            if (completedServiceRevenue > 0) {
+              myCompleted++;
+              myRevenue += completedServiceRevenue;
+            }
+          } else if (status == 'completed') {
+            // Single service booking - check booking status
             myCompleted++;
             myRevenue += myServiceRevenue;
           }
