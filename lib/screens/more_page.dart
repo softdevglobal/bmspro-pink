@@ -1398,7 +1398,20 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
           
           // Revenue for completed bookings only (not confirmed or cancelled)
           if (status == 'completed') {
-            branchRevenue += _getPrice(data['price']);
+            // Get price from top-level field first
+            double bookingPrice = _getPrice(data['price']);
+            
+            // If price not set or is 0, derive from services list if present
+            if (bookingPrice == 0 && data['services'] is List) {
+              final servicesList = data['services'] as List;
+              for (final item in servicesList) {
+                if (item is Map && item['price'] != null) {
+                  bookingPrice += _getPrice(item['price']);
+                }
+              }
+            }
+            
+            branchRevenue += bookingPrice;
           }
         }
       }

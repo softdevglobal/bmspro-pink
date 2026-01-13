@@ -1082,7 +1082,23 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
 
       for (var doc in bookingsSnap.docs) {
         final data = doc.data();
-        final price = (data['price'] as num?)?.toDouble() ?? 0;
+        double price = (data['price'] as num?)?.toDouble() ?? 0;
+        
+        // If price not set or is 0, derive from services list if present
+        if (price == 0 && data['services'] is List) {
+          final servicesList = data['services'] as List;
+          for (final item in servicesList) {
+            if (item is Map && item['price'] != null) {
+              final p = item['price'];
+              if (p is num) {
+                price += p.toDouble();
+              } else if (p is String) {
+                price += double.tryParse(p) ?? 0;
+              }
+            }
+          }
+        }
+        
         final status = (data['status'] ?? '').toString().toLowerCase();
         final dateStr = (data['date'] ?? '').toString();
         final client = (data['client'] ?? '').toString();
