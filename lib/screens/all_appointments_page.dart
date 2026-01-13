@@ -177,12 +177,18 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
     final now = DateTime.now();
     final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     
+    // Filter out cancelled bookings
+    final nonCancelledAppointments = _appointments.where((a) {
+      final status = (a['status']?.toString() ?? '').toLowerCase();
+      return status != 'cancelled';
+    }).toList();
+    
     switch (_selectedFilter) {
       case 'today':
-        return _appointments.where((a) => a['isToday'] == true).toList();
+        return nonCancelledAppointments.where((a) => a['isToday'] == true).toList();
       case 'upcoming':
         // Show confirmed bookings that are in future days (not today)
-        return _appointments.where((a) {
+        return nonCancelledAppointments.where((a) {
           final date = a['date']?.toString() ?? '';
           final status = (a['status']?.toString() ?? '').toLowerCase();
           // Must be future date (after today) and confirmed
@@ -190,7 +196,7 @@ class _AllAppointmentsPageState extends State<AllAppointmentsPage> {
         }).toList();
       case 'all':
       default:
-        return _appointments;
+        return nonCancelledAppointments;
     }
   }
 
