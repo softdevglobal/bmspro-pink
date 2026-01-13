@@ -804,22 +804,24 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       }
     }
     
+    // Check if any services need staff assignment (Any Available)
+    final hasUnassignedServices = servicesArray.any((service) {
+      final staffId = service['staffId'];
+      final staffName = (service['staffName'] ?? '').toString();
+      final approvalStatus = service['approvalStatus'];
+      return approvalStatus == 'needs_assignment' ||
+             staffId == null ||
+             staffId == 'null' ||
+             staffId == 'any' ||
+             staffName.toLowerCase().contains('any available') ||
+             staffName.toLowerCase().contains('any staff');
+    });
+    
     // Send notification to salon owner for all staff/branch admin created bookings
+    // (but not when owner creates their own booking)
     if (_ownerUid != null && _currentUserId != null && _currentUserId != _ownerUid) {
       try {
-        // Check if any services need staff assignment (Any Available)
-        final hasUnassignedServices = servicesArray.any((service) {
-          final staffId = service['staffId'];
-          final staffName = (service['staffName'] ?? '').toString();
-          final approvalStatus = service['approvalStatus'];
-          return approvalStatus == 'needs_assignment' ||
-                 staffId == null ||
-                 staffId == 'null' ||
-                 staffId == 'any' ||
-                 staffName.toLowerCase().contains('any available') ||
-                 staffName.toLowerCase().contains('any staff');
-        });
-        
+        // Send notification to owner
         await _sendOwnerNotification(
           bookingId: bookingId,
           bookingCode: bookingCode,
@@ -835,6 +837,31 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         );
       } catch (e) {
         debugPrint('Failed to send owner notification: $e');
+        // Don't fail booking creation if notification fails
+      }
+    }
+    
+    // ALWAYS send notification to branch admin(s) for ANY STAFF bookings
+    // This is critical - branch admins need to know about bookings that need staff assignment
+    // regardless of who created the booking (owner, staff, or branch admin themselves)
+    if (_ownerUid != null && _selectedBranchId != null && hasUnassignedServices) {
+      try {
+        await _sendBranchAdminNotifications(
+          bookingId: bookingId,
+          bookingCode: bookingCode,
+          clientName: clientName,
+          serviceNames: serviceNames,
+          dateStr: dateStr,
+          timeStr: mainTimeStr,
+          branchName: _selectedBranchLabel ?? 'Branch',
+          creatorName: _currentUserName ?? 'Staff',
+          creatorRole: _userRole ?? 'staff',
+          services: servicesArray,
+          needsStaffAssignment: hasUnassignedServices,
+        );
+        debugPrint('✅ Branch admin notification sent for ANY STAFF booking');
+      } catch (e) {
+        debugPrint('Failed to send branch admin notification: $e');
         // Don't fail booking creation if notification fails
       }
     }
@@ -1046,9 +1073,11 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       for (final adminDoc in branchAdminQuery.docs) {
         final branchAdminUid = adminDoc.id;
         
-        // Skip if the branch admin is the one creating the booking
-        if (branchAdminUid == _currentUserId) {
-          debugPrint('Skipping notification to self (branch admin creating booking)');
+        // Don't skip - branch admin should receive notifications even if they created the booking
+        // This is important for "ANY STAFF" bookings where they need to assign staff
+        // Only skip if it's a regular booking (not needing assignment) and they created it
+        if (branchAdminUid == _currentUserId && !needsStaffAssignment) {
+          debugPrint('Skipping notification to self (branch admin created booking with assigned staff)');
           continue;
         }
         
