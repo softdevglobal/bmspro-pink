@@ -1322,16 +1322,18 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
         branchNameForMatching = _branchName.toLowerCase();
       }
 
-      // Load ALL bookings for the owner (we'll filter by branch)
+      // Load ALL bookings for the owner (ALL TIME - no date filtering)
+      // This calculates total completed revenue across all time, not just recent bookings
       final allBookingsQuery = await FirebaseFirestore.instance
           .collection('bookings')
           .where('ownerUid', isEqualTo: ownerUid)
           .get();
       
-      debugPrint('Total bookings for owner: ${allBookingsQuery.docs.length}');
+      debugPrint('Total bookings for owner (all time): ${allBookingsQuery.docs.length}');
 
+      // Initialize counters for MY SUMMARY (all-time totals)
       int myCompleted = 0;
-      double myRevenue = 0;
+      double myRevenue = 0; // All-time completed revenue
       int myTotal = 0;
 
       // Load Branch Summary
@@ -1348,12 +1350,10 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
         // ============== MY SUMMARY ==============
         // Check if this booking is assigned to me (staff/branch admin)
         bool isMyBooking = false;
-        double myServiceRevenue = 0;
         
         // Check top-level staffId
         if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
           isMyBooking = true;
-          myServiceRevenue = _getPrice(data['price']);
         }
         
         // Check services array for multi-service bookings
@@ -1364,7 +1364,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
               final svcStaffAuthUid = service['staffAuthUid']?.toString();
               if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
                 isMyBooking = true;
-                myServiceRevenue += _getPrice(service['price']);
+                break;
               }
             }
           }
@@ -1374,7 +1374,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
           myTotal++;
           
           // For multi-service bookings, check individual service completion status
-          if (data['services'] is List) {
+          if (data['services'] is List && (data['services'] as List).isNotEmpty) {
             double completedServiceRevenue = 0;
             for (final service in (data['services'] as List)) {
               if (service is Map) {
@@ -1393,9 +1393,15 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
               myRevenue += completedServiceRevenue;
             }
           } else if (status == 'completed') {
-            // Single service booking - check booking status
-            myCompleted++;
-            myRevenue += myServiceRevenue;
+            // Single service booking - check booking status is completed
+            // Only count if assigned to me
+            if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
+              final bookingPrice = _getPrice(data['price']);
+              if (bookingPrice > 0) {
+                myCompleted++;
+                myRevenue += bookingPrice;
+              }
+            }
           }
         }
         

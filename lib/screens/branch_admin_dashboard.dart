@@ -1086,19 +1086,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
         
         // Check if this booking is assigned to the branch admin (current user)
         bool isMyBooking = false;
-        double myServiceRevenue = 0;
-        List<String> myServiceNames = [];
         
         // Check top-level staffId
         if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
           isMyBooking = true;
-          myServiceRevenue = (data['price'] as num?)?.toDouble() ?? 0;
-          
-          // Get service name for single-service bookings
-          final serviceName = (data['serviceName'] ?? '').toString();
-          if (serviceName.isNotEmpty) {
-            myServiceNames.addAll(serviceName.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty));
-          }
         }
         
         // Check services array for multi-service bookings
@@ -1110,14 +1101,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               final svcStaffAuthUid = item['staffAuthUid']?.toString();
               if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
                 isMyBooking = true;
-                final servicePrice = (item['price'] as num?)?.toDouble() ?? 0;
-                myServiceRevenue += servicePrice;
-                
-                // Get service name
-                final svcName = (item['serviceName'] ?? item['name'] ?? '').toString();
-                if (svcName.isNotEmpty) {
-                  myServiceNames.add(svcName);
-                }
+                break;
               }
             }
           }
@@ -1132,7 +1116,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
         double completedServiceRevenue = 0;
         List<String> completedServiceNames = [];
         
-        if (data['services'] is List) {
+        if (data['services'] is List && (data['services'] as List).isNotEmpty) {
           // Multi-service booking - check individual service completion
           final servicesList = data['services'] as List;
           for (final item in servicesList) {
@@ -1155,9 +1139,20 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
             }
           }
         } else if (status == 'completed') {
-          // Single service booking - check booking status
-          completedServiceRevenue = myServiceRevenue;
-          completedServiceNames = myServiceNames;
+          // Single service booking - check booking status is completed
+          // Only count if assigned to me
+          if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
+            final bookingPrice = (data['price'] as num?)?.toDouble() ?? 0;
+            if (bookingPrice > 0) {
+              completedServiceRevenue = bookingPrice;
+              
+              // Get service name for single-service bookings
+              final serviceName = (data['serviceName'] ?? '').toString();
+              if (serviceName.isNotEmpty) {
+                completedServiceNames.addAll(serviceName.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty));
+              }
+            }
+          }
         }
         
         // Only count if there are completed services

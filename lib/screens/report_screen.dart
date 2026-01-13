@@ -310,13 +310,11 @@ class _ReportScreenState extends State<ReportScreen> {
 
         // Check if this booking is assigned to current user (for staff)
         bool isMyBooking = false;
-        double myServiceRevenue = 0;
 
         if (_currentUserRole == 'salon_staff' || _currentUserRole == 'salon_branch_admin') {
           // Check top-level staffId
           if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
             isMyBooking = true;
-            myServiceRevenue = _getPrice(data['price']);
           }
 
           // Check services array for multi-service bookings
@@ -327,7 +325,7 @@ class _ReportScreenState extends State<ReportScreen> {
                 final svcStaffAuthUid = service['staffAuthUid']?.toString();
                 if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
                   isMyBooking = true;
-                  myServiceRevenue += _getPrice(service['price']);
+                  break;
                 }
               }
             }
@@ -337,7 +335,7 @@ class _ReportScreenState extends State<ReportScreen> {
             totalBookings++;
             
             // Check for completed services in multi-service bookings
-            if (data['services'] is List) {
+            if (data['services'] is List && (data['services'] as List).isNotEmpty) {
               for (final service in (data['services'] as List)) {
                 if (service is Map) {
                   final svcStaffId = service['staffId']?.toString();
@@ -352,9 +350,15 @@ class _ReportScreenState extends State<ReportScreen> {
                 }
               }
             } else if (status == 'completed') {
-              // Single service booking - check booking status
-              completedServices++;
-              revenue += myServiceRevenue;
+              // Single service booking - check booking status is completed
+              // Only count if assigned to me
+              if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
+                final bookingPrice = _getPrice(data['price']);
+                if (bookingPrice > 0) {
+                  completedServices++;
+                  revenue += bookingPrice;
+                }
+              }
             }
           }
         } else {
