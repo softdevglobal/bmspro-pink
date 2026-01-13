@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -478,22 +479,156 @@ class _EditProfilePageState extends State<EditProfilePage>
         }
       } else {
         // Direct storage upload for staff avatars
+        debugPrint('[Upload] ===== Starting staff avatar upload =====');
+        debugPrint('[Upload] User UID: ${user.uid}');
+        debugPrint('[Upload] File path: ${file.path}');
+        final fileSize = await file.length();
+        debugPrint('[Upload] File size: $fileSize bytes');
+        
+        // Verify user is authenticated and refresh token
+        if (user.uid.isEmpty) {
+          throw Exception('User not authenticated');
+        }
+        
+        // Refresh auth token to ensure it's valid
+        try {
+          final token = await user.getIdToken(true); // Force refresh
+          debugPrint('[Upload] Auth token refreshed successfully. Token length: ${token?.length ?? 0}');
+        } catch (tokenError) {
+          debugPrint('[Upload] Warning: Failed to refresh token: $tokenError');
+        }
+        
+        // Verify file exists and is readable
+        if (!await file.exists()) {
+          throw Exception('File does not exist: ${file.path}');
+        }
+        
+        final fileName = '${user.uid}.jpg';
         final storageRef = FirebaseStorage.instance
             .ref()
             .child('staff_avatars')
-            .child('${user.uid}.jpg');
+            .child(fileName);
 
-        await storageRef.putFile(file);
-        url = await storageRef.getDownloadURL();
+        debugPrint('[Upload] Storage path: staff_avatars/$fileName');
+        debugPrint('[Upload] Full storage URL: ${storageRef.fullPath}');
+        debugPrint('[Upload] User UID for rule check: ${user.uid}');
+        debugPrint('[Upload] FileName for rule check: $fileName');
+        debugPrint('[Upload] Expected rule match: fileName should start with ${user.uid}');
+        
+        // Read file as bytes for more reliable upload
+        final fileBytes = await file.readAsBytes();
+        debugPrint('[Upload] File bytes read: ${fileBytes.length} bytes');
+        
+        if (fileBytes.isEmpty) {
+          throw Exception('File is empty or could not be read');
+        }
+        
+        // Upload with metadata using putData for better reliability
+        debugPrint('[Upload] Starting putData upload...');
+        final uploadTask = storageRef.putData(
+          fileBytes,
+          SettableMetadata(
+            contentType: 'image/jpeg',
+            customMetadata: {
+              'uploadedBy': user.uid,
+              'uploadedAt': DateTime.now().toIso8601String(),
+            },
+          ),
+        );
+        
+        debugPrint('[Upload] Upload task created, waiting for completion...');
+        
+        // Monitor upload progress and errors
+        StreamSubscription? progressSub;
+        try {
+          progressSub = uploadTask.snapshotEvents.listen(
+            (taskSnapshot) {
+              if (taskSnapshot.totalBytes > 0) {
+                final progress = (taskSnapshot.bytesTransferred / taskSnapshot.totalBytes * 100);
+                debugPrint('[Upload] Progress: ${progress.toStringAsFixed(1)}% (${taskSnapshot.bytesTransferred}/${taskSnapshot.totalBytes})');
+              }
+              
+              // Check for errors in snapshot
+              if (taskSnapshot.state == TaskState.error) {
+                debugPrint('[Upload] ⚠️ Task error state detected');
+              } else if (taskSnapshot.state == TaskState.canceled) {
+                debugPrint('[Upload] ⚠️ Task cancelled state detected');
+              } else if (taskSnapshot.state == TaskState.success) {
+                debugPrint('[Upload] ✅ Task success state detected');
+              } else if (taskSnapshot.state == TaskState.running) {
+                debugPrint('[Upload] 🔄 Task running...');
+              } else if (taskSnapshot.state == TaskState.paused) {
+                debugPrint('[Upload] ⏸️ Task paused');
+              }
+            },
+            onError: (error) {
+              debugPrint('[Upload] ❌ Progress stream error: $error');
+            },
+            cancelOnError: false,
+          );
+          
+          // Wait for upload to complete with timeout
+          debugPrint('[Upload] Waiting for upload to complete (timeout: 60s)...');
+          final taskSnapshot = await uploadTask.timeout(
+            const Duration(seconds: 60),
+            onTimeout: () {
+              debugPrint('[Upload] ❌ Upload timeout after 60 seconds');
+              uploadTask.cancel();
+              throw Exception('Upload timeout - please check your internet connection');
+            },
+          );
+          
+          debugPrint('[Upload] Upload task completed. Final state: ${taskSnapshot.state}');
+          debugPrint('[Upload] Bytes transferred: ${taskSnapshot.bytesTransferred}');
+          debugPrint('[Upload] Total bytes: ${taskSnapshot.totalBytes}');
+          
+          if (taskSnapshot.state != TaskState.success) {
+            debugPrint('[Upload] ❌ Upload failed. State: ${taskSnapshot.state}');
+            throw Exception('Upload failed: ${taskSnapshot.state}');
+          }
+          
+          debugPrint('[Upload] ✅ Upload successful, getting download URL...');
+          url = await storageRef.getDownloadURL().timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw Exception('Failed to get download URL - timeout');
+            },
+          );
+          debugPrint('[Upload] ✅ Download URL obtained: $url');
 
-        // Update Firestore immediately after upload
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .update({
-          'avatarUrl': url,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+          // Update Firestore immediately after upload
+          debugPrint('[Upload] Updating Firestore...');
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .update({
+            'avatarUrl': url,
+            'photoURL': url, // Also update photoURL for consistency
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          
+          debugPrint('[Upload] ✅ Firestore updated successfully');
+          debugPrint('[Upload] ===== Upload complete =====');
+        } catch (uploadError) {
+          debugPrint('[Upload] ❌ Upload error caught: $uploadError');
+          debugPrint('[Upload] Error type: ${uploadError.runtimeType}');
+          debugPrint('[Upload] Error stack: ${StackTrace.current}');
+          
+          // Try to get more details about the error
+          if (uploadError is FirebaseException) {
+            debugPrint('[Upload] Firebase error code: ${uploadError.code}');
+            debugPrint('[Upload] Firebase error message: ${uploadError.message}');
+            debugPrint('[Upload] Firebase error plugin: ${uploadError.plugin}');
+            throw Exception('Upload failed: ${uploadError.code} - ${uploadError.message ?? uploadError.toString()}');
+          } else if (uploadError is TimeoutException) {
+            throw Exception('Upload timeout - the upload took too long. Please try again.');
+          }
+          
+          rethrow;
+        } finally {
+          await progressSub?.cancel();
+          debugPrint('[Upload] Progress subscription cancelled');
+        }
       }
 
       // Update local state and Firestore for salon owners

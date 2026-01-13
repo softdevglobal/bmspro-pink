@@ -389,12 +389,35 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
 
       final staff = staffSnap.docs.map((d) {
         final data = d.data();
+        // Get profile image URL - prioritize photoURL, then avatarUrl, then avatar if it's a URL
+        String? avatarUrl;
+        if (data['photoURL'] != null && data['photoURL'].toString().trim().isNotEmpty) {
+          avatarUrl = data['photoURL'].toString().trim();
+        } else if (data['avatarUrl'] != null && data['avatarUrl'].toString().trim().isNotEmpty) {
+          avatarUrl = data['avatarUrl'].toString().trim();
+        } else if (data['avatar'] != null && data['avatar'].toString().trim().isNotEmpty) {
+          final avatar = data['avatar'].toString().trim();
+          // Check if avatar is a URL (starts with http/https)
+          if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
+            avatarUrl = avatar;
+          }
+        }
+        
+        // Debug: Log avatar URL extraction
+        if (avatarUrl != null) {
+          debugPrint('[StaffLoad] Staff ${data['displayName'] ?? data['name'] ?? 'Unknown'}: Found avatar URL: $avatarUrl');
+        } else {
+          debugPrint('[StaffLoad] Staff ${data['displayName'] ?? data['name'] ?? 'Unknown'}: No avatar URL found. photoURL=${data['photoURL']}, avatarUrl=${data['avatarUrl']}, avatar=${data['avatar']}');
+        }
+        
         return {
           'id': d.id,
           'name':
               (data['displayName'] ?? data['name'] ?? 'Unknown').toString(),
           'status': (data['status'] ?? 'Active').toString(),
-          'avatar': data['avatar'] ?? data['photoURL'],
+          'avatar': avatarUrl,
+          'photoURL': data['photoURL'], // Keep original fields as fallback
+          'avatarUrl': data['avatarUrl'], // Keep original fields as fallback
           'branchId': (data['branchId'] ?? '').toString(),
           'weeklySchedule': data['weeklySchedule'], // Include weekly schedule for branch checks
         };
@@ -2372,6 +2395,9 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           final staffId = staff['id'] as String;
           final staffName = staff['name'] ?? 'Staff';
           final isSelected = selectedStaffId == staffId;
+          
+          // Debug: Log staff data to see what avatar field contains
+          debugPrint('[StaffChips] Staff: $staffName (ID: $staffId), avatar: ${staff['avatar']}, photoURL: ${staff['photoURL']}, avatarUrl: ${staff['avatarUrl']}');
 
           return GestureDetector(
             onTap: () {
@@ -2392,16 +2418,10 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircleAvatar(
-                    radius: 10,
-                    backgroundColor: AppColors.muted.withOpacity(0.3),
-                    backgroundImage: staff['avatar'] != null
-                        ? NetworkImage(staff['avatar'])
-                        : null,
-                      child: staff['avatar'] == null
-                        ? Icon(Icons.person, size: 12, color: isSelected ? Colors.white : AppColors.muted)
-                          : null,
-                    ),
+                  _buildStaffAvatar(
+                    staff['avatar'] ?? staff['photoURL'] ?? staff['avatarUrl'],
+                    isSelected,
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     staffName,
@@ -2425,6 +2445,36 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildStaffAvatar(dynamic avatarData, bool isSelected) {
+    // Get avatar URL - handle various data types
+    String? avatarUrl;
+    
+    if (avatarData != null) {
+      String avatarStr;
+      if (avatarData is String) {
+        avatarStr = avatarData.trim();
+      } else {
+        avatarStr = avatarData.toString().trim();
+      }
+      
+      // Check if it's a valid URL
+      if (avatarStr.isNotEmpty && 
+          avatarStr != 'null' &&
+          (avatarStr.startsWith('http://') || avatarStr.startsWith('https://'))) {
+        avatarUrl = avatarStr;
+        debugPrint('[StaffAvatar] ✓ Found valid avatar URL: $avatarUrl');
+      } else if (avatarStr.isNotEmpty && avatarStr != 'null') {
+        debugPrint('[StaffAvatar] ✗ Avatar data is not a valid URL: "$avatarStr"');
+      }
+    }
+
+    // Use a StatefulBuilder to track image loading state
+    return _StaffAvatarWidget(
+      avatarUrl: avatarUrl,
+      isSelected: isSelected,
     );
   }
 
@@ -3249,6 +3299,103 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
       enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
       focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary)),
+    );
+  }
+}
+
+// Separate widget to handle image loading state
+class _StaffAvatarWidget extends StatefulWidget {
+  final String? avatarUrl;
+  final bool isSelected;
+
+  const _StaffAvatarWidget({
+    required this.avatarUrl,
+    required this.isSelected,
+  });
+
+  @override
+  State<_StaffAvatarWidget> createState() => _StaffAvatarWidgetState();
+}
+
+class _StaffAvatarWidgetState extends State<_StaffAvatarWidget> {
+  bool _imageError = false;
+  bool _imageLoaded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    // If no URL or error occurred, show icon
+    if (widget.avatarUrl == null || _imageError) {
+      return ClipOval(
+        child: Container(
+          width: 20,
+          height: 20,
+          color: AppColors.muted.withOpacity(0.3),
+          child: Icon(
+            Icons.person,
+            size: 12,
+            color: widget.isSelected ? Colors.white : AppColors.muted,
+          ),
+        ),
+      );
+    }
+
+    // Show image
+    return ClipOval(
+      child: Container(
+        width: 20,
+        height: 20,
+        color: AppColors.muted.withOpacity(0.3),
+        child: Image.network(
+          widget.avatarUrl!,
+          width: 20,
+          height: 20,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('[StaffAvatar] Image error for ${widget.avatarUrl}: $error');
+            if (!_imageError) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  setState(() {
+                    _imageError = true;
+                  });
+                }
+              });
+            }
+            return Icon(
+              Icons.person,
+              size: 12,
+              color: widget.isSelected ? Colors.white : AppColors.muted,
+            );
+          },
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) {
+              if (!_imageLoaded) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    setState(() {
+                      _imageLoaded = true;
+                    });
+                  }
+                });
+              }
+              return child;
+            }
+            return Center(
+              child: SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 }
