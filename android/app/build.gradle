@@ -7,7 +7,7 @@ plugins {
 }
 
 def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('android/key.properties')
+def keystorePropertiesFile = rootProject.file('key.properties')
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
@@ -55,9 +55,6 @@ android {
         release {
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
-            } else {
-                // Fallback to debug signing if key.properties doesn't exist
-                signingConfig signingConfigs.debug
             }
             // Optional: enable code shrinking and resource shrinking
             // minifyEnabled true
