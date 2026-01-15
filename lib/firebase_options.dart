@@ -51,21 +51,21 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyD08qXcZjC1N_wX8EE5YGgN4sA-ZrJQICg',
-    appId: '1:960634304944:web:9c9cb29b14b13924b73e75', // Using Web App ID as fallback
+    apiKey: 'AIzaSyA9x7ZvVcVHLudKbEoOgcXWCuLItKmWf08',
+    appId: '1:960634304944:ios:638ad6724068b113b73e75',
     messagingSenderId: '960634304944',
     projectId: 'bmspro-pink',
     storageBucket: 'bmspro-pink.firebasestorage.app',
-    iosBundleId: 'com.example.bmsproPink',
+    iosBundleId: 'com.softdev.bmspro-pink',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyD08qXcZjC1N_wX8EE5YGgN4sA-ZrJQICg',
-    appId: '1:960634304944:web:9c9cb29b14b13924b73e75', // Using Web App ID as fallback
+    apiKey: 'AIzaSyA9x7ZvVcVHLudKbEoOgcXWCuLItKmWf08',
+    appId: '1:960634304944:ios:638ad6724068b113b73e75',
     messagingSenderId: '960634304944',
     projectId: 'bmspro-pink',
     storageBucket: 'bmspro-pink.firebasestorage.app',
-    iosBundleId: 'com.example.bmsproPink',
+    iosBundleId: 'com.softdev.bmspro-pink',
   );
 }
 
