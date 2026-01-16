@@ -1330,6 +1330,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
           .get();
       
       debugPrint('Total bookings for owner (all time): ${allBookingsQuery.docs.length}');
+      debugPrint('Current user UID: ${user.uid}');
 
       // Initialize counters for MY SUMMARY (all-time totals)
       int myCompleted = 0;
@@ -1372,34 +1373,46 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
 
         if (isMyBooking) {
           myTotal++;
+          debugPrint('Found my booking ${doc.id}: status=$status, hasServices=${data['services'] is List}');
           
           // For multi-service bookings, check individual service completion status
           if (data['services'] is List && (data['services'] as List).isNotEmpty) {
-            double completedServiceRevenue = 0;
+            // Count each completed service separately
+            int servicesInThisBooking = 0;
             for (final service in (data['services'] as List)) {
               if (service is Map) {
                 final svcStaffId = service['staffId']?.toString();
                 final svcStaffAuthUid = service['staffAuthUid']?.toString();
+                // Check if this service is assigned to me
                 if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
                   final completionStatus = (service['completionStatus'] ?? '').toString().toLowerCase();
+                  debugPrint('  Service assigned to me: completionStatus=$completionStatus');
+                  // Count each completed service
                   if (completionStatus == 'completed') {
-                    completedServiceRevenue += _getPrice(service['price']);
+                    servicesInThisBooking++;
+                    final servicePrice = _getPrice(service['price']);
+                    myRevenue += servicePrice;
+                    debugPrint('    Completed service: price=$servicePrice');
                   }
                 }
               }
             }
-            if (completedServiceRevenue > 0) {
-              myCompleted++;
-              myRevenue += completedServiceRevenue;
+            myCompleted += servicesInThisBooking;
+            if (servicesInThisBooking > 0) {
+              debugPrint('  Booking ${doc.id}: Added $servicesInThisBooking completed services');
             }
-          } else if (status == 'completed') {
-            // Single service booking - check booking status is completed
-            // Only count if assigned to me
-            if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
-              final bookingPrice = _getPrice(data['price']);
-              if (bookingPrice > 0) {
-                myCompleted++;
-                myRevenue += bookingPrice;
+          } else {
+            // Single service booking - check booking status
+            // For single service bookings, if status is completed, count it as 1 service
+            if (status == 'completed') {
+              // Double-check it's assigned to me (should already be true from isMyBooking check)
+              if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
+                final bookingPrice = _getPrice(data['price']);
+                if (bookingPrice > 0) {
+                  myCompleted++;
+                  myRevenue += bookingPrice;
+                  debugPrint('  Single service booking ${doc.id}: completed, price=$bookingPrice');
+                }
               }
             }
           }
@@ -1506,6 +1519,15 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
       // Calculate weekly working hours (day-wise)
       await _calculateWeeklyWorkingHours(user.uid);
 
+      debugPrint('MY SUMMARY RESULTS:');
+      debugPrint('  Completed Services: $myCompleted');
+      debugPrint('  Revenue: $myRevenue');
+      debugPrint('  Total Bookings: $myTotal');
+      debugPrint('BRANCH SUMMARY RESULTS:');
+      debugPrint('  Revenue: $branchRevenue');
+      debugPrint('  Bookings: $branchBookings');
+      debugPrint('  Staff Count: $staffCount');
+      
       if (!mounted) return;
       setState(() {
         _myCompletedServices = myCompleted;
