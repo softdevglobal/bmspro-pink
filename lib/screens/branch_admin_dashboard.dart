@@ -1126,7 +1126,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               final svcStaffAuthUid = item['staffAuthUid']?.toString();
               if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
                 final completionStatus = (item['completionStatus'] ?? '').toString().toLowerCase();
-                if (completionStatus == 'completed') {
+                // Count service if:
+                // 1. Service has completionStatus = 'completed', OR
+                // 2. Booking status is 'completed' (fallback for bookings where service completionStatus wasn't set)
+                if (completionStatus == 'completed' || status == 'completed') {
                   final servicePrice = (item['price'] as num?)?.toDouble() ?? 0;
                   completedServiceRevenue += servicePrice;
                   
@@ -1139,12 +1142,28 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
               }
             }
           }
-        } else if (status == 'completed') {
-          // Single service booking - check booking status is completed
-          // Only count if assigned to me
-          if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
-            final bookingPrice = (data['price'] as num?)?.toDouble() ?? 0;
-            if (bookingPrice > 0) {
+          
+          // Fallback: If booking is assigned to me and status is completed, 
+          // but no services were found with completionStatus, count it as completed
+          if (completedServiceRevenue == 0 && status == 'completed') {
+            // Check if booking is assigned to me
+            if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
+              final bookingPrice = (data['price'] as num?)?.toDouble() ?? 0;
+              completedServiceRevenue = bookingPrice;
+              debugPrint('  Booking ${doc.id}: Fallback - counted as completed (booking status=completed), price=$bookingPrice');
+            }
+          }
+        } else {
+          // Single service booking - check both booking status and completionStatus
+          // A booking can be "confirmed" but the service might have completionStatus = "completed"
+          final bookingCompletionStatus = (data['completionStatus'] ?? '').toString().toLowerCase();
+          final isCompleted = status == 'completed' || bookingCompletionStatus == 'completed';
+          
+          if (isCompleted) {
+            // Only count if assigned to me
+            if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
+              final bookingPrice = (data['price'] as num?)?.toDouble() ?? 0;
+              // Count even if price is 0, as long as it's completed
               completedServiceRevenue = bookingPrice;
               
               // Get service name for single-service bookings
@@ -1164,13 +1183,39 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
         final dateStr = (data['date'] ?? '').toString();
         final client = (data['client'] ?? '').toString();
 
-        // Parse date
+        // Parse date - handle multiple formats
         DateTime? bookingDate;
         try {
           if (dateStr.isNotEmpty) {
-            bookingDate = DateTime.parse(dateStr);
+            // Try parsing as ISO string first
+            try {
+              bookingDate = DateTime.parse(dateStr);
+            } catch (_) {
+              // Try parsing as date string (YYYY-MM-DD)
+              final parts = dateStr.split('-');
+              if (parts.length == 3) {
+                bookingDate = DateTime(
+                  int.parse(parts[0]),
+                  int.parse(parts[1]),
+                  int.parse(parts[2]),
+                );
+              }
+            }
+            
+            // Also check dateTimeUtc field if date parsing failed
+            if (bookingDate == null && data['dateTimeUtc'] != null) {
+              try {
+                if (data['dateTimeUtc'] is Timestamp) {
+                  bookingDate = (data['dateTimeUtc'] as Timestamp).toDate();
+                } else {
+                  bookingDate = DateTime.parse(data['dateTimeUtc'].toString());
+                }
+              } catch (_) {}
+            }
           }
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('Error parsing booking date: $e, dateStr: $dateStr');
+        }
 
         // Count only completed bookings/services for revenue
         completedBookings++;
@@ -1195,10 +1240,25 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
         }
 
         // Daily revenue (last 30 days)
-        if (bookingDate != null && bookingDate.isAfter(thirtyDaysAgo)) {
-          final dayIndex = now.difference(bookingDate).inDays;
-          if (dayIndex >= 0 && dayIndex < 30) {
-            dailyRevenue[29 - dayIndex] += completedServiceRevenue;
+        // Index 0 = 30 days ago, Index 29 = today
+        if (bookingDate != null) {
+          // Normalize booking date to start of day for accurate comparison
+          final bookingDateOnly = DateTime(bookingDate.year, bookingDate.month, bookingDate.day);
+          final thirtyDaysAgoOnly = DateTime(thirtyDaysAgo.year, thirtyDaysAgo.month, thirtyDaysAgo.day);
+          final nowOnly = DateTime(now.year, now.month, now.day);
+          
+          if (bookingDateOnly.isAfter(thirtyDaysAgoOnly.subtract(const Duration(days: 1))) && 
+              bookingDateOnly.isBefore(nowOnly.add(const Duration(days: 1)))) {
+            // Calculate days difference
+            final daysDiff = nowOnly.difference(bookingDateOnly).inDays;
+            if (daysDiff >= 0 && daysDiff < 30) {
+              // Index 0 = 29 days ago, Index 29 = today
+              final arrayIndex = 29 - daysDiff;
+              if (arrayIndex >= 0 && arrayIndex < 30) {
+                dailyRevenue[arrayIndex] += completedServiceRevenue;
+                debugPrint('Added revenue $completedServiceRevenue to day ${daysDiff} days ago (index $arrayIndex)');
+              }
+            }
           }
         }
 
@@ -2275,22 +2335,41 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   }
 
   Widget _buildRevenueChartSection() {
-    // Convert daily revenue to chart spots (sample every 5 days for cleaner chart)
+    // Convert daily revenue to chart spots
+    // Show all 30 days, but sample every 5 days for cleaner display (6 points)
     List<FlSpot> spots = [];
+    double maxRevenueValue = 0;
+    
+    // Find max revenue for scaling
+    for (double revenue in _dailyRevenue) {
+      if (revenue > maxRevenueValue) maxRevenueValue = revenue;
+    }
+    
+    // Create 6 data points (every 5 days: 0, 5, 10, 15, 20, 25, 29)
     for (int i = 0; i < 7; i++) {
-      final dayIndex = i * 4; // 0, 4, 8, 12, 16, 20, 24
+      final dayIndex = i == 6 ? 29 : i * 5; // Last point is day 29 (today)
       if (dayIndex < _dailyRevenue.length) {
-        // Sum revenue for a few days around this point
+        // Average revenue for the 5-day period around this point
         double sum = 0;
-        for (int j = dayIndex; j < dayIndex + 4 && j < _dailyRevenue.length; j++) {
+        int count = 0;
+        int start = (i == 0) ? 0 : (dayIndex - 2).clamp(0, 29);
+        int end = (i == 6) ? 29 : (dayIndex + 2).clamp(0, 29);
+        
+        for (int j = start; j <= end && j < _dailyRevenue.length; j++) {
           sum += _dailyRevenue[j];
+          count++;
         }
-        spots.add(FlSpot(i.toDouble(), sum / 100)); // Scale down for chart
+        
+        final avgRevenue = count > 0 ? sum / count : 0;
+        // Scale down for chart display (divide by 10 for better visualization)
+        final scaledRevenue = avgRevenue / 10;
+        spots.add(FlSpot(i.toDouble(), scaledRevenue));
       }
     }
 
-    if (spots.isEmpty) {
-      spots = [const FlSpot(0, 0), const FlSpot(1, 0)];
+    // If no data, show empty chart
+    if (spots.isEmpty || maxRevenueValue == 0) {
+      spots = List.generate(7, (i) => FlSpot(i.toDouble(), 0));
     }
 
     return Container(
@@ -2325,49 +2404,68 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
             ],
           ),
           const SizedBox(height: 24),
-          SizedBox(
-            height: 200,
-            child: LineChart(
-              LineChartData(
-                gridData: const FlGridData(show: false),
-                titlesData: FlTitlesData(
-                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      getTitlesWidget: (value, meta) {
-                        const titles = ['Day 1', '5', '10', '15', '20', '25', '30'];
-                        if (value.toInt() >= 0 && value.toInt() < titles.length) {
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: Text(titles[value.toInt()], style: const TextStyle(color: AppColors.muted, fontSize: 10)),
-                          );
-                        }
-                        return const Text('');
-                      },
-                      interval: 1,
+          maxRevenueValue == 0
+              ? SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.show_chart, size: 48, color: AppColors.muted.withOpacity(0.5)),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No revenue data for the last 30 days',
+                          style: TextStyle(color: AppColors.muted, fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : SizedBox(
+                  height: 200,
+                  child: LineChart(
+                    LineChartData(
+                      minY: 0,
+                      maxY: maxRevenueValue > 0 ? (maxRevenueValue / 10) * 1.2 : 10, // Add 20% padding at top
+                      gridData: const FlGridData(show: false),
+                      titlesData: FlTitlesData(
+                        leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            getTitlesWidget: (value, meta) {
+                              const titles = ['Day 1', '5', '10', '15', '20', '25', '30'];
+                              if (value.toInt() >= 0 && value.toInt() < titles.length) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 8.0),
+                                  child: Text(titles[value.toInt()], style: const TextStyle(color: AppColors.muted, fontSize: 10)),
+                                );
+                              }
+                              return const Text('');
+                            },
+                            interval: 1,
+                          ),
+                        ),
+                      ),
+                      borderData: FlBorderData(show: false),
+                      lineBarsData: [
+                        LineChartBarData(
+                          spots: spots,
+                          isCurved: true,
+                          color: AppColors.green,
+                          barWidth: 3,
+                          dotData: const FlDotData(show: false),
+                          belowBarData: BarAreaData(
+                            show: true,
+                            color: AppColors.green.withOpacity(0.1),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                borderData: FlBorderData(show: false),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: spots,
-                    isCurved: true,
-                    color: AppColors.green,
-                    barWidth: 3,
-                    dotData: const FlDotData(show: false),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      color: AppColors.green.withOpacity(0.1),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     );
