@@ -510,13 +510,15 @@ class NotificationService {
           // 1. It's explicitly targeted to the owner (targetOwnerUid matches)
           // 2. It's a staff_booking_created or booking_engine_new_booking notification
           // 3. It's a booking_needs_assignment notification (unassigned bookings)
+          // 4. It's a staff_rejected notification (staff rejected booking, needs reassignment)
           bool shouldShow = false;
           
           if (targetOwnerUid == user.uid) {
             shouldShow = true;
           } else if (type == 'staff_booking_created' || 
                      type == 'booking_engine_new_booking' ||
-                     type == 'booking_needs_assignment') {
+                     type == 'booking_needs_assignment' ||
+                     type == 'staff_rejected') {
             shouldShow = true;
           } else if ((staffUid == null || staffUid != user.uid) && 
               (targetAdminUid == null || targetAdminUid == user.uid)) {
@@ -753,7 +755,8 @@ class NotificationService {
                 type == 'booking_status_changed' ||
                 type == 'booking_assigned' ||
                 type == 'booking_completed' ||
-                type == 'booking_canceled') {
+                type == 'booking_canceled' ||
+                type == 'staff_rejected') {
               shouldShow = true;
             }
             
@@ -999,7 +1002,8 @@ class NotificationService {
                  type == 'booking_engine_new_booking' ||
                  type == 'booking_assigned' ||
                  type == 'booking_completed' ||
-                 type == 'booking_canceled') {
+                 type == 'booking_canceled' ||
+                 type == 'staff_rejected') {
         // All booking-related notifications go to OwnerBookingsPage
         Navigator.of(_context!).push(
           MaterialPageRoute(

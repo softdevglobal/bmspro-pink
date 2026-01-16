@@ -726,7 +726,8 @@ class _NotificationsPageState extends State<NotificationsPage>
                              type == 'booking_needs_assignment' ||
                              type == 'booking_confirmed' ||
                              type == 'booking_status_changed' ||
-                             type == 'booking_engine_new_booking') {
+                             type == 'booking_engine_new_booking' ||
+                             type == 'staff_rejected') {
                     // Navigate to bookings page for owner notifications
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const OwnerBookingsPage()),
