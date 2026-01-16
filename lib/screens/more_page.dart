@@ -1386,9 +1386,11 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
                 // Check if this service is assigned to me
                 if (svcStaffId == user.uid || svcStaffAuthUid == user.uid) {
                   final completionStatus = (service['completionStatus'] ?? '').toString().toLowerCase();
-                  debugPrint('  Service assigned to me: completionStatus=$completionStatus');
-                  // Count each completed service
-                  if (completionStatus == 'completed') {
+                  debugPrint('  Service assigned to me: completionStatus=$completionStatus, bookingStatus=$status');
+                  // Count service if:
+                  // 1. Service has completionStatus = 'completed', OR
+                  // 2. Booking status is 'completed' (fallback for bookings where service completionStatus wasn't set)
+                  if (completionStatus == 'completed' || status == 'completed') {
                     servicesInThisBooking++;
                     final servicePrice = _getPrice(service['price']);
                     myRevenue += servicePrice;
@@ -1400,19 +1402,29 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
             myCompleted += servicesInThisBooking;
             if (servicesInThisBooking > 0) {
               debugPrint('  Booking ${doc.id}: Added $servicesInThisBooking completed services');
+            } else if (status == 'completed') {
+              // Fallback: If booking is assigned to me and status is completed, 
+              // but no services were found with completionStatus, count it as 1 completed service
+              // This handles cases where services array exists but completionStatus wasn't set at service level
+              final bookingPrice = _getPrice(data['price']);
+              myCompleted++;
+              myRevenue += bookingPrice;
+              debugPrint('  Booking ${doc.id}: Fallback - counted as 1 completed service (booking status=completed), price=$bookingPrice');
             }
           } else {
-            // Single service booking - check booking status
-            // For single service bookings, if status is completed, count it as 1 service
-            if (status == 'completed') {
+            // Single service booking - check both booking status and completionStatus
+            // A booking can be "confirmed" but the service might have completionStatus = "completed"
+            final bookingCompletionStatus = (data['completionStatus'] ?? '').toString().toLowerCase();
+            final isCompleted = status == 'completed' || bookingCompletionStatus == 'completed';
+            
+            if (isCompleted) {
               // Double-check it's assigned to me (should already be true from isMyBooking check)
               if (data['staffId'] == user.uid || data['staffAuthUid'] == user.uid) {
                 final bookingPrice = _getPrice(data['price']);
-                if (bookingPrice > 0) {
-                  myCompleted++;
-                  myRevenue += bookingPrice;
-                  debugPrint('  Single service booking ${doc.id}: completed, price=$bookingPrice');
-                }
+                // Count even if price is 0, as long as it's completed
+                myCompleted++;
+                myRevenue += bookingPrice;
+                debugPrint('  Single service booking ${doc.id}: completed (status=$status, completionStatus=$bookingCompletionStatus), price=$bookingPrice');
               }
             }
           }
@@ -2561,9 +2573,7 @@ class _BranchAdminSummaryPageState extends State<BranchAdminSummaryPage> {
   }
 
   String _getDateString() {
-    final now = DateTime.now();
-    final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    final months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    return '${weekdays[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
+    // Show "All Time" since we're displaying all-time summary data, not just today's data
+    return 'All Time';
   }
 }
