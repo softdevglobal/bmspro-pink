@@ -1221,11 +1221,24 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
         completedBookings++;
         totalRevenue += completedServiceRevenue;
 
-        // Track client
-        if (client.isNotEmpty) {
-          uniqueClients.add(client.toLowerCase());
-          clientBookingCount[client.toLowerCase()] = 
-              (clientBookingCount[client.toLowerCase()] ?? 0) + 1;
+        // Track client by email (primary) or name (fallback)
+        // Use email as the unique identifier for client retention
+        final clientEmail = (data['clientEmail'] ?? data['email'] ?? '').toString().trim().toLowerCase();
+        final clientName = client.trim().toLowerCase();
+        
+        // Use email as primary identifier, fallback to name if email is not available
+        String clientIdentifier = '';
+        if (clientEmail.isNotEmpty) {
+          clientIdentifier = clientEmail;
+        } else if (clientName.isNotEmpty) {
+          clientIdentifier = clientName;
+        }
+        
+        if (clientIdentifier.isNotEmpty) {
+          uniqueClients.add(clientIdentifier);
+          clientBookingCount[clientIdentifier] = 
+              (clientBookingCount[clientIdentifier] ?? 0) + 1;
+          debugPrint('Tracked client: $clientIdentifier (email: $clientEmail, name: $clientName), booking count: ${clientBookingCount[clientIdentifier]}');
         }
 
         // Service revenue - only count completed services assigned to branch admin
@@ -1271,7 +1284,12 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
       }
 
       // Calculate returning clients
+      // A returning client is one who has booked more than once (tracked by email or name)
       int returningClients = clientBookingCount.values.where((c) => c > 1).length;
+      debugPrint('Client retention calculation:');
+      debugPrint('  Total unique clients: ${uniqueClients.length}');
+      debugPrint('  Returning clients (booked > 1 time): $returningClients');
+      debugPrint('  Client retention: ${uniqueClients.length > 0 ? (returningClients / uniqueClients.length * 100).toStringAsFixed(1) : 0}%');
 
       // Build staff performance list
       List<Map<String, dynamic>> staffPerformance = [];
