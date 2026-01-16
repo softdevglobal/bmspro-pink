@@ -27,6 +27,8 @@ class BackgroundLocationService {
   bool _isMonitoring = false;
   bool _isCheckingLocation = false; // Prevent concurrent checks
   bool _hasNetworkConnection = true; // Track network connection status
+  Timer? _networkLossGracePeriodTimer; // Timer for grace period before auto clock-out
+  bool _isInNetworkLossGracePeriod = false; // Track if we're in grace period
   
   // Callbacks
   Function(String message)? onAutoCheckOut;
@@ -206,8 +208,8 @@ class BackgroundLocationService {
       _handleConnectivityChange(results);
     } catch (e) {
       debugPrint('BackgroundLocationService: Error checking initial connectivity: $e');
-      // If we can't check connectivity, assume connection might be lost
-      _handleConnectivityLost();
+      // Don't auto clock-out on initial check error - just log it
+      // The connectivity stream will handle actual connection loss
     }
   }
   
@@ -226,30 +228,65 @@ class BackgroundLocationService {
       // Connection was restored
       debugPrint('BackgroundLocationService: Network connection restored');
       _hasNetworkConnection = true;
+      // Cancel any pending auto clock-out if connection is restored
+      _cancelNetworkLossAutoCheckOut();
     }
   }
   
-  /// Handle network connection loss - auto check-out immediately
+  /// Handle network connection loss - wait for grace period before auto check-out
   Future<void> _handleConnectivityLost() async {
     if (_activeCheckInId == null || !_isMonitoring) {
       return;
     }
     
-    debugPrint('BackgroundLocationService: Connection lost! Auto clock-out triggered');
+    // If already in grace period, don't start another one
+    if (_isInNetworkLossGracePeriod) {
+      debugPrint('BackgroundLocationService: Already in network loss grace period');
+      return;
+    }
     
-    try {
-      // Try to get last known location if available
-      Position? lastKnownPosition;
-      try {
-        lastKnownPosition = await LocationService.getCurrentLocation();
-      } catch (e) {
-        debugPrint('BackgroundLocationService: Could not get location for check-out: $e');
+    debugPrint('BackgroundLocationService: Connection lost! Starting grace period (60 seconds) before auto clock-out');
+    
+    // Cancel any existing grace period timer
+    _networkLossGracePeriodTimer?.cancel();
+    _isInNetworkLossGracePeriod = true;
+    
+    // Wait 60 seconds before auto clocking out
+    // This gives time for brief network interruptions to recover
+    _networkLossGracePeriodTimer = Timer(const Duration(seconds: 60), () async {
+      // Check if connection is still lost before clocking out
+      if (!_hasNetworkConnection && _isInNetworkLossGracePeriod) {
+        debugPrint('BackgroundLocationService: Grace period expired, connection still lost. Auto clock-out triggered');
+        
+        try {
+          // Try to get last known location if available
+          Position? lastKnownPosition;
+          try {
+            lastKnownPosition = await LocationService.getCurrentLocation();
+          } catch (e) {
+            debugPrint('BackgroundLocationService: Could not get location for check-out: $e');
+          }
+          
+          // Perform auto check-out due to network loss
+          await _performAutoCheckOutDueToNetworkLoss(lastKnownPosition);
+        } catch (e) {
+          debugPrint('BackgroundLocationService: Error during network loss check-out: $e');
+        }
+      } else {
+        debugPrint('BackgroundLocationService: Connection restored during grace period, cancelling auto clock-out');
       }
       
-      // Perform auto check-out due to network loss
-      await _performAutoCheckOutDueToNetworkLoss(lastKnownPosition);
-    } catch (e) {
-      debugPrint('BackgroundLocationService: Error during network loss check-out: $e');
+      _isInNetworkLossGracePeriod = false;
+    });
+  }
+  
+  /// Cancel network loss auto check-out if connection is restored
+  void _cancelNetworkLossAutoCheckOut() {
+    if (_isInNetworkLossGracePeriod) {
+      debugPrint('BackgroundLocationService: Cancelling network loss auto check-out - connection restored');
+      _networkLossGracePeriodTimer?.cancel();
+      _networkLossGracePeriodTimer = null;
+      _isInNetworkLossGracePeriod = false;
     }
   }
   
@@ -385,6 +422,9 @@ class BackgroundLocationService {
     _connectivitySubscription = null;
     _periodicCheckTimer?.cancel();
     _periodicCheckTimer = null;
+    _networkLossGracePeriodTimer?.cancel();
+    _networkLossGracePeriodTimer = null;
+    _isInNetworkLossGracePeriod = false;
     _activeCheckInId = null;
     _activeBranchId = null;
     _branchLatitude = null;
