@@ -858,7 +858,8 @@ class _CalenderScreenState extends State<CalenderScreen> {
                   _selectedDate.month == currentDt.month &&
                   _selectedDate.day == currentDt.day;
               final dayData = _scheduleData[day];
-              Color? branchColor;
+              List<Color> branchColors = []; // List of colors for different branches
+              Color? primaryBranchColor; // Primary color for border/selection
               int userBookingCount = 0;
               if (dayData != null) {
                 // Filter bookings for current user based on role
@@ -870,19 +871,36 @@ class _CalenderScreenState extends State<CalenderScreen> {
                 
                 userBookingCount = filteredItems.length;
                 
-                // Only show branch color if user has bookings
-                // Use the first appointment's branch color for the calendar indicator
+                // Collect all unique branch colors for this day
                 if (userBookingCount > 0 && filteredItems.isNotEmpty) {
-                  final firstApptBranch = filteredItems.first.branchName;
-                  if (firstApptBranch != null && firstApptBranch.isNotEmpty) {
-                    final branchTheme = _branchThemes[firstApptBranch];
-                    branchColor = branchTheme?.color ?? AppConfig.primary;
-                  } else {
-                    // Fallback to day's merged branch if appointment doesn't have branch
-                    if (dayData.branch != null && dayData.branch != 'Multiple Branches') {
-                      final branchTheme = _branchThemes[dayData.branch];
-                      branchColor = branchTheme?.color ?? AppConfig.primary;
+                  final Set<String> uniqueBranches = {};
+                  for (final appt in filteredItems) {
+                    if (appt.branchName != null && appt.branchName!.isNotEmpty) {
+                      uniqueBranches.add(appt.branchName!);
                     }
+                  }
+                  
+                  // If no branch names in appointments, try dayData.branch
+                  if (uniqueBranches.isEmpty && dayData.branch != null && dayData.branch != 'Multiple Branches') {
+                    uniqueBranches.add(dayData.branch!);
+                  }
+                  
+                  // Get colors for each unique branch
+                  for (final branchName in uniqueBranches) {
+                    final branchTheme = _branchThemes[branchName];
+                    if (branchTheme != null) {
+                      branchColors.add(branchTheme.color);
+                    } else {
+                      // Fallback to primary color if branch theme not found
+                      branchColors.add(AppConfig.primary);
+                    }
+                  }
+                  
+                  // Set primary color (first branch or primary)
+                  if (branchColors.isNotEmpty) {
+                    primaryBranchColor = branchColors.first;
+                  } else {
+                    primaryBranchColor = AppConfig.primary;
                   }
                 }
               }
@@ -899,12 +917,12 @@ class _CalenderScreenState extends State<CalenderScreen> {
                     borderRadius: BorderRadius.circular(12),
                     border: isSelected && !isPastDate
                         ? Border.all(
-                            color: branchColor ?? AppConfig.primary, width: 2)
+                            color: primaryBranchColor ?? AppConfig.primary, width: 2)
                         : Border.all(color: Colors.grey.shade100),
                     boxShadow: isSelected && !isPastDate
                         ? [
                             BoxShadow(
-                                color: (branchColor ?? Colors.black)
+                                color: (primaryBranchColor ?? Colors.black)
                                     .withOpacity(0.1),
                                 blurRadius: 10,
                                 offset: const Offset(0, 4))
@@ -921,7 +939,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
                             color: isPastDate
                                 ? AppConfig.muted.withOpacity(0.4)
                                 : isSelected
-                                    ? (branchColor ?? AppConfig.primary)
+                                    ? (primaryBranchColor ?? AppConfig.primary)
                                     : (dayData?.isOffDay == true
                                         ? AppConfig.muted.withOpacity(0.5)
                                         : AppConfig.text),
@@ -955,7 +973,7 @@ class _CalenderScreenState extends State<CalenderScreen> {
                               child: Container(
                                 padding: const EdgeInsets.all(3),
                                 decoration: BoxDecoration(
-                                  color: branchColor ?? AppConfig.primary,
+                                  color: primaryBranchColor ?? AppConfig.primary,
                                   shape: BoxShape.circle,
                                 ),
                                 child: Text(
@@ -972,19 +990,26 @@ class _CalenderScreenState extends State<CalenderScreen> {
                           return const SizedBox.shrink();
                         },
                       ),
-                      if (branchColor != null)
+                      // Show multiple colored dots for different branches
+                      if (branchColors.isNotEmpty)
                         Positioned(
                           bottom: 6,
                           left: 0,
                           right: 0,
                           child: Center(
-                            child: Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: branchColor,
-                                shape: BoxShape.circle,
-                              ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: branchColors.map((color) {
+                                return Container(
+                                  width: 6,
+                                  height: 6,
+                                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                                  decoration: BoxDecoration(
+                                    color: color,
+                                    shape: BoxShape.circle,
+                                  ),
+                                );
+                              }).toList(),
                             ),
                           ),
                         )
