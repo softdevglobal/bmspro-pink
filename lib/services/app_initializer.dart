@@ -1,7 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import '../screens/appointment_requests_page.dart';
-import '../screens/owner_bookings_page.dart';
+import '../screens/home_screen.dart';
 
 /// Service to handle app initialization and notification navigation
 class AppInitializer {
@@ -74,18 +74,21 @@ class AppInitializer {
                  type == 'booking_completed' ||
                  type == 'booking_canceled' ||
                  type == 'staff_rejected') {
-        // All booking-related notifications go to OwnerBookingsPage
-        navigator.push(
+        // All booking-related notifications go to HomeScreen with Bookings tab (index 2)
+        // This ensures the bottom navigation bar is visible
+        navigator.pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (context) => const OwnerBookingsPage(),
+            builder: (context) => const HomeScreen(initialTabIndex: 2),
           ),
+          (route) => false,
         );
       } else {
-        // Default: go to OwnerBookingsPage for any unrecognized notification
-        navigator.push(
+        // Default: go to HomeScreen with Bookings tab for any unrecognized notification
+        navigator.pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (context) => const OwnerBookingsPage(),
+            builder: (context) => const HomeScreen(initialTabIndex: 2),
           ),
+          (route) => false,
         );
       }
     });
@@ -118,18 +121,21 @@ class AppInitializer {
                type == 'booking_completed' ||
                type == 'booking_canceled' ||
                type == 'staff_rejected') {
-      // All booking-related notifications go to OwnerBookingsPage
-      Navigator.of(context).push(
+      // All booking-related notifications go to HomeScreen with Bookings tab (index 2)
+      // This ensures the bottom navigation bar is visible
+      Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
-          builder: (context) => const OwnerBookingsPage(),
+          builder: (context) => const HomeScreen(initialTabIndex: 2),
         ),
+        (route) => false,
       );
     } else {
-      // Default: go to OwnerBookingsPage for any unrecognized notification
-      Navigator.of(context).push(
+      // Default: go to HomeScreen with Bookings tab for any unrecognized notification
+      Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
-          builder: (context) => const OwnerBookingsPage(),
+          builder: (context) => const HomeScreen(initialTabIndex: 2),
         ),
+        (route) => false,
       );
     }
   }

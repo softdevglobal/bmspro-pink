@@ -55,7 +55,12 @@ const List<IconData> kOwnerNavIcons = <IconData>[
 ];
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  /// Optional initial tab index to navigate to on load
+  /// For owners: 0=Home, 1=Calendar, 2=Bookings, 3=Clients, 4=More
+  /// For staff: 0=Home, 1=Calendar, 2=Clients, 3=Reports, 4=Profile
+  final int? initialTabIndex;
+  
+  const HomeScreen({super.key, this.initialTabIndex});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -68,7 +73,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   String? _selectedBranch;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-  int _navIndex = 0;
+  late int _navIndex;
   // Work timer (shows elapsed time after clocking in)
   Timer? _workTimer;
   int _workedSeconds = 0;
@@ -103,6 +108,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   @override
   void initState() {
     super.initState();
+    
+    // Initialize nav index from widget parameter or default to 0
+    _navIndex = widget.initialTabIndex ?? 0;
     
     // Register app lifecycle observer for foreground/background detection
     WidgetsBinding.instance.addObserver(this);

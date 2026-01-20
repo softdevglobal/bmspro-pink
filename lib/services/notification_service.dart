@@ -7,7 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:async';
 import '../screens/appointment_requests_page.dart';
-import '../screens/owner_bookings_page.dart';
+import '../screens/home_screen.dart';
 import 'app_initializer.dart';
 
 /// Top-level function to handle background messages
@@ -269,7 +269,7 @@ class NotificationService {
     print('📩 Notification type: $notificationType, bookingId: $bookingId');
     
     // Navigate based on notification type
-    // Owner/Admin notifications go to OwnerBookingsPage
+    // Owner/Admin notifications go to HomeScreen with Bookings tab (index 2)
     if (notificationType == 'booking_needs_assignment' ||
         notificationType == 'booking_engine_new_booking' ||
         notificationType == 'staff_booking_created' ||
@@ -282,10 +282,13 @@ class NotificationService {
         notificationType == 'booking_completed' ||
         notificationType == 'booking_canceled' ||
         notificationType == 'staff_rejected') {
-      Navigator.of(_context!).push(
+      // Navigate to HomeScreen with Bookings tab selected (index 2 for owners)
+      // This ensures the bottom navigation bar is visible
+      Navigator.of(_context!).pushAndRemoveUntil(
         MaterialPageRoute(
-          builder: (context) => const OwnerBookingsPage(),
+          builder: (context) => const HomeScreen(initialTabIndex: 2),
         ),
+        (route) => false, // Remove all previous routes
       );
     } else if (notificationType == 'booking_approval_request') {
       // Staff approval requests go to AppointmentRequestsPage
@@ -295,11 +298,12 @@ class NotificationService {
         ),
       );
     } else {
-      // Default: go to OwnerBookingsPage for any booking-related notification
-      Navigator.of(_context!).push(
+      // Default: go to HomeScreen with Bookings tab for any booking-related notification
+      Navigator.of(_context!).pushAndRemoveUntil(
         MaterialPageRoute(
-          builder: (context) => const OwnerBookingsPage(),
+          builder: (context) => const HomeScreen(initialTabIndex: 2),
         ),
+        (route) => false,
       );
     }
   }
@@ -1004,11 +1008,13 @@ class NotificationService {
                  type == 'booking_completed' ||
                  type == 'booking_canceled' ||
                  type == 'staff_rejected') {
-        // All booking-related notifications go to OwnerBookingsPage
-        Navigator.of(_context!).push(
+        // All booking-related notifications go to HomeScreen with Bookings tab (index 2)
+        // This ensures the bottom navigation bar is visible
+        Navigator.of(_context!).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (context) => const OwnerBookingsPage(),
+            builder: (context) => const HomeScreen(initialTabIndex: 2),
           ),
+          (route) => false,
         );
       }
     }
