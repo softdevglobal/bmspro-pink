@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +7,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'location_service.dart';
 import 'staff_check_in_service.dart';
 import 'audit_log_service.dart';
+import 'permission_service.dart';
 
 /// Service for background location tracking and auto clock-out
 /// This service monitors the user's location even when the app is in the background
@@ -42,12 +43,14 @@ class BackgroundLocationService {
   
   /// Start monitoring location for auto clock-out
   /// Call this when the user checks in
+  /// [context] - Optional BuildContext for showing the prominent disclosure dialog (required by Google Play)
   Future<bool> startMonitoring({
     required String checkInId,
     required String branchId,
     required double branchLatitude,
     required double branchLongitude,
     required double allowedRadius,
+    BuildContext? context,
   }) async {
     // Stop any existing monitoring first
     await stopMonitoring();
@@ -65,10 +68,21 @@ class BackgroundLocationService {
     }
     
     // Try to get background permission (optional, but preferred)
+    // IMPORTANT: Show prominent disclosure dialog BEFORE requesting background location
+    // This is required by Google Play policy
     final hasBackgroundPermission = await LocationService.hasBackgroundLocationPermission();
     if (!hasBackgroundPermission) {
-      debugPrint('BackgroundLocationService: No background location permission, requesting...');
-      await LocationService.requestBackgroundLocationPermission();
+      debugPrint('BackgroundLocationService: No background location permission, requesting with disclosure...');
+      
+      // If context is available, use the disclosure dialog (Google Play requirement)
+      if (context != null && context.mounted) {
+        final granted = await PermissionService().requestBackgroundLocationWithDisclosure(context);
+        debugPrint('BackgroundLocationService: Background permission with disclosure result: $granted');
+      } else {
+        // Fallback: request without disclosure (for background/resume scenarios)
+        // Note: This should only happen when resuming monitoring, not initial request
+        await LocationService.requestBackgroundLocationPermission();
+      }
       // Continue even if background permission is not granted
       // The foreground monitoring will still work
     }

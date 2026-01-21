@@ -1014,13 +1014,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
       final branchLon = (location['longitude'] as num).toDouble();
       final allowedRadius = (branchData['allowedCheckInRadius'] ?? 100).toDouble();
       
-      // Start background monitoring
+      // Start background monitoring with context for prominent disclosure dialog
+      // The context is passed to show the Google Play required disclosure before
+      // requesting background location permission
       await _backgroundLocationService.startMonitoring(
         checkInId: activeCheckIn.id!,
         branchId: activeCheckIn.branchId,
         branchLatitude: branchLat,
         branchLongitude: branchLon,
         allowedRadius: allowedRadius,
+        context: mounted ? context : null,
       );
       
       debugPrint('Background location monitoring started for check-in ${activeCheckIn.id}');
