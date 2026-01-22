@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/location_service.dart';
 import '../services/staff_check_in_service.dart';
+import '../services/permission_service.dart';
 
 class AppColors {
   static const primary = Color(0xFFFF2D8F);
@@ -84,17 +85,21 @@ class _StaffCheckInPageState extends State<StaffCheckInPage> {
         return;
       }
 
-      // Request permission
-      final permission = await LocationService.requestLocationPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() {
-          _locationError = 'Location permission denied. Please grant permission to check in.';
-          _isGettingLocation = false;
-        });
-        return;
-      }
-
-      if (permission == LocationPermission.deniedForever) {
+      // Check current permission status first
+      final currentPermission = await Geolocator.checkPermission();
+      
+      // If permission not granted, show custom dialog then request
+      if (currentPermission == LocationPermission.denied) {
+        if (!mounted) return;
+        final granted = await PermissionService().requestLocationPermissionWithDialog(context);
+        if (!granted) {
+          setState(() {
+            _locationError = 'Location permission denied. Please grant permission to check in.';
+            _isGettingLocation = false;
+          });
+          return;
+        }
+      } else if (currentPermission == LocationPermission.deniedForever) {
         setState(() {
           _locationError = 'Location permission permanently denied. Please enable it in app settings.';
           _isGettingLocation = false;

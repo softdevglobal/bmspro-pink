@@ -3,9 +3,9 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 /// Location service for staff geofenced check-in
+/// Note: Only foreground location is used - no background location to comply with App Store/Play Store
 class LocationService {
   /// Earth radius in kilometers for Haversine formula
   static const double earthRadiusKm = 6371;
@@ -32,40 +32,7 @@ class LocationService {
     return permission;
   }
   
-  /// Request background location permission (needed for auto clock-out)
-  static Future<bool> requestBackgroundLocationPermission() async {
-    // First ensure we have basic location permission
-    final basicPermission = await requestLocationPermission();
-    if (basicPermission == LocationPermission.denied ||
-        basicPermission == LocationPermission.deniedForever) {
-      return false;
-    }
-    
-    // Check if we already have "always" permission
-    if (basicPermission == LocationPermission.always) {
-      return true;
-    }
-    
-    // On Android, we need to explicitly request background location
-    if (Platform.isAndroid) {
-      // Use permission_handler for background location on Android
-      final status = await Permission.locationAlways.request();
-      return status.isGranted;
-    }
-    
-    // On iOS, requestPermission already handles always permission
-    // The system will show the appropriate dialog
-    final alwaysPermission = await Geolocator.requestPermission();
-    return alwaysPermission == LocationPermission.always;
-  }
-  
-  /// Check if background location permission is granted
-  static Future<bool> hasBackgroundLocationPermission() async {
-    final permission = await Geolocator.checkPermission();
-    return permission == LocationPermission.always;
-  }
-
-  /// Check if location permission is granted
+  /// Check if location permission is granted (when in use)
   static Future<bool> isLocationPermissionGranted() async {
     final permission = await Geolocator.checkPermission();
     return permission == LocationPermission.always ||
@@ -185,8 +152,8 @@ class LocationService {
     return await Geolocator.openLocationSettings();
   }
   
-  /// Get a stream of position updates for background tracking
-  /// This continues to work when the app is in the background
+  /// Get a stream of position updates for foreground tracking
+  /// This works when the app is in the foreground (open and visible)
   static Stream<Position> getPositionStream({
     int distanceFilter = 50, // Minimum distance (in meters) before an update is triggered
     int intervalDuration = 60000, // Time between updates in milliseconds (default 1 minute)
@@ -198,22 +165,16 @@ class LocationService {
         accuracy: LocationAccuracy.high,
         distanceFilter: distanceFilter,
         intervalDuration: Duration(milliseconds: intervalDuration),
-        // Enable foreground notification for background tracking
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationText: 'BMS Pro Pink is monitoring your location for auto clock-out',
-          notificationTitle: 'Location Tracking Active',
-          enableWakeLock: true,
-          notificationIcon: AndroidResource(name: 'ic_launcher', defType: 'mipmap'),
-        ),
+        // No background tracking - foreground only
       );
     } else if (Platform.isIOS) {
       locationSettings = AppleSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: distanceFilter,
-        pauseLocationUpdatesAutomatically: false,
-        showBackgroundLocationIndicator: true,
+        pauseLocationUpdatesAutomatically: true,
+        showBackgroundLocationIndicator: false,
         activityType: ActivityType.other,
-        allowBackgroundLocationUpdates: true,
+        allowBackgroundLocationUpdates: false, // Foreground only
       );
     } else {
       locationSettings = LocationSettings(

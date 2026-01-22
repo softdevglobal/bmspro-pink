@@ -14,6 +14,7 @@ import '../services/staff_check_in_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/background_location_service.dart';
+import '../services/permission_service.dart';
 import 'package:geolocator/geolocator.dart';
 
 enum ClockStatus { out, clockedIn, onBreak }
@@ -218,18 +219,32 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
         return;
       }
 
-      // Check permission first
+      // Check permission first - show custom dialog if not granted
       final hasPermission = await LocationService.isLocationPermissionGranted();
       if (!hasPermission) {
-        Navigator.pop(context); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Location permission is required. Please grant location permission in app settings.'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 4),
-          ),
+        Navigator.pop(context); // Close loading dialog first
+        
+        // Show custom location disclosure dialog, then request permission
+        if (!mounted) return;
+        final granted = await PermissionService().requestLocationPermissionWithDialog(context);
+        if (!granted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Location permission is required. Please grant location permission to check in.'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 4),
+            ),
+          );
+          return;
+        }
+        
+        // Show loading dialog again after permission granted
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(child: CircularProgressIndicator()),
         );
-        return;
       }
 
       // Get current location

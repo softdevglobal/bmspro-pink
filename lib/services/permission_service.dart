@@ -1,16 +1,15 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 /// Service for handling app permissions (location, notifications, etc.)
+/// Note: Only foreground location is used - no background location to comply with App Store/Play Store
 class PermissionService {
   static final PermissionService _instance = PermissionService._internal();
   factory PermissionService() => _instance;
   PermissionService._internal();
   
-  /// Track if background location disclosure has been shown
-  static bool _backgroundLocationDisclosureShown = false;
+  /// Track if location disclosure has been shown in this session
+  static bool _locationDisclosureShown = false;
 
   /// Request all required permissions at app startup
   /// This includes notification and location permissions
@@ -18,13 +17,13 @@ class PermissionService {
     debugPrint('📋 Requesting app permissions...');
     
     // Request notification permission (handled by NotificationService)
-    // Location permission
+    // Location permission - don't show dialog at startup, just check
     await requestLocationPermission();
     
     debugPrint('✅ Permission requests completed');
   }
 
-  /// Request location permission
+  /// Request location permission (without showing custom dialog)
   Future<bool> requestLocationPermission() async {
     try {
       debugPrint('📍 Requesting location permission...');
@@ -64,247 +63,40 @@ class PermissionService {
       return false;
     }
   }
-
-  /// Request background location permission (needed for auto clock-out feature)
-  /// Note: This requires showing a prominent disclosure first on Android
-  Future<bool> requestBackgroundLocationPermission() async {
-    try {
-      debugPrint('📍 Requesting background location permission...');
-      
-      // First ensure we have basic location permission
-      final hasBasicPermission = await requestLocationPermission();
-      if (!hasBasicPermission) {
-        return false;
-      }
-      
-      // Check if we already have "always" permission
-      final currentPermission = await Geolocator.checkPermission();
-      if (currentPermission == LocationPermission.always) {
-        debugPrint('✅ Background location permission already granted');
-        return true;
-      }
-      
-      // On Android, we need to explicitly request background location
-      if (Platform.isAndroid) {
-        // Use permission_handler for background location on Android
-        final status = await Permission.locationAlways.request();
-        debugPrint('📍 Android background permission status: $status');
-        return status.isGranted;
-      }
-      
-      // On iOS, requestPermission handles "always" permission
-      // The system will show the appropriate dialog
-      final alwaysPermission = await Geolocator.requestPermission();
-      debugPrint('📍 iOS background permission: $alwaysPermission');
-      return alwaysPermission == LocationPermission.always;
-    } catch (e) {
-      debugPrint('❌ Error requesting background location permission: $e');
-      return false;
-    }
-  }
   
-  /// Request background location permission WITH prominent disclosure dialog
-  /// This method should be used instead of requestBackgroundLocationPermission()
-  /// to comply with Google Play's Prominent Disclosure and Consent Requirement
-  Future<bool> requestBackgroundLocationWithDisclosure(BuildContext context) async {
+  /// Request location permission WITH custom disclosure dialog
+  /// Shows a user-friendly explanation before the system permission dialog
+  /// Use this for user-initiated actions (like check-in)
+  Future<bool> requestLocationPermissionWithDialog(BuildContext context) async {
     try {
-      debugPrint('📍 Requesting background location with disclosure...');
-      
-      // First ensure we have basic location permission
-      final hasBasicPermission = await requestLocationPermission();
-      if (!hasBasicPermission) {
-        return false;
-      }
-      
-      // Check if we already have "always" permission
-      final currentPermission = await Geolocator.checkPermission();
-      if (currentPermission == LocationPermission.always) {
-        debugPrint('✅ Background location permission already granted');
+      // Check if permission is already granted
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.whileInUse || 
+          permission == LocationPermission.always) {
+        debugPrint('✅ Location permission already granted');
         return true;
       }
       
-      // Show prominent disclosure dialog BEFORE requesting permission
-      // This is required by Google Play policy
-      final userConsent = await showBackgroundLocationDisclosure(context);
+      // Show custom disclosure dialog first
+      final userConsent = await showLocationDisclosureDialog(context);
       if (!userConsent) {
-        debugPrint('❌ User declined background location disclosure');
+        debugPrint('❌ User declined location disclosure');
         return false;
       }
       
       // Mark disclosure as shown
-      _backgroundLocationDisclosureShown = true;
+      _locationDisclosureShown = true;
       
-      // Now request the actual permission
-      if (Platform.isAndroid) {
-        final status = await Permission.locationAlways.request();
-        debugPrint('📍 Android background permission status: $status');
-        return status.isGranted;
-      }
-      
-      // On iOS
-      final alwaysPermission = await Geolocator.requestPermission();
-      debugPrint('📍 iOS background permission: $alwaysPermission');
-      return alwaysPermission == LocationPermission.always;
+      // Now request the actual permission (system dialog)
+      return await requestLocationPermission();
     } catch (e) {
-      debugPrint('❌ Error requesting background location with disclosure: $e');
+      debugPrint('❌ Error requesting location with dialog: $e');
       return false;
     }
   }
   
-  /// Check if background location disclosure has been shown
-  static bool get hasShownBackgroundLocationDisclosure => _backgroundLocationDisclosureShown;
-  
-  /// Show the prominent disclosure dialog for background location
-  /// Required by Google Play policy for BACKGROUND_LOCATION permission
-  static Future<bool> showBackgroundLocationDisclosure(BuildContext context) async {
-    return await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Icon
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF2D8F).withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.location_on,
-                  color: Color(0xFFFF2D8F),
-                  size: 40,
-                ),
-              ),
-              const SizedBox(height: 20),
-              
-              // Title
-              const Text(
-                'Background Location Access',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1A1A1A),
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              
-              // Disclosure text - REQUIRED by Google Play policy
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF5FA),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFFFF2D8F).withOpacity(0.2),
-                  ),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'This app collects location data to enable automatic clock-out when you leave your workplace, even when the app is closed or not in use.',
-                      style: TextStyle(
-                        fontSize: 14,
-                        height: 1.5,
-                        color: Color(0xFF1A1A1A),
-                      ),
-                    ),
-                    SizedBox(height: 12),
-                    Text(
-                      'Why we need this:',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF1A1A1A),
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    _DisclosureItem(
-                      icon: Icons.timer_outlined,
-                      text: 'Automatic clock-out when you leave the salon',
-                    ),
-                    SizedBox(height: 6),
-                    _DisclosureItem(
-                      icon: Icons.verified_outlined,
-                      text: 'Accurate timesheet tracking',
-                    ),
-                    SizedBox(height: 6),
-                    _DisclosureItem(
-                      icon: Icons.security_outlined,
-                      text: 'Prevent accidental unpaid overtime',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              
-              // Privacy note
-              const Text(
-                'Your location data is only used for staff attendance purposes and is never shared with third parties.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF9E9E9E),
-                  height: 1.4,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              
-              // Buttons
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: const BorderSide(color: Color(0xFF9E9E9E)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Not Now',
-                        style: TextStyle(color: Color(0xFF9E9E9E)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF2D8F),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'I Understand',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    ) ?? false;
-  }
+  /// Check if location disclosure has been shown
+  static bool get hasShownLocationDisclosure => _locationDisclosureShown;
 
   /// Check if location permission is granted
   Future<bool> isLocationPermissionGranted() async {
@@ -313,10 +105,12 @@ class PermissionService {
         permission == LocationPermission.whileInUse;
   }
 
-  /// Check if background location permission is granted
-  Future<bool> isBackgroundLocationPermissionGranted() async {
+  /// Check if location permission is granted (when in use)
+  /// Note: Background location is no longer used
+  Future<bool> isWhenInUseLocationPermissionGranted() async {
     final permission = await Geolocator.checkPermission();
-    return permission == LocationPermission.always;
+    return permission == LocationPermission.whileInUse || 
+           permission == LocationPermission.always;
   }
 
   /// Check if location services are enabled
@@ -334,53 +128,13 @@ class PermissionService {
     return await Geolocator.openLocationSettings();
   }
 
-  /// Show permission rationale dialog for location
-  static Future<bool> showLocationPermissionRationale(BuildContext context) async {
+  /// Show location disclosure dialog
+  /// This explains why the app needs location before showing system dialog
+  static Future<bool> showLocationDisclosureDialog(BuildContext context) async {
     return await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF2D8F).withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.location_on,
-                color: Color(0xFFFF2D8F),
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Text('Location Permission'),
-          ],
-        ),
-        content: const Text(
-          'BMS Pro Pink needs access to your location for:\n\n'
-          '• Staff check-in at salon locations\n'
-          '• Auto clock-out when you leave the salon\n'
-          '• Verifying your presence at the workplace\n\n'
-          'Please allow location access for the best experience.',
-          style: TextStyle(fontSize: 14, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Not Now'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF2D8F),
-            ),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Allow'),
-          ),
-        ],
-      ),
+      builder: (context) => const _LocationDisclosureDialog(),
     ) ?? false;
   }
 
@@ -423,39 +177,240 @@ class PermissionService {
   }
 }
 
-/// Helper widget for disclosure items
-class _DisclosureItem extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  
-  const _DisclosureItem({
-    required this.icon,
-    required this.text,
-  });
-  
+/// Location Disclosure Dialog
+/// Shows a user-friendly explanation of why location is needed
+/// Works on both Android and iOS
+class _LocationDisclosureDialog extends StatelessWidget {
+  const _LocationDisclosureDialog();
+
   @override
   Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header with icon
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFFFF2D8F).withOpacity(0.1),
+                    const Color(0xFFFF6FB5).withOpacity(0.05),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF2D8F).withOpacity(0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.location_on_rounded,
+                      color: Color(0xFFFF2D8F),
+                      size: 36,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Location Access Required',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1A1A1A),
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+            
+            // Content
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'BMS Pro Pink needs your location to:',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1A1A1A),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Feature items
+                  _buildFeatureItem(
+                    icon: Icons.check_circle_outline,
+                    title: 'Verify Check-In Location',
+                    description: 'Confirm you\'re at your assigned branch when clocking in',
+                  ),
+                  const SizedBox(height: 12),
+                  _buildFeatureItem(
+                    icon: Icons.my_location_rounded,
+                    title: 'Geofence Verification',
+                    description: 'Ensure attendance accuracy within the allowed radius',
+                  ),
+                  const SizedBox(height: 12),
+                  _buildFeatureItem(
+                    icon: Icons.security_rounded,
+                    title: 'Compliance & Accuracy',
+                    description: 'Generate accurate timesheets and attendance records',
+                  ),
+                  
+                  const SizedBox(height: 20),
+                  
+                  // Privacy note
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F5F5),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.shield_outlined,
+                          size: 20,
+                          color: Colors.grey[600],
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Your location is only used while the app is open and is not shared with third parties.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Buttons
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  // Primary button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF2D8F),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: const Text(
+                        'Allow Location Access',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Secondary button
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: Text(
+                        'Not Now',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeatureItem({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(
-          icon,
-          size: 18,
-          color: const Color(0xFFFF2D8F),
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFF2D8F).withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: const Color(0xFFFF2D8F),
+          ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 12),
         Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(
-              fontSize: 13,
-              height: 1.4,
-              color: Color(0xFF1A1A1A),
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF1A1A1A),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                description,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                  height: 1.3,
+                ),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 }
-

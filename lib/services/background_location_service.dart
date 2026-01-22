@@ -7,11 +7,11 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'location_service.dart';
 import 'staff_check_in_service.dart';
 import 'audit_log_service.dart';
-import 'permission_service.dart';
 
-/// Service for background location tracking and auto clock-out
-/// This service monitors the user's location even when the app is in the background
+/// Service for foreground location tracking and auto clock-out
+/// This service monitors the user's location when the app is in the foreground (open)
 /// and automatically clocks them out if they exceed the branch radius
+/// Note: Background location is NOT used to comply with App Store/Play Store guidelines
 class BackgroundLocationService {
   static final BackgroundLocationService _instance = BackgroundLocationService._internal();
   factory BackgroundLocationService() => _instance;
@@ -43,7 +43,8 @@ class BackgroundLocationService {
   
   /// Start monitoring location for auto clock-out
   /// Call this when the user checks in
-  /// [context] - Optional BuildContext for showing the prominent disclosure dialog (required by Google Play)
+  /// Note: Location monitoring only works when the app is in the foreground (open)
+  /// Background location is not used to comply with App Store guidelines
   Future<bool> startMonitoring({
     required String checkInId,
     required String branchId,
@@ -55,7 +56,7 @@ class BackgroundLocationService {
     // Stop any existing monitoring first
     await stopMonitoring();
     
-    // Check for location permission (at least while in use)
+    // Check for location permission (while in use only - no background)
     final hasBasicPermission = await LocationService.isLocationPermissionGranted();
     if (!hasBasicPermission) {
       debugPrint('BackgroundLocationService: No location permission');
@@ -67,25 +68,9 @@ class BackgroundLocationService {
       }
     }
     
-    // Try to get background permission (optional, but preferred)
-    // IMPORTANT: Show prominent disclosure dialog BEFORE requesting background location
-    // This is required by Google Play policy
-    final hasBackgroundPermission = await LocationService.hasBackgroundLocationPermission();
-    if (!hasBackgroundPermission) {
-      debugPrint('BackgroundLocationService: No background location permission, requesting with disclosure...');
-      
-      // If context is available, use the disclosure dialog (Google Play requirement)
-      if (context != null && context.mounted) {
-        final granted = await PermissionService().requestBackgroundLocationWithDisclosure(context);
-        debugPrint('BackgroundLocationService: Background permission with disclosure result: $granted');
-      } else {
-        // Fallback: request without disclosure (for background/resume scenarios)
-        // Note: This should only happen when resuming monitoring, not initial request
-        await LocationService.requestBackgroundLocationPermission();
-      }
-      // Continue even if background permission is not granted
-      // The foreground monitoring will still work
-    }
+    // Note: We only use "When In Use" location permission now
+    // Background location is not requested to comply with both App Store and Play Store guidelines
+    // Auto clock-out will only work when the app is open
     
     _activeCheckInId = checkInId;
     _activeBranchId = branchId;
