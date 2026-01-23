@@ -314,6 +314,11 @@ class _BranchesPageState extends State<BranchesPage> {
           setState(() {
             _branches = allBranches;
           });
+
+          // Sync branch count if it doesn't match (for salon owners only)
+          if (_userRole == 'salon_owner') {
+            _syncBranchCountIfNeeded(ownerUid, allBranches);
+          }
         }
       });
 
@@ -819,6 +824,23 @@ class _BranchesPageState extends State<BranchesPage> {
             .doc(branch.id)
             .delete();
 
+        // Update owner's branch count and branch names
+        if (_ownerUid != null) {
+          try {
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(_ownerUid!)
+                .update({
+              'currentBranchCount': FieldValue.increment(-1),
+              'branchNames': FieldValue.arrayRemove([branch.name]),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            debugPrint('Updated owner branch count and names after deletion');
+          } catch (e) {
+            debugPrint('Failed to update owner branch count: $e');
+          }
+        }
+
         // Create audit log
         await AuditLogService.logBranchDeleted(
           ownerUid: _ownerUid!,
@@ -833,12 +855,95 @@ class _BranchesPageState extends State<BranchesPage> {
             .collection('branches')
             .doc(branch.id)
             .delete();
+
+        // Update owner's branch count and branch names
+        if (_ownerUid != null) {
+          try {
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(_ownerUid!)
+                .update({
+              'currentBranchCount': FieldValue.increment(-1),
+              'branchNames': FieldValue.arrayRemove([branch.name]),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            debugPrint('Updated owner branch count and names after deletion');
+          } catch (e) {
+            debugPrint('Failed to update owner branch count: $e');
+          }
+        }
       }
 
       _showToast('Branch deleted');
     } catch (e) {
       debugPrint('Error deleting branch: $e');
       _showToast('Failed to delete branch');
+    }
+  }
+
+  /// Sync branch count and names if they don't match the actual branches
+  Future<void> _syncBranchCountIfNeeded(String ownerUid, List<BranchModel> branches) async {
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(ownerUid)
+          .get();
+      final userData = userDoc.data();
+      final storedCount = userData?['currentBranchCount'] ?? 0;
+      final actualCount = branches.length;
+
+      if (storedCount != actualCount) {
+        debugPrint('Branch count mismatch detected: stored=$storedCount, actual=$actualCount. Syncing...');
+        
+        // Get actual branch names
+        final branchNames = branches.map((b) => b.name).toList();
+        
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(ownerUid)
+            .update({
+          'currentBranchCount': actualCount,
+          'branchNames': branchNames,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        
+        debugPrint('✅ Synced branch count for $ownerUid: $storedCount → $actualCount');
+      }
+
+      // Also sync additionalBranchPrice if missing
+      if (userData?['additionalBranchPrice'] == null && userData?['planId'] != null) {
+        try {
+          final planDoc = await FirebaseFirestore.instance
+              .collection('subscription_plans')
+              .doc(userData!['planId'])
+              .get();
+          if (planDoc.exists) {
+            final planData = planDoc.data();
+            final additionalBranchPrice = planData?['additionalBranchPrice'];
+            if (additionalBranchPrice != null) {
+              await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(ownerUid)
+                  .update({
+                'additionalBranchPrice': additionalBranchPrice,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+              debugPrint('✅ Synced additionalBranchPrice: $additionalBranchPrice');
+              
+              // Update local state
+              if (mounted) {
+                setState(() {
+                  _additionalBranchPrice = (additionalBranchPrice as num?)?.toDouble();
+                });
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Error syncing additionalBranchPrice: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error syncing branch count: $e');
     }
   }
 
@@ -2053,6 +2158,21 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
             }
           }
         }
+
+        // Update owner's branch count and branch names
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(widget.ownerUid)
+              .update({
+            'currentBranchCount': FieldValue.increment(1),
+            'branchNames': FieldValue.arrayUnion([data['name'].toString()]),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          debugPrint('Updated owner branch count and names after creation');
+        } catch (e) {
+          debugPrint('Failed to update owner branch count: $e');
+        }
       } else {
         // Update existing branch
         final branchId = widget.branch!.id;
@@ -2153,6 +2273,32 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
                 debugPrint('Failed to log admin assignment: $e');
               }
             }
+          }
+        }
+
+        // Update owner's branch names if branch name changed
+        final oldBranchName = widget.branch!.name;
+        final newBranchName = data['name'].toString();
+        if (oldBranchName != newBranchName) {
+          try {
+            // Remove old name and add new name
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(widget.ownerUid)
+                .update({
+              'branchNames': FieldValue.arrayRemove([oldBranchName]),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(widget.ownerUid)
+                .update({
+              'branchNames': FieldValue.arrayUnion([newBranchName]),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            debugPrint('Updated owner branch names after rename: $oldBranchName → $newBranchName');
+          } catch (e) {
+            debugPrint('Failed to update owner branch names: $e');
           }
         }
       }
