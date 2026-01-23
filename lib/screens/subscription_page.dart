@@ -93,9 +93,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
 
   // Calculator state
   int _branches = 1;
-  int _staff = 0;
-  static const double PRICE_BRANCH = 29.0;
-  static const double PRICE_STAFF = 9.99;
+  double? _additionalBranchPrice;
 
   static const String _apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
 
@@ -121,11 +119,49 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
 
       if (mounted && doc.exists) {
         final data = doc.data()!;
+        
+        // Get additional branch price from user document
+        double? branchPrice = (data['additionalBranchPrice'] as num?)?.toDouble();
+        
+        // If not in user doc, try to fetch from subscription plan
+        if (branchPrice == null && data['planId'] != null) {
+          try {
+            final planDoc = await FirebaseFirestore.instance
+                .collection('subscription_plans')
+                .doc(data['planId'].toString())
+                .get();
+            if (planDoc.exists) {
+              final planData = planDoc.data();
+              branchPrice = (planData?['additionalBranchPrice'] as num?)?.toDouble();
+            }
+          } catch (e) {
+            debugPrint('Error fetching plan data: $e');
+          }
+        }
+        
+        // If still no data, try to find plan by name
+        if (branchPrice == null && data['plan'] != null) {
+          try {
+            final plansQuery = await FirebaseFirestore.instance
+                .collection('subscription_plans')
+                .where('name', isEqualTo: data['plan'].toString())
+                .limit(1)
+                .get();
+            if (plansQuery.docs.isNotEmpty) {
+              final planData = plansQuery.docs.first.data();
+              branchPrice = (planData['additionalBranchPrice'] as num?)?.toDouble();
+            }
+          } catch (e) {
+            debugPrint('Error fetching plan by name: $e');
+          }
+        }
+        
         setState(() {
           _userName = data['name'] ?? data['displayName'] ?? '';
           _userEmail = user.email ?? data['email'] ?? '';
           _currentPlan = data['plan']?.toString() ?? '';
           _currentPrice = data['price']?.toString() ?? '';
+          _additionalBranchPrice = branchPrice;
           _loading = false;
         });
       } else {
@@ -203,13 +239,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
     }
   }
 
-  void _updateCalc(String type, int change) {
+  void _updateCalc(int change) {
     setState(() {
-      if (type == 'branch') {
-        _branches = (_branches + change).clamp(1, 999);
-      } else {
-        _staff = (_staff + change).clamp(0, 999);
-      }
+      _branches = (_branches + change).clamp(1, 999);
     });
   }
 
@@ -814,9 +846,13 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
   }
 
   Widget _buildCustomCalculator() {
-    final branchTotal = _branches * PRICE_BRANCH;
-    final staffTotal = _staff * PRICE_STAFF;
-    final grandTotal = branchTotal + staffTotal;
+    // Only show if user has a plan and additional branch price is available
+    if (_currentPlan == null || _currentPlan!.isEmpty || _additionalBranchPrice == null) {
+      return const SizedBox.shrink();
+    }
+    
+    final branchTotal = _branches * (_additionalBranchPrice ?? 0);
+    final grandTotal = branchTotal;
 
     return Container(
       decoration: BoxDecoration(
@@ -839,7 +875,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Custom Enterprise Plan',
+              'Add Additional Branches',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -847,11 +883,23 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              'Build a plan that fits your exact business structure',
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.muted,
+            RichText(
+              text: TextSpan(
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppColors.muted,
+                ),
+                children: [
+                  const TextSpan(text: 'Your package is '),
+                  TextSpan(
+                    text: _currentPlan ?? 'current plan',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  const TextSpan(text: '. You can add additional branches to your plan below.'),
+                ],
               ),
             ),
             const SizedBox(height: 24),
@@ -880,7 +928,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '\$${PRICE_BRANCH.toStringAsFixed(2)} per branch (Includes 1 Admin)',
+                          _additionalBranchPrice != null
+                              ? 'AU\$${_additionalBranchPrice!.toStringAsFixed(2)} per branch (Includes 1 Admin)'
+                              : 'Additional branch pricing not available',
                           style: TextStyle(
                             fontSize: 12,
                             color: AppColors.muted,
@@ -892,7 +942,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                   Row(
                     children: [
                       IconButton(
-                        onPressed: () => _updateCalc('branch', -1),
+                        onPressed: () => _updateCalc(-1),
                         icon: const Icon(FontAwesomeIcons.minus),
                         style: IconButton.styleFrom(
                           backgroundColor: Colors.white,
@@ -911,77 +961,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                       ),
                       const SizedBox(width: 16),
                       IconButton(
-                        onPressed: () => _updateCalc('branch', 1),
-                        icon: const Icon(FontAwesomeIcons.plus),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: AppColors.text,
-                          side: BorderSide(color: AppColors.border),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Staff Control
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Staff Members',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.text,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '\$${PRICE_STAFF.toStringAsFixed(2)} per additional staff member',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.muted,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: () => _updateCalc('staff', -1),
-                        icon: const Icon(FontAwesomeIcons.minus),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: AppColors.text,
-                          side: BorderSide(color: AppColors.border),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Text(
-                        '$_staff',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.text,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      IconButton(
-                        onPressed: () => _updateCalc('staff', 1),
+                        onPressed: () => _updateCalc(1),
                         icon: const Icon(FontAwesomeIcons.plus),
                         style: IconButton.styleFrom(
                           backgroundColor: Colors.white,
@@ -1016,35 +996,17 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Branches ($_branches × \$${PRICE_BRANCH.toStringAsFixed(2)})',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white.withOpacity(0.8),
+                      Flexible(
+                        child: Text(
+                          'Branches ($_branches × ${_additionalBranchPrice != null ? 'AU\$${_additionalBranchPrice!.toStringAsFixed(2)}' : '\$0.00'})',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white.withOpacity(0.8),
+                          ),
                         ),
                       ),
                       Text(
-                        '\$${branchTotal.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white.withOpacity(0.8),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Staff ($_staff × \$${PRICE_STAFF.toStringAsFixed(2)})',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white.withOpacity(0.8),
-                        ),
-                      ),
-                      Text(
-                        '\$${staffTotal.toStringAsFixed(2)}',
+                        'AU\$${branchTotal.toStringAsFixed(2)}',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.white.withOpacity(0.8),
@@ -1065,7 +1027,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                         ),
                       ),
                       Text(
-                        '\$${grandTotal.toStringAsFixed(2)}',
+                        'AU\$${grandTotal.toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
@@ -1094,7 +1056,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                         ),
                       ),
                       child: const Text(
-                        'Upgrade to Custom',
+                        'Add Branches',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
