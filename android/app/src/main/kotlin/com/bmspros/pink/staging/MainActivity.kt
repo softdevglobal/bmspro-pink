@@ -1,4 +1,4 @@
-package com.softdev.bmspro_pink
+package com.bmspros.pink.staging
 
 import io.flutter.embedding.android.FlutterActivity
 

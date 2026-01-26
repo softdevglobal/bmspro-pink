@@ -57,7 +57,7 @@
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.softdev.bmspro-pink</string>
+		<string>com.bmspros.pink.staging</string>
 	</array>
 	<key>io.flutter.embedded_views_preview</key>
 	<true/>
