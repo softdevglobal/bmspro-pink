@@ -12,6 +12,7 @@ import 'branches_page.dart';
 import 'salon_settings_page.dart';
 import 'audit_logs_page.dart';
 import 'subscription_page.dart';
+import 'acsu_loyalty_page.dart';
 import '../widgets/animated_toggle.dart';
 import '../services/staff_check_in_service.dart';
 
@@ -272,6 +273,20 @@ class _MorePageState extends State<MorePage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const AuditLogsPage()),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              _buildMenuCard(
+                context,
+                icon: FontAwesomeIcons.gem,
+                title: 'ACSU Loyalty',
+                subtitle: 'Manage loyalty points & rewards',
+                gradientColors: [const Color(0xFFEC4899), const Color(0xFFF472B6)],
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ACSULoyaltyPage()),
                   );
                 },
               ),
