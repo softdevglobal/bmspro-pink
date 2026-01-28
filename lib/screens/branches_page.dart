@@ -164,7 +164,6 @@ class _BranchesPageState extends State<BranchesPage> {
   
   // Subscription/plan data for branch limits
   int _branchLimit = 1;
-  double? _additionalBranchPrice;
   String? _ownerPlan;
 
   bool get _isBranchAdmin => _userRole == 'salon_branch_admin';
@@ -204,13 +203,12 @@ class _BranchesPageState extends State<BranchesPage> {
             .doc(ownerUid)
             .get();
         final ownerData = ownerDoc.data();
-        _branchLimit = ownerData?['branchLimit'] ?? 1;
-        _additionalBranchPrice = (ownerData?['additionalBranchPrice'] as num?)?.toDouble();
         _ownerPlan = ownerData?['plan'];
         
-        // If additionalBranchPrice is not in user doc, fetch from subscription plan
+        // Always fetch branchLimit from subscription plan first
+        int? branchLimit;
         final ownerPlanId = ownerData?['planId'];
-        if (_additionalBranchPrice == null && ownerPlanId != null) {
+        if (ownerPlanId != null) {
           try {
             final planDoc = await FirebaseFirestore.instance
                 .collection('subscription_plans')
@@ -218,18 +216,17 @@ class _BranchesPageState extends State<BranchesPage> {
                 .get();
             if (planDoc.exists) {
               final planData = planDoc.data();
-              _additionalBranchPrice = (planData?['additionalBranchPrice'] as num?)?.toDouble();
-              if (_branchLimit == 1) _branchLimit = planData?['branches'] ?? 1;
-              debugPrint('Fetched additionalBranchPrice from planId: $_additionalBranchPrice');
+              branchLimit = planData?['branches'];
+              debugPrint('Fetched branchLimit from planId: $branchLimit');
             }
           } catch (e) {
             debugPrint('Error fetching plan data: $e');
           }
         }
         
-        // If still no data, try to find plan by name
+        // If no planId, try to find plan by name
         final ownerPlanName = ownerData?['plan'];
-        if (_additionalBranchPrice == null && ownerPlanName != null) {
+        if (branchLimit == null && ownerPlanName != null) {
           try {
             final plansQuery = await FirebaseFirestore.instance
                 .collection('subscription_plans')
@@ -238,23 +235,24 @@ class _BranchesPageState extends State<BranchesPage> {
                 .get();
             if (plansQuery.docs.isNotEmpty) {
               final planData = plansQuery.docs.first.data();
-              _additionalBranchPrice = (planData['additionalBranchPrice'] as num?)?.toDouble();
-              if (_branchLimit == 1) _branchLimit = planData['branches'] ?? 1;
-              debugPrint('Fetched additionalBranchPrice from plan name: $_additionalBranchPrice');
+              branchLimit = planData['branches'];
+              debugPrint('Fetched branchLimit from plan name: $branchLimit');
             }
           } catch (e) {
             debugPrint('Error fetching plan by name: $e');
           }
         }
+        
+        // Fallback to user's stored branchLimit or default to 1
+        _branchLimit = branchLimit ?? ownerData?['branchLimit'] ?? 1;
       } else if (role == 'salon_owner') {
         // Get subscription data for salon owner
-        _branchLimit = userData?['branchLimit'] ?? 1;
-        _additionalBranchPrice = (userData?['additionalBranchPrice'] as num?)?.toDouble();
         _ownerPlan = userData?['plan'];
         
-        // If additionalBranchPrice is not in user doc, fetch from subscription plan
+        // Always fetch branchLimit from subscription plan first
+        int? branchLimit;
         final userPlanId = userData?['planId'];
-        if (_additionalBranchPrice == null && userPlanId != null) {
+        if (userPlanId != null) {
           try {
             final planDoc = await FirebaseFirestore.instance
                 .collection('subscription_plans')
@@ -262,18 +260,17 @@ class _BranchesPageState extends State<BranchesPage> {
                 .get();
             if (planDoc.exists) {
               final planData = planDoc.data();
-              _additionalBranchPrice = (planData?['additionalBranchPrice'] as num?)?.toDouble();
-              if (_branchLimit == 1) _branchLimit = planData?['branches'] ?? 1;
-              debugPrint('Fetched additionalBranchPrice from planId: $_additionalBranchPrice');
+              branchLimit = planData?['branches'];
+              debugPrint('Fetched branchLimit from planId: $branchLimit');
             }
           } catch (e) {
             debugPrint('Error fetching plan data: $e');
           }
         }
         
-        // If still no data, try to find plan by name
+        // If no planId, try to find plan by name
         final userPlanName = userData?['plan'];
-        if (_additionalBranchPrice == null && userPlanName != null) {
+        if (branchLimit == null && userPlanName != null) {
           try {
             final plansQuery = await FirebaseFirestore.instance
                 .collection('subscription_plans')
@@ -282,14 +279,16 @@ class _BranchesPageState extends State<BranchesPage> {
                 .get();
             if (plansQuery.docs.isNotEmpty) {
               final planData = plansQuery.docs.first.data();
-              _additionalBranchPrice = (planData['additionalBranchPrice'] as num?)?.toDouble();
-              if (_branchLimit == 1) _branchLimit = planData['branches'] ?? 1;
-              debugPrint('Fetched additionalBranchPrice from plan name: $_additionalBranchPrice');
+              branchLimit = planData['branches'];
+              debugPrint('Fetched branchLimit from plan name: $branchLimit');
             }
           } catch (e) {
             debugPrint('Error fetching plan by name: $e');
           }
         }
+        
+        // Fallback to user's stored branchLimit or default to 1
+        _branchLimit = branchLimit ?? userData?['branchLimit'] ?? 1;
       }
 
       _ownerUid = ownerUid;
@@ -381,11 +380,11 @@ class _BranchesPageState extends State<BranchesPage> {
     }
   }
 
-  // Show confirmation dialog for additional branch
-  Future<bool> _showAdditionalBranchConfirmation() async {
-    final result = await showDialog<bool>(
+  // Show upgrade package modal
+  void _showUpgradePackageModal() {
+    showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (context) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Container(
@@ -400,7 +399,7 @@ class _BranchesPageState extends State<BranchesPage> {
                 padding: const EdgeInsets.all(20),
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [Color(0xFFFF2D8F), Color(0xFFFF6FB5)],
+                    colors: [Color(0xFF8B5CF6), Color(0xFF6366F1)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -420,7 +419,7 @@ class _BranchesPageState extends State<BranchesPage> {
                       ),
                       child: const Center(
                         child: Icon(
-                          FontAwesomeIcons.codeBranch,
+                          FontAwesomeIcons.arrowUpRightDots,
                           color: Colors.white,
                           size: 20,
                         ),
@@ -432,7 +431,7 @@ class _BranchesPageState extends State<BranchesPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Additional Branch',
+                            'Upgrade Your Package',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -440,7 +439,7 @@ class _BranchesPageState extends State<BranchesPage> {
                             ),
                           ),
                           Text(
-                            'Your plan includes $_branchLimit branch${_branchLimit > 1 ? 'es' : ''}',
+                            'Unlock more branches for your business',
                             style: TextStyle(
                               fontSize: 13,
                               color: Colors.white.withOpacity(0.9),
@@ -476,7 +475,7 @@ class _BranchesPageState extends State<BranchesPage> {
                             ),
                             child: const Center(
                               child: Icon(
-                                FontAwesomeIcons.circleInfo,
+                                FontAwesomeIcons.triangleExclamation,
                                 color: Color(0xFFF57F17),
                                 size: 16,
                               ),
@@ -510,81 +509,70 @@ class _BranchesPageState extends State<BranchesPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    // Price Box
+                    // Upgrade Benefits Box
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
+                        gradient: LinearGradient(
+                          colors: [const Color(0xFF8B5CF6).withOpacity(0.1), const Color(0xFF6366F1).withOpacity(0.1)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
                         borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF8B5CF6).withOpacity(0.3)),
                       ),
                       child: Column(
                         children: [
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              const Flexible(
-                                child: Text(
-                                  'Additional Branch Fee',
-                                  style: TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 14,
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF8B5CF6).withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Center(
+                                  child: Icon(
+                                    FontAwesomeIcons.crown,
+                                    color: Color(0xFF8B5CF6),
+                                    size: 18,
                                   ),
                                 ),
                               ),
-                              Flexible(
-                                child: Text(
-                                  'AU\$${(_additionalBranchPrice ?? 0).toStringAsFixed(2)}/mo',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 18,
-                                    color: Color(0xFF1A1A1A),
-                                  ),
-                                  textAlign: TextAlign.end,
-                                  overflow: TextOverflow.ellipsis,
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Need More Branches?',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF1A1A1A),
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Upgrade to a higher tier package',
+                                      style: TextStyle(
+                                        color: Colors.grey,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
-                          const Divider(height: 24),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              const Flexible(
-                                child: Text(
-                                  'Total Additional Cost',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ),
-                              Flexible(
-                                child: Text(
-                                  '+AU\$${(_additionalBranchPrice ?? 0).toStringAsFixed(2)}/mo',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: Color(0xFFFF2D8F),
-                                  ),
-                                  textAlign: TextAlign.end,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
+                          const SizedBox(height: 16),
+                          _buildUpgradeBenefitItem('More branch locations'),
+                          const SizedBox(height: 8),
+                          _buildUpgradeBenefitItem('Additional staff members'),
+                          const SizedBox(height: 8),
+                          _buildUpgradeBenefitItem('Premium features included'),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'This charge will be added to your monthly subscription.',
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 12,
-                      ),
-                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
@@ -596,7 +584,7 @@ class _BranchesPageState extends State<BranchesPage> {
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () => Navigator.pop(context, false),
+                        onPressed: () => Navigator.pop(context),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           side: BorderSide(color: Colors.grey.shade300),
@@ -616,9 +604,15 @@ class _BranchesPageState extends State<BranchesPage> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context, true),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SubscriptionPage()),
+                          );
+                        },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF2D8F),
+                          backgroundColor: const Color(0xFF8B5CF6),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -628,10 +622,10 @@ class _BranchesPageState extends State<BranchesPage> {
                         child: const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(FontAwesomeIcons.check, size: 14, color: Colors.white),
+                            Icon(FontAwesomeIcons.arrowUp, size: 14, color: Colors.white),
                             SizedBox(width: 8),
                             Text(
-                              'Add Branch',
+                              'View Options',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600,
@@ -649,26 +643,46 @@ class _BranchesPageState extends State<BranchesPage> {
         ),
       ),
     );
-    return result ?? false;
+  }
+
+  Widget _buildUpgradeBenefitItem(String text) {
+    return Row(
+      children: [
+        Container(
+          width: 20,
+          height: 20,
+          decoration: const BoxDecoration(
+            color: Color(0xFF8B5CF6),
+            shape: BoxShape.circle,
+          ),
+          child: const Center(
+            child: Icon(
+              FontAwesomeIcons.check,
+              color: Colors.white,
+              size: 10,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          text,
+          style: const TextStyle(
+            color: Color(0xFF1A1A1A),
+            fontSize: 13,
+          ),
+        ),
+      ],
+    );
   }
 
   void _showAddBranchSheet() {
     // Check branch limit before opening modal
     final branchLimit = _branchLimit;
     final currentBranchCount = _branches.length;
-    final additionalBranchPrice = _additionalBranchPrice;
 
-    // If at or exceeding limit and there's additional branch pricing, show confirmation first
-    if (currentBranchCount >= branchLimit && additionalBranchPrice != null && additionalBranchPrice > 0) {
-      _showAdditionalBranchConfirmation().then((confirmed) {
-        if (confirmed) {
-          // Navigate to subscription page
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const SubscriptionPage()),
-          );
-        }
-      });
+    // If at or exceeding limit, show upgrade modal
+    if (currentBranchCount >= branchLimit && branchLimit != -1) {
+      _showUpgradePackageModal();
       return;
     }
 
@@ -683,7 +697,6 @@ class _BranchesPageState extends State<BranchesPage> {
         staff: _staff,
         branches: _branches,
         branchLimit: _branchLimit,
-        additionalBranchPrice: _additionalBranchPrice,
         ownerPlan: _ownerPlan,
         onSuccess: () {
           Navigator.pop(context);
@@ -706,7 +719,6 @@ class _BranchesPageState extends State<BranchesPage> {
         staff: _staff,
         branches: _branches,
         branchLimit: _branchLimit,
-        additionalBranchPrice: _additionalBranchPrice,
         ownerPlan: _ownerPlan,
         onSuccess: () {
           Navigator.pop(context);
@@ -909,39 +921,6 @@ class _BranchesPageState extends State<BranchesPage> {
         
         debugPrint('✅ Synced branch count for $ownerUid: $storedCount → $actualCount');
       }
-
-      // Also sync additionalBranchPrice if missing
-      if (userData?['additionalBranchPrice'] == null && userData?['planId'] != null) {
-        try {
-          final planDoc = await FirebaseFirestore.instance
-              .collection('subscription_plans')
-              .doc(userData!['planId'])
-              .get();
-          if (planDoc.exists) {
-            final planData = planDoc.data();
-            final additionalBranchPrice = planData?['additionalBranchPrice'];
-            if (additionalBranchPrice != null) {
-              await FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(ownerUid)
-                  .update({
-                'additionalBranchPrice': additionalBranchPrice,
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-              debugPrint('✅ Synced additionalBranchPrice: $additionalBranchPrice');
-              
-              // Update local state
-              if (mounted) {
-                setState(() {
-                  _additionalBranchPrice = (additionalBranchPrice as num?)?.toDouble();
-                });
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('Error syncing additionalBranchPrice: $e');
-        }
-      }
     } catch (e) {
       debugPrint('Error syncing branch count: $e');
     }
@@ -1135,41 +1114,41 @@ class _BranchesPageState extends State<BranchesPage> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Your ${_ownerPlan ?? "current plan"} includes ${_branchLimit} branch${_branchLimit > 1 ? "es" : ""}.',
+                      'Your ${_ownerPlan ?? "current plan"} includes ${_branchLimit == -1 ? "unlimited" : _branchLimit} branch${_branchLimit > 1 || _branchLimit == -1 ? "es" : ""}.',
                       style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.text,
                       ),
                     ),
-                    if (_additionalBranchPrice != null && _additionalBranchPrice! > 0) ...[
+                    if (_branchLimit != -1 && _branches.length >= _branchLimit) ...[
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const Icon(
-                            FontAwesomeIcons.plusCircle,
-                            size: 12,
-                            color: Color(0xFFFF2D8F),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              'Additional branches: AU\$${_additionalBranchPrice!.toStringAsFixed(2)}/month per branch',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: AppColors.text,
-                                fontWeight: FontWeight.w500,
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SubscriptionPage()),
+                          );
+                        },
+                        child: Row(
+                          children: [
+                            const Icon(
+                              FontAwesomeIcons.arrowUp,
+                              size: 12,
+                              color: Color(0xFFFF2D8F),
+                            ),
+                            const SizedBox(width: 6),
+                            const Expanded(
+                              child: Text(
+                                'Need more branches? Upgrade your package',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFFFF2D8F),
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.underline,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ] else ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        'No additional branch pricing available. Upgrade your plan to add more branches.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.muted,
+                          ],
                         ),
                       ),
                     ],
@@ -1254,62 +1233,63 @@ class _BranchesPageState extends State<BranchesPage> {
             children: [
               Expanded(
                 child: Text(
-                  'Your ${_ownerPlan ?? "current plan"} includes ${_branchLimit} branch${_branchLimit > 1 ? "es" : ""}.',
+                  'Your ${_ownerPlan ?? "current plan"} includes ${_branchLimit == -1 ? "unlimited" : _branchLimit} branch${_branchLimit > 1 || _branchLimit == -1 ? "es" : ""}.',
                   style: const TextStyle(
                     fontSize: 13,
                     color: AppColors.text,
                   ),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFFFF2D8F).withOpacity(0.3),
+              if (_branchLimit != -1)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: const Color(0xFFFF2D8F).withOpacity(0.3),
+                    ),
                   ),
-                ),
-                child: Text(
-                  '${_branches.length} / $_branchLimit',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFFFF2D8F),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (_additionalBranchPrice != null && _additionalBranchPrice! > 0) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(
-                  FontAwesomeIcons.plusCircle,
-                  size: 12,
-                  color: Color(0xFFFF2D8F),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
                   child: Text(
-                    'Additional branches: AU\$${_additionalBranchPrice!.toStringAsFixed(2)}/month per branch',
+                    '${_branches.length} / $_branchLimit',
                     style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.text,
-                      fontWeight: FontWeight.w500,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFFF2D8F),
                     ),
                   ),
                 ),
-              ],
-            ),
-          ] else ...[
+            ],
+          ),
+          if (_branchLimit != -1 && _branches.length >= _branchLimit) ...[
             const SizedBox(height: 8),
-            Text(
-              'No additional branch pricing available. Upgrade your plan to add more branches.',
-              style: TextStyle(
-                fontSize: 12,
-                color: AppColors.muted,
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SubscriptionPage()),
+                );
+              },
+              child: Row(
+                children: [
+                  const Icon(
+                    FontAwesomeIcons.arrowUp,
+                    size: 12,
+                    color: Color(0xFFFF2D8F),
+                  ),
+                  const SizedBox(width: 6),
+                  const Expanded(
+                    child: Text(
+                      'Need more branches? Upgrade your package',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFFFF2D8F),
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1644,7 +1624,6 @@ class _BranchFormSheet extends StatefulWidget {
   final List<StaffOption> staff;
   final List<BranchModel> branches;
   final int branchLimit;
-  final double? additionalBranchPrice;
   final String? ownerPlan;
   final VoidCallback onSuccess;
   final Function(String) onError;
@@ -1656,7 +1635,6 @@ class _BranchFormSheet extends StatefulWidget {
     required this.staff,
     required this.branches,
     this.branchLimit = 1,
-    this.additionalBranchPrice,
     this.ownerPlan,
     required this.onSuccess,
     required this.onError,
@@ -1736,284 +1714,6 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     super.dispose();
   }
 
-  // Show confirmation dialog for additional branch charge
-  Future<bool> _showAdditionalBranchConfirmation() async {
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Container(
-          width: double.infinity,
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Header
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFFFF2D8F), Color(0xFFFF6FB5)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.25),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          FontAwesomeIcons.codeBranch,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Additional Branch',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          Text(
-                            'Your plan includes ${widget.branchLimit} branch${widget.branchLimit > 1 ? 'es' : ''}',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.white.withOpacity(0.9),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Content
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    // Warning Box
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF8E1),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFFFE082)),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFE082),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Center(
-                              child: Icon(
-                                FontAwesomeIcons.circleInfo,
-                                color: Color(0xFFF57F17),
-                                size: 16,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Branch Limit Reached',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFFF57F17),
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'You have ${widget.branches.length} branch${widget.branches.length > 1 ? 'es' : ''}, which is the maximum in your ${widget.ownerPlan ?? 'current'} plan.',
-                                  style: TextStyle(
-                                    color: Colors.amber.shade900,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    // Price Box
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Additional Branch Fee',
-                                style: TextStyle(
-                                  color: Colors.grey,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                'AU\$${(widget.additionalBranchPrice ?? 0).toStringAsFixed(2)}/mo',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                  color: Color(0xFF1A1A1A),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const Divider(height: 24),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'New Branch',
-                                style: TextStyle(
-                                  color: Colors.grey,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                _nameController.text.trim(),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                  fontSize: 14,
-                                  color: Color(0xFF1A1A1A),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const Divider(height: 24),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Total Additional Cost',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                '+AU\$${(widget.additionalBranchPrice ?? 0).toStringAsFixed(2)}/mo',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                  color: Color(0xFFFF2D8F),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'This charge will be added to your monthly subscription.',
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 12,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-              // Actions
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: BorderSide(color: Colors.grey.shade300),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Cancel',
-                          style: TextStyle(
-                            color: Color(0xFF1A1A1A),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF2D8F),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(FontAwesomeIcons.check, size: 14, color: Colors.white),
-                            SizedBox(width: 8),
-                            Text(
-                              'Confirm',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    return result ?? false;
-  }
-
   Future<void> _saveBranch() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -2021,12 +1721,11 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
     if (widget.branch == null) {
       final currentBranchCount = widget.branches.length;
       final branchLimit = widget.branchLimit;
-      final additionalBranchPrice = widget.additionalBranchPrice;
 
-      // If exceeding limit and there's an additional branch price, show confirmation
-      if (currentBranchCount >= branchLimit && additionalBranchPrice != null && additionalBranchPrice > 0) {
-        final confirmed = await _showAdditionalBranchConfirmation();
-        if (!confirmed) return;
+      // If exceeding limit, don't allow (the parent already shows upgrade modal)
+      if (currentBranchCount >= branchLimit && branchLimit != -1) {
+        widget.onError('Branch limit reached. Please upgrade your package to add more branches.');
+        return;
       }
     }
 

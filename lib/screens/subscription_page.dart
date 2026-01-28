@@ -29,7 +29,6 @@ class Package {
   final String? image;
   final String? icon;
   final bool? active;
-  final double? additionalBranchPrice;
 
   Package({
     required this.id,
@@ -44,7 +43,6 @@ class Package {
     this.image,
     this.icon,
     this.active,
-    this.additionalBranchPrice,
   });
 
   factory Package.fromJson(Map<String, dynamic> json) {
@@ -61,11 +59,6 @@ class Package {
       image: json['image']?.toString(),
       icon: json['icon']?.toString(),
       active: json['active'] != false && json['active'] != 'false',
-      additionalBranchPrice: json['additionalBranchPrice'] != null 
-          ? ((json['additionalBranchPrice'] is num) 
-              ? json['additionalBranchPrice'].toDouble() 
-              : double.tryParse(json['additionalBranchPrice'].toString()))
-          : null,
     );
   }
 }
@@ -90,10 +83,6 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
   bool _showConfirmModal = false;
   Package? _selectedPackage;
   bool _updating = false;
-
-  // Calculator state
-  int _branches = 1;
-  double? _additionalBranchPrice;
 
   static const String _apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
 
@@ -120,48 +109,11 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
       if (mounted && doc.exists) {
         final data = doc.data()!;
         
-        // Get additional branch price from user document
-        double? branchPrice = (data['additionalBranchPrice'] as num?)?.toDouble();
-        
-        // If not in user doc, try to fetch from subscription plan
-        if (branchPrice == null && data['planId'] != null) {
-          try {
-            final planDoc = await FirebaseFirestore.instance
-                .collection('subscription_plans')
-                .doc(data['planId'].toString())
-                .get();
-            if (planDoc.exists) {
-              final planData = planDoc.data();
-              branchPrice = (planData?['additionalBranchPrice'] as num?)?.toDouble();
-            }
-          } catch (e) {
-            debugPrint('Error fetching plan data: $e');
-          }
-        }
-        
-        // If still no data, try to find plan by name
-        if (branchPrice == null && data['plan'] != null) {
-          try {
-            final plansQuery = await FirebaseFirestore.instance
-                .collection('subscription_plans')
-                .where('name', isEqualTo: data['plan'].toString())
-                .limit(1)
-                .get();
-            if (plansQuery.docs.isNotEmpty) {
-              final planData = plansQuery.docs.first.data();
-              branchPrice = (planData['additionalBranchPrice'] as num?)?.toDouble();
-            }
-          } catch (e) {
-            debugPrint('Error fetching plan by name: $e');
-          }
-        }
-        
         setState(() {
           _userName = data['name'] ?? data['displayName'] ?? '';
           _userEmail = user.email ?? data['email'] ?? '';
           _currentPlan = data['plan']?.toString() ?? '';
           _currentPrice = data['price']?.toString() ?? '';
-          _additionalBranchPrice = branchPrice;
           _loading = false;
         });
       } else {
@@ -237,12 +189,6 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
       debugPrint('❌ Stack trace: $stackTrace');
       if (mounted) setState(() => _packagesLoading = false);
     }
-  }
-
-  void _updateCalc(int change) {
-    setState(() {
-      _branches = (_branches + change).clamp(1, 999);
-    });
   }
 
   void _selectPlan(Package pkg) {
@@ -552,11 +498,6 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                           ),
 
                         const SizedBox(height: 24),
-
-                        // Custom Enterprise Calculator
-                        _buildCustomCalculator(),
-
-                        const SizedBox(height: 24),
                       ],
                     ),
                   ),
@@ -746,28 +687,6 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                 ),
               ],
             ),
-            // Additional Branch Price
-            if (pkg.additionalBranchPrice != null && pkg.additionalBranchPrice! > 0) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Icon(
-                    FontAwesomeIcons.plusCircle,
-                    size: 10,
-                    color: gradientColors[0],
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Additional branches: \$${pkg.additionalBranchPrice!.toStringAsFixed(2)}/branch',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: gradientColors[0],
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ],
             // Features List - Show all features
             if (pkg.features.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -837,234 +756,6 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCustomCalculator() {
-    // Only show if user has a plan and additional branch price is available
-    if (_currentPlan == null || _currentPlan!.isEmpty || _additionalBranchPrice == null) {
-      return const SizedBox.shrink();
-    }
-    
-    final branchTotal = _branches * (_additionalBranchPrice ?? 0);
-    final grandTotal = branchTotal;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border(
-          top: BorderSide(color: AppColors.primary, width: 4),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Add Additional Branches',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: AppColors.text,
-              ),
-            ),
-            const SizedBox(height: 4),
-            RichText(
-              text: TextSpan(
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppColors.muted,
-                ),
-                children: [
-                  const TextSpan(text: 'Your package is '),
-                  TextSpan(
-                    text: _currentPlan ?? 'current plan',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const TextSpan(text: '. You can add additional branches to your plan below.'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            // Branches Control
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Branches',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.text,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _additionalBranchPrice != null
-                              ? 'AU\$${_additionalBranchPrice!.toStringAsFixed(2)} per branch (Includes 1 Admin)'
-                              : 'Additional branch pricing not available',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.muted,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: () => _updateCalc(-1),
-                        icon: const Icon(FontAwesomeIcons.minus),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: AppColors.text,
-                          side: BorderSide(color: AppColors.border),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Text(
-                        '$_branches',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.text,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      IconButton(
-                        onPressed: () => _updateCalc(1),
-                        icon: const Icon(FontAwesomeIcons.plus),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: AppColors.text,
-                          side: BorderSide(color: AppColors.border),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            // Summary Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A1A),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                children: [
-                  const Text(
-                    'Est. Monthly Cost',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          'Branches ($_branches × ${_additionalBranchPrice != null ? 'AU\$${_additionalBranchPrice!.toStringAsFixed(2)}' : '\$0.00'})',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.white.withOpacity(0.8),
-                          ),
-                        ),
-                      ),
-                      Text(
-                        'AU\$${branchTotal.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white.withOpacity(0.8),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Divider(color: Colors.white24, height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Total',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      Text(
-                        'AU\$${grandTotal.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFFF6FB5),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Custom plan upgrade coming soon!'),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Add Branches',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ),
           ],
