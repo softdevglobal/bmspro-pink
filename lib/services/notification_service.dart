@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,12 +9,20 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:async';
 import '../screens/appointment_requests_page.dart';
 import '../screens/home_screen.dart';
+import '../firebase_options.dart';
 import 'app_initializer.dart';
 
 /// Top-level function to handle background messages
 /// Must be a top-level function, not a class method
+/// CRITICAL: This runs in a separate isolate when app is terminated/background
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // IMPORTANT: Initialize Firebase in background isolate
+  // This is required because background handlers run in a separate isolate
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  
   print('📩 Background FCM message received!');
   print('📩 Message ID: ${message.messageId}');
   print('📩 Notification Title: ${message.notification?.title}');
@@ -21,7 +30,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print('📩 Data: ${message.data}');
   
   // IMPORTANT: For messages WITH notification payload, FCM automatically shows them
-  // when the app is in background/terminated. No action needed.
+  // when the app is in background/terminated on Android.
+  // For iOS, the system shows them automatically via APNs.
   
   // For data-only messages, we need to show a local notification
   if (message.notification == null && message.data.isNotEmpty) {

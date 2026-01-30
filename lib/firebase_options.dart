@@ -1,4 +1,4 @@
-// File generated manually - configuration might need update for native Android/iOS App IDs
+// Firebase configuration for bmspro-pink (production)
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
@@ -32,40 +32,40 @@ class DefaultFirebaseOptions {
     }
   }
 
+  // Web configuration - update if you have a web app in bmspro-pink project
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyDEqqcY5778KkFGeeD59DdxaVJmyWl6Kpw',
-    appId: '1:545320934186:web:ebf4aa8fb734539ec99c53',
-    messagingSenderId: '545320934186',
-    projectId: 'bmspro-pink-v2-staging',
-    authDomain: 'bmspro-pink-v2-staging.firebaseapp.com',
-    storageBucket: 'bmspro-pink-v2-staging.firebasestorage.app',
-    measurementId: 'G-5TJLX869X9',
+    apiKey: 'AIzaSyD2q67hCjMyxb0N79zouXW1tzXDwAIwNFM',
+    appId: '1:960634304944:web:b73e75',
+    messagingSenderId: '960634304944',
+    projectId: 'bmspro-pink',
+    authDomain: 'bmspro-pink.firebaseapp.com',
+    storageBucket: 'bmspro-pink.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDDREBZtiOPjHzbxkTzUIf3I7C0THvtd6k',
-    appId: '1:545320934186:android:a7508af5354986d8c99c53',
-    messagingSenderId: '545320934186',
-    projectId: 'bmspro-pink-v2-staging',
-    storageBucket: 'bmspro-pink-v2-staging.firebasestorage.app',
+    apiKey: 'AIzaSyD2q67hCjMyxb0N79zouXW1tzXDwAIwNFM',
+    appId: '1:960634304944:android:fbfb092f36221831b73e75',
+    messagingSenderId: '960634304944',
+    projectId: 'bmspro-pink',
+    storageBucket: 'bmspro-pink.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyA_Kv-oO_-KPlz6yaPYi1Yqx8K035nNWmY',
-    appId: '1:545320934186:ios:9f2b0234bb99ec40c99c53',
-    messagingSenderId: '545320934186',
-    projectId: 'bmspro-pink-v2-staging',
-    storageBucket: 'bmspro-pink-v2-staging.firebasestorage.app',
-    iosBundleId: 'com.bmspros.pink.staging',
+    apiKey: 'AIzaSyA9x7ZvVcVHLudKbEoOgcXWCuLItKmWf08',
+    appId: '1:960634304944:ios:638ad6724068b113b73e75',
+    messagingSenderId: '960634304944',
+    projectId: 'bmspro-pink',
+    storageBucket: 'bmspro-pink.firebasestorage.app',
+    iosBundleId: 'com.softdev.bmspro-pink',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyA_Kv-oO_-KPlz6yaPYi1Yqx8K035nNWmY',
-    appId: '1:545320934186:ios:9f2b0234bb99ec40c99c53',
-    messagingSenderId: '545320934186',
-    projectId: 'bmspro-pink-v2-staging',
-    storageBucket: 'bmspro-pink-v2-staging.firebasestorage.app',
-    iosBundleId: 'com.bmspros.pink.staging',
+    apiKey: 'AIzaSyA9x7ZvVcVHLudKbEoOgcXWCuLItKmWf08',
+    appId: '1:960634304944:ios:638ad6724068b113b73e75',
+    messagingSenderId: '960634304944',
+    projectId: 'bmspro-pink',
+    storageBucket: 'bmspro-pink.firebasestorage.app',
+    iosBundleId: 'com.softdev.bmspro-pink',
   );
 }
 
