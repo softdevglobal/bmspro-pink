@@ -105,6 +105,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   // Pending appointment requests count (for staff)
   int _pendingRequestsCount = 0;
   StreamSubscription<QuerySnapshot>? _pendingRequestsSub;
+  
+  // Account status check
+  bool _hasCheckedAccountStatus = false;
 
   @override
   void initState() {
@@ -304,6 +307,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
             if (previousRole == null && _userRole != 'salon_owner' && _userRole != 'salon_branch_admin') {
               _fetchTodayAppointments();
             }
+            
+            // Check account subscription status (only once after role is loaded)
+            if (!_hasCheckedAccountStatus && _ownerUid != null) {
+              _hasCheckedAccountStatus = true;
+              _checkAccountStatus();
+            }
           } else {
             // User document doesn't exist, try to get name from Firebase Auth
             setState(() {
@@ -324,6 +333,222 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
       debugPrint('Error fetching role: $e');
       if (mounted) setState(() => _isLoadingRole = false);
     }
+  }
+
+  /// Check if the owner's account has an active subscription or is in trial
+  /// If not, show a popup asking user to subscribe via web
+  Future<void> _checkAccountStatus() async {
+    if (_ownerUid == null || _ownerUid!.isEmpty) return;
+    
+    try {
+      // Fetch the owner's document to check subscription status
+      final ownerDoc = await FirebaseFirestore.instance
+          .collection('owners')
+          .doc(_ownerUid)
+          .get();
+      
+      if (!ownerDoc.exists) {
+        // If no owners doc, check users collection
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_ownerUid)
+            .get();
+        
+        if (userDoc.exists) {
+          final userData = userDoc.data();
+          final accountStatus = userData?['accountStatus']?.toString() ?? '';
+          final subscriptionStatus = userData?['subscriptionStatus']?.toString() ?? '';
+          
+          // Check if account is active
+          final isActive = _isAccountActive(accountStatus, subscriptionStatus);
+          
+          if (!isActive && mounted) {
+            _showSubscriptionRequiredPopup();
+          }
+        }
+        return;
+      }
+      
+      final ownerData = ownerDoc.data();
+      final accountStatus = ownerData?['accountStatus']?.toString() ?? '';
+      final subscriptionStatus = ownerData?['subscriptionStatus']?.toString() ?? '';
+      
+      // Check if account is active
+      final isActive = _isAccountActive(accountStatus, subscriptionStatus);
+      
+      if (!isActive && mounted) {
+        _showSubscriptionRequiredPopup();
+      }
+    } catch (e) {
+      debugPrint('Error checking account status: $e');
+    }
+  }
+  
+  /// Check if account status indicates an active subscription or trial
+  bool _isAccountActive(String accountStatus, String subscriptionStatus) {
+    // Active statuses
+    final activeAccountStatuses = ['active', 'subscribed', 'trial', 'trialing'];
+    final activeSubscriptionStatuses = ['active', 'trialing', 'trial'];
+    
+    // Check account status
+    if (activeAccountStatuses.contains(accountStatus.toLowerCase())) {
+      return true;
+    }
+    
+    // Check subscription status
+    if (activeSubscriptionStatuses.contains(subscriptionStatus.toLowerCase())) {
+      return true;
+    }
+    
+    return false;
+  }
+  
+  /// Show popup when account is not active/subscribed
+  void _showSubscriptionRequiredPopup() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          contentPadding: EdgeInsets.zero,
+          content: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFFFF5FA), Colors.white],
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Icon
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.workspace_premium_rounded,
+                    color: AppColors.primary,
+                    size: 40,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                
+                // Title
+                const Text(
+                  'Subscription Required',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A1A1A),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                
+                // Message
+                const Text(
+                  'Your account does not have an active subscription. To continue using BMS Pro Pink, please subscribe to a plan.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF666666),
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                
+                // Web portal instruction
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.amber.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        color: Colors.amber.shade700,
+                        size: 24,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Please use the web portal to subscribe',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.amber.shade800,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'bmspro.com.au',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.amber.shade900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
+                // Logout button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      Navigator.of(context).pop();
+                      await FirebaseAuth.instance.signOut();
+                      if (mounted) {
+                        Navigator.of(context).pushNamedAndRemoveUntil(
+                          '/login',
+                          (route) => false,
+                        );
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Logout',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _fetchTodayAppointments() async {
