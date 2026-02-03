@@ -11,6 +11,7 @@ import 'timesheets_page.dart';
 import 'branches_page.dart';
 import 'salon_settings_page.dart';
 import 'audit_logs_page.dart';
+import 'subscription_page.dart';
 import '../widgets/animated_toggle.dart';
 import '../services/staff_check_in_service.dart';
 
@@ -271,6 +272,20 @@ class _MorePageState extends State<MorePage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const AuditLogsPage()),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              _buildMenuCard(
+                context,
+                icon: FontAwesomeIcons.crown,
+                title: 'My Subscription',
+                subtitle: 'View your plan details',
+                gradientColors: [const Color(0xFF8B5CF6), const Color(0xFFC4B5FD)],
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SubscriptionPage()),
                   );
                 },
               ),
