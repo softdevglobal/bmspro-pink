@@ -350,7 +350,7 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
       // Call the API to disable/enable Firebase Auth account
       try {
         final response = await http.post(
-          Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/suspend'),
+          Uri.parse('https://pink.bmspros.com.au/api/staff/auth/suspend'),
           headers: {'Content-Type': 'application/json'},
           body: json.encode({
             'uid': staff.id,
@@ -514,7 +514,7 @@ class _StaffManagementPageState extends State<StaffManagementPage> {
 
       // Delete Firebase Auth account via API
       try {
-        final apiUrl = 'https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/delete';
+        final apiUrl = 'https://pink.bmspros.com.au/api/staff/auth/delete';
         final response = await http.post(
           Uri.parse(apiUrl),
           headers: {
@@ -1632,7 +1632,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
       final ownerToken = await currentOwner.getIdToken();
 
       // Create Firebase Auth user via API (doesn't sign in automatically)
-      final apiUrl = 'https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/create';
+      final apiUrl = 'https://pink.bmspros.com.au/api/staff/auth/create';
       final response = await http.post(
         Uri.parse(apiUrl),
         headers: {
@@ -1748,7 +1748,7 @@ class _OnboardStaffSheetState extends State<_OnboardStaffSheet> {
           debugPrint('Failed to fetch salon name: $e');
         }
         
-        const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+        const apiBaseUrl = 'https://pink.bmspros.com.au';
         final emailResponse = await http.post(
           Uri.parse('$apiBaseUrl/api/staff/welcome-email'),
           headers: {
@@ -2340,7 +2340,7 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
       if (statusChanged && (widget.staff.status == 'Suspended' || _status == 'Suspended')) {
         try {
           await http.post(
-            Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/staff/auth/suspend'),
+            Uri.parse('https://pink.bmspros.com.au/api/staff/auth/suspend'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({
               'uid': widget.staff.id,

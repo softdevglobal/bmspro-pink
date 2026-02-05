@@ -1460,7 +1460,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           // Use API endpoint to update branch timezone (branch admins don't have direct Firestore write permission)
           try {
             final token = await user.getIdToken();
-            final apiUrl = 'https://bmspro-pink-adminpanel.vercel.app/api/branches/$_branchId/timezone';
+            final apiUrl = 'https://pink.bmspros.com.au/api/branches/$_branchId/timezone';
             
             final response = await http.patch(
               Uri.parse(apiUrl),

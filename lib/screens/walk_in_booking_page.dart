@@ -743,7 +743,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       debugPrint('📤 API booking data keys: ${apiBookingData.keys.toList()}');
       
       // Call the API endpoint
-      const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+      const apiBaseUrl = 'https://pink.bmspros.com.au';
       final response = await http.post(
         Uri.parse('$apiBaseUrl/api/bookings'),
         headers: {

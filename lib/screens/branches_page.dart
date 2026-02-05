@@ -1084,7 +1084,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
             final branchHours = data['hours'] as Map<String, dynamic>?;
             
             final apiResponse = await http.post(
-              Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/branches/assign-admin'),
+              Uri.parse('https://pink.bmspros.com.au/api/branches/assign-admin'),
               headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer $ownerToken',
@@ -1177,7 +1177,7 @@ class _BranchFormSheetState extends State<_BranchFormSheet> {
             final branchHours = data['hours'] as Map<String, dynamic>?;
             
             final apiResponse = await http.post(
-              Uri.parse('https://bmspro-pink-adminpanel.vercel.app/api/branches/assign-admin'),
+              Uri.parse('https://pink.bmspros.com.au/api/branches/assign-admin'),
               headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer $ownerToken',

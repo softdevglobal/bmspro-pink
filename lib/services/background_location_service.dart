@@ -7,6 +7,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'location_service.dart';
 import 'staff_check_in_service.dart';
 import 'audit_log_service.dart';
+import 'fcm_push_service.dart';
 
 /// Service for foreground location tracking and auto clock-out
 /// This service monitors the user's location when the app is in the foreground (open)
@@ -537,7 +538,7 @@ class BackgroundLocationService {
         message = 'You were automatically clocked out from $branchName because you exceeded the branch radius (${distance.toStringAsFixed(0)}m away).';
       }
       
-      await FirebaseFirestore.instance.collection('notifications').add({
+      final notificationRef = await FirebaseFirestore.instance.collection('notifications').add({
         'type': 'auto_clock_out',
         'title': 'Auto Clock-Out',
         'message': message,
@@ -551,6 +552,24 @@ class BackgroundLocationService {
           'reason': reason ?? 'Exceeded branch radius',
         },
       });
+      
+      // Send FCM push notification to the staff member
+      try {
+        await FcmPushService().sendPushNotification(
+          targetUid: user.uid,
+          title: 'Auto Clock-Out',
+          message: message,
+          data: {
+            'notificationId': notificationRef.id,
+            'type': 'auto_clock_out',
+            'checkInId': _activeCheckInId ?? '',
+            'branchId': _activeBranchId ?? '',
+          },
+        );
+        debugPrint('BackgroundLocationService: FCM push notification sent for auto clock-out');
+      } catch (e) {
+        debugPrint('BackgroundLocationService: Error sending FCM notification: $e');
+      }
     } catch (e) {
       debugPrint('BackgroundLocationService: Error creating notification: $e');
     }

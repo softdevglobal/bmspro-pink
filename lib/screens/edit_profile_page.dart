@@ -410,7 +410,7 @@ class _EditProfilePageState extends State<EditProfilePage>
           
           final base64Image = base64Encode(imageBytes);
           
-          const apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+          const apiBaseUrl = 'https://pink.bmspros.com.au';
           debugPrint('Uploading logo to API: $apiBaseUrl/api/upload/logo');
           debugPrint('Image size: ${imageBytes.length} bytes, Base64 length: ${base64Image.length}');
           

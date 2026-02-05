@@ -618,7 +618,7 @@ class _AppointmentRequestsPageState extends State<AppointmentRequestsPage> {
   }
 
   String _getApiBaseUrl() {
-    return 'https://bmspro-pink-adminpanel.vercel.app';
+    return 'https://pink.bmspros.com.au';
   }
 
   void _showLoadingDialog(String message) {

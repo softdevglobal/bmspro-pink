@@ -557,7 +557,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       final Set<String> notifiedStaffIds = {};
       
       // API base URL for sending push notifications
-      const String apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+      const String apiBaseUrl = 'https://pink.bmspros.com.au';
       
       if (services.isEmpty) {
         debugPrint("⚠️ No services provided, cannot send notifications");
@@ -730,7 +730,27 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
       }
 
       // Create customer notification
-      await db.collection('notifications').add(notifData);
+      final customerNotifRef = await db.collection('notifications').add(notifData);
+      
+      // Send FCM push notification to customer if they have a UID
+      final customerUid = raw['customerUid']?.toString();
+      if (customerUid != null && customerUid.isNotEmpty) {
+        try {
+          await FcmPushService().sendPushNotification(
+            targetUid: customerUid,
+            title: content['title'] ?? 'Booking Update',
+            message: content['message'] ?? 'Your booking status has been updated.',
+            data: {
+              'notificationId': customerNotifRef.id,
+              'type': content['type'] ?? 'booking_status_changed',
+              'bookingId': bookingId,
+            },
+          );
+          debugPrint('✅ FCM push notification sent to customer $customerUid');
+        } catch (e) {
+          debugPrint('Error sending FCM notification to customer: $e');
+        }
+      }
       
       // Create STAFF notifications when booking is confirmed with assigned staff
       if (newStatus == 'Confirmed' && finalServices.isNotEmpty) {
@@ -814,7 +834,7 @@ class _OwnerBookingsPageState extends State<OwnerBookingsPage> {
   /// Get API base URL
   String _getApiBaseUrl() {
     // Use the same API base URL as other screens
-    return 'https://bmspro-pink-adminpanel.vercel.app';
+    return 'https://pink.bmspros.com.au';
   }
 
   /// Create notifications for each staff member assigned to a confirmed booking

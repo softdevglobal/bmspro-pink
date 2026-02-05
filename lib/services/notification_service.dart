@@ -150,12 +150,40 @@ class NotificationService {
         print('⚠️ User granted provisional notification permission');
       } else {
         print('❌ User declined or has not accepted notification permission');
-        return;
+        // Continue anyway - we can still set up Firestore listeners for in-app notifications
+      }
+
+      // For iOS: Set foreground notification presentation options
+      // This ensures notifications are shown even when app is in foreground
+      if (Platform.isIOS) {
+        await _messaging.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+        print('✅ iOS foreground notification options set');
+        
+        // Get APNs token first (critical for iOS push notifications)
+        final apnsToken = await _messaging.getAPNSToken();
+        print('🍎 APNs Token: ${apnsToken != null ? "Present (${apnsToken.length} chars)" : "NULL - Push notifications will NOT work!"}');
+        
+        if (apnsToken == null) {
+          print('⚠️ WARNING: APNs token is null. Retrying in 3 seconds...');
+          await Future.delayed(const Duration(seconds: 3));
+          final retryApnsToken = await _messaging.getAPNSToken();
+          print('🍎 APNs Token (retry): ${retryApnsToken != null ? "Present" : "Still NULL"}');
+        }
       }
 
       // Get FCM token
       _fcmToken = await _messaging.getToken();
       print('📱 FCM Token: $_fcmToken');
+      
+      if (_fcmToken == null) {
+        print('⚠️ WARNING: FCM token is null! Push notifications will NOT work.');
+      } else {
+        print('📱 FCM Token length: ${_fcmToken!.length} characters');
+      }
 
       // Save token to user document
       await _saveFcmToken(_fcmToken);
@@ -218,18 +246,42 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onLocalNotificationTap,
     );
     
-    // Create notification channel for Android
+    // Create notification channels for Android
     if (Platform.isAndroid) {
-      const AndroidNotificationChannel channel = AndroidNotificationChannel(
-        'appointments',
-        'Booking Notifications',
-        description: 'Notifications for booking appointments and updates',
-        importance: Importance.high,
-      );
+      final androidPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       
-      await _localNotifications
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(channel);
+      if (androidPlugin != null) {
+        // High priority channel for bookings
+        const AndroidNotificationChannel appointmentsChannel = AndroidNotificationChannel(
+          'appointments',
+          'Booking Notifications',
+          description: 'Notifications for booking appointments and updates',
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
+          showBadge: true,
+        );
+        await androidPlugin.createNotificationChannel(appointmentsChannel);
+        
+        // High priority channel for urgent notifications
+        const AndroidNotificationChannel urgentChannel = AndroidNotificationChannel(
+          'urgent',
+          'Urgent Notifications',
+          description: 'Important notifications that require immediate attention',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+          showBadge: true,
+        );
+        await androidPlugin.createNotificationChannel(urgentChannel);
+        
+        // Request exact alarm permission for scheduled notifications (Android 12+)
+        await androidPlugin.requestExactAlarmsPermission();
+        
+        // Request notification permission for Android 13+
+        await androidPlugin.requestNotificationsPermission();
+      }
     }
     
     print('✅ Local notifications initialized');
@@ -335,17 +387,32 @@ class NotificationService {
 
   /// Save FCM token to user document (and salon_staff if exists)
   Future<void> _saveFcmToken(String? token) async {
-    if (token == null) return;
+    if (token == null) {
+      print('⚠️ _saveFcmToken: Token is null, skipping save');
+      return;
+    }
     
     final user = _auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      print('⚠️ _saveFcmToken: No user logged in, skipping save');
+      return;
+    }
+
+    print('💾 Saving FCM token for user ${user.uid}');
+    print('💾 Token: ${token.substring(0, 20)}...${token.substring(token.length - 20)}');
+    print('💾 Platform: ${Platform.isAndroid ? 'android' : 'ios'}');
 
     try {
-      // Save to users collection
+      // Save to users collection with additional metadata
       await _db.collection('users').doc(user.uid).update({
         'fcmToken': token,
         'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
         'platform': Platform.isAndroid ? 'android' : 'ios',
+        'deviceInfo': {
+          'os': Platform.operatingSystem,
+          'osVersion': Platform.operatingSystemVersion,
+          'lastActive': FieldValue.serverTimestamp(),
+        },
       });
       print('✅ FCM token saved to users collection');
     } catch (e) {
@@ -356,6 +423,11 @@ class NotificationService {
           'fcmToken': token,
           'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
           'platform': Platform.isAndroid ? 'android' : 'ios',
+          'deviceInfo': {
+            'os': Platform.operatingSystem,
+            'osVersion': Platform.operatingSystemVersion,
+            'lastActive': FieldValue.serverTimestamp(),
+          },
         }, SetOptions(merge: true));
         print('✅ FCM token saved to users collection (merged)');
       } catch (e2) {
@@ -370,12 +442,87 @@ class NotificationService {
         await _db.collection('salon_staff').doc(user.uid).update({
           'fcmToken': token,
           'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+          'platform': Platform.isAndroid ? 'android' : 'ios',
         });
         print('✅ FCM token also saved to salon_staff collection');
       }
     } catch (e) {
       // It's okay if this fails - user might not be in salon_staff collection
       print('⚠️ Could not save FCM token to salon_staff (user may not be staff): $e');
+    }
+  }
+  
+  /// Force refresh the FCM token - useful if notifications aren't working
+  Future<String?> forceRefreshToken() async {
+    print('🔄 Force refreshing FCM token...');
+    try {
+      // Delete the current token
+      await _messaging.deleteToken();
+      print('🗑️ Old FCM token deleted');
+      
+      // Wait a moment
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // Get a new token
+      _fcmToken = await _messaging.getToken();
+      print('📱 New FCM Token: $_fcmToken');
+      
+      if (_fcmToken != null) {
+        await _saveFcmToken(_fcmToken);
+        print('✅ New FCM token saved');
+      }
+      
+      return _fcmToken;
+    } catch (e) {
+      print('❌ Error refreshing FCM token: $e');
+      return null;
+    }
+  }
+  
+  /// Get the current FCM token
+  String? get fcmToken => _fcmToken;
+  
+  /// Verify FCM token is valid and saved
+  Future<bool> verifyFcmToken() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      print('⚠️ verifyFcmToken: No user logged in');
+      return false;
+    }
+    
+    try {
+      // Get the current device token
+      final currentToken = await _messaging.getToken();
+      print('📱 Current device FCM token: ${currentToken != null ? "Present" : "NULL"}');
+      
+      // Get the saved token from Firestore
+      final userDoc = await _db.collection('users').doc(user.uid).get();
+      final savedToken = userDoc.data()?['fcmToken']?.toString();
+      print('💾 Saved FCM token in Firestore: ${savedToken != null ? "Present" : "NULL"}');
+      
+      // Check if they match
+      if (currentToken == null) {
+        print('❌ Current FCM token is null!');
+        return false;
+      }
+      
+      if (savedToken == null) {
+        print('⚠️ No saved token in Firestore, saving current token...');
+        await _saveFcmToken(currentToken);
+        return true;
+      }
+      
+      if (currentToken != savedToken) {
+        print('⚠️ Token mismatch! Updating Firestore with current token...');
+        await _saveFcmToken(currentToken);
+      } else {
+        print('✅ FCM tokens match');
+      }
+      
+      return true;
+    } catch (e) {
+      print('❌ Error verifying FCM token: $e');
+      return false;
     }
   }
 

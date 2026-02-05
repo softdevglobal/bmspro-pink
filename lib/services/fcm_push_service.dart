@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 
 /// Service for sending FCM push notifications via the admin panel API
@@ -10,7 +11,9 @@ class FcmPushService {
   FcmPushService._internal();
 
   // Admin panel API base URL
-  static const String _apiBaseUrl = 'https://bmspro-pink-adminpanel.vercel.app';
+  static const String _apiBaseUrl = 'https://pink.bmspros.com.au';
+  
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   /// Send FCM push notification to a specific user (staff, owner, etc.)
   /// 
@@ -40,18 +43,77 @@ class FcmPushService {
       debugPrint('📤 FcmPushService: Sending push notification to $targetUid');
       debugPrint('📤 Title: $title');
       
+      // Try to get the target user's FCM token directly from Firestore
+      // This helps the server if it doesn't have access to Firestore
+      String? targetFcmToken;
+      String? targetPlatform;
+      try {
+        final userDoc = await _db.collection('users').doc(targetUid).get();
+        if (userDoc.exists) {
+          targetFcmToken = userDoc.data()?['fcmToken']?.toString();
+          targetPlatform = userDoc.data()?['platform']?.toString();
+          debugPrint('📤 Target FCM Token found: ${targetFcmToken != null ? "Yes (${targetFcmToken.length} chars)" : "No"}');
+          debugPrint('📤 Target Platform: $targetPlatform');
+        } else {
+          debugPrint('⚠️ FcmPushService: Target user document not found');
+        }
+      } catch (e) {
+        debugPrint('⚠️ FcmPushService: Could not fetch target FCM token: $e');
+      }
+      
+      if (targetFcmToken == null || targetFcmToken.isEmpty) {
+        debugPrint('⚠️ FcmPushService: No FCM token for user $targetUid - push notification will likely fail');
+      }
+      
+      final requestBody = {
+        'staffUid': targetUid, // API expects staffUid but works for any user
+        'targetUid': targetUid, // Also include as targetUid for clarity
+        'title': title,
+        'message': message,
+        'body': message, // Some APIs expect 'body' instead of 'message'
+        'data': data ?? {},
+        // Include FCM token directly so server doesn't have to look it up
+        'fcmToken': targetFcmToken,
+        'platform': targetPlatform,
+        // For iOS, ensure proper APNs configuration
+        'apns': {
+          'payload': {
+            'aps': {
+              'alert': {
+                'title': title,
+                'body': message,
+              },
+              'sound': 'default',
+              'badge': 1,
+              'content-available': 1, // For background delivery
+              'mutable-content': 1, // For notification service extension
+            },
+          },
+          'headers': {
+            'apns-priority': '10', // High priority
+            'apns-push-type': 'alert',
+          },
+        },
+        // For Android
+        'android': {
+          'priority': 'high',
+          'notification': {
+            'channel_id': 'appointments',
+            'sound': 'default',
+          },
+        },
+      };
+      
+      debugPrint('📤 FcmPushService: Request URL: $_apiBaseUrl/api/notifications/send-push');
+      debugPrint('📤 FcmPushService: Request body: ${jsonEncode(requestBody)}');
+      
       final response = await http.post(
         Uri.parse('$_apiBaseUrl/api/notifications/send-push'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'staffUid': targetUid, // API expects staffUid but works for any user
-          'title': title,
-          'message': message,
-          'data': data ?? {},
-        }),
+        body: jsonEncode(requestBody),
       ).timeout(
         const Duration(seconds: 15),
         onTimeout: () {
@@ -60,8 +122,24 @@ class FcmPushService {
         },
       );
 
+      debugPrint('📤 FcmPushService: Response status: ${response.statusCode}');
+      debugPrint('📤 FcmPushService: Response body: ${response.body}');
+
       if (response.statusCode == 200) {
-        debugPrint('✅ FcmPushService: Push notification sent successfully to $targetUid');
+        debugPrint('✅ FcmPushService: Push notification API call successful for $targetUid');
+        
+        // Try to parse response to check if FCM was actually sent
+        try {
+          final responseData = jsonDecode(response.body);
+          if (responseData['success'] == true) {
+            debugPrint('✅ FcmPushService: Server confirmed FCM message sent');
+          } else if (responseData['error'] != null) {
+            debugPrint('⚠️ FcmPushService: Server returned error: ${responseData['error']}');
+          }
+        } catch (e) {
+          // Response might not be JSON, that's okay
+        }
+        
         return true;
       } else {
         debugPrint('❌ FcmPushService: Failed to send push notification: ${response.statusCode}');
