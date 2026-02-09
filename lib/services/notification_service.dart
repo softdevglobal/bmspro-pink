@@ -116,6 +116,7 @@ class NotificationService {
   StreamSubscription<QuerySnapshot>? _branchAdminNotificationSubscription;
   StreamSubscription<QuerySnapshot>? _branchIdNotificationSubscription; // For branch-filtered notifications
   StreamSubscription<QuerySnapshot>? _customerNotificationSubscription; // For customer notifications
+  StreamSubscription<QuerySnapshot>? _targetAdminNotificationSubscription; // For targetAdminUid notifications
   BuildContext? _context;
   final Set<String> _shownNotificationIds = {};
   bool _isInitialized = false;
@@ -153,15 +154,16 @@ class NotificationService {
         // Continue anyway - we can still set up Firestore listeners for in-app notifications
       }
 
-      // For iOS: Set foreground notification presentation options
-      // This ensures notifications are shown even when app is in foreground
+      // For iOS: Disable automatic foreground notification display
+      // We handle foreground notifications manually via onMessage listener
+      // to avoid duplicate notifications (system auto-show + our local notification)
       if (Platform.isIOS) {
         await _messaging.setForegroundNotificationPresentationOptions(
-          alert: true,
+          alert: false,
           badge: true,
-          sound: true,
+          sound: false,
         );
-        print('✅ iOS foreground notification options set');
+        print('✅ iOS foreground notification options set (alert disabled - handled manually)');
         
         // Get APNs token first (critical for iOS push notifications)
         final apnsToken = await _messaging.getAPNSToken();
@@ -548,6 +550,7 @@ class NotificationService {
     _branchAdminNotificationSubscription?.cancel();
     _branchIdNotificationSubscription?.cancel();
     _customerNotificationSubscription?.cancel();
+    _targetAdminNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     
     print('🔔 listenToNotifications: Cancelled existing subscriptions, starting fresh');
@@ -803,8 +806,9 @@ class NotificationService {
     
     // Also listen for targetAdminUid notifications (for reassignments, etc.)
     // Note: Removed orderBy to avoid needing composite indexes
+    // FIX: Store subscription so it can be cancelled in dispose()
     bool isInitialTargetAdminLoad = true;
-    _db
+    _targetAdminNotificationSubscription = _db
         .collection('notifications')
         .where('targetAdminUid', isEqualTo: user.uid)
         .limit(50)
@@ -1078,29 +1082,18 @@ class NotificationService {
     });
   }
 
-  /// Handle foreground message
+  /// Handle foreground message from FCM
+  /// 
+  /// DESIGN: The Firestore real-time listener is the SINGLE source of truth for 
+  /// foreground notifications (both overlay + local notification). This avoids
+  /// duplicate notifications that occurred when both FCM and Firestore listener
+  /// each tried to show notifications independently.
+  /// 
+  /// FCM still handles background/terminated states automatically via the system.
   void _handleForegroundMessage(RemoteMessage message) {
-    // Show local notification for foreground messages
-    final title = message.notification?.title ?? message.data['title'] ?? 'New Notification';
-    final body = message.notification?.body ?? message.data['message'] ?? '';
-    final notificationType = message.data['type']?.toString() ?? 'fcm_notification';
-    final bookingId = message.data['bookingId']?.toString();
-    
-    _showLocalNotification(
-      id: message.hashCode,
-      title: title,
-      body: body,
-      bookingId: bookingId,
-      notificationType: notificationType,
-    );
-    
-    // Also show on-screen notification overlay
-    _showOnScreenNotification(
-      title: title,
-      message: body,
-      notificationId: message.messageId ?? '',
-      notificationData: message.data,
-    );
+    print('📩 FCM foreground message received (handled by Firestore listener): ${message.messageId}');
+    // No action needed - Firestore listener will show overlay + local notification
+    // for this same notification document, ensuring exactly one display.
   }
 
   /// Handle notification tap (when app is opened from background)
@@ -1174,6 +1167,7 @@ class NotificationService {
     _branchAdminNotificationSubscription?.cancel();
     _branchIdNotificationSubscription?.cancel();
     _customerNotificationSubscription?.cancel();
+    _targetAdminNotificationSubscription?.cancel();
     _shownNotificationIds.clear();
     _context = null;
     _userBranchId = null;

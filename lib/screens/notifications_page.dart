@@ -223,11 +223,14 @@ class _NotificationsPageState extends State<NotificationsPage>
     }
     
     final merged = allNotifications.values.toList();
-    // Sort by time (most recent first)
+    // Sort by createdAt timestamp (most recent first)
     merged.sort((a, b) {
-      // Parse time strings for sorting - they're relative times like "Just now", "5m ago", etc.
-      // Since we can't easily sort these, we'll rely on the original order
-      return 0;
+      final aTime = a.rawData?['createdAt'] as Timestamp?;
+      final bTime = b.rawData?['createdAt'] as Timestamp?;
+      if (aTime == null && bTime == null) return 0;
+      if (aTime == null) return 1; // nulls go to the end
+      if (bTime == null) return -1;
+      return bTime.compareTo(aTime); // Descending (newest first)
     });
     
     setState(() {

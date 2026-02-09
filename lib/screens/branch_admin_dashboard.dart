@@ -10,6 +10,7 @@ import 'appointment_requests_page.dart';
 import 'all_appointments_page.dart';
 import 'other_staff_appointments_page.dart';
 import 'appointment_details_page.dart';
+import 'notifications_page.dart';
 import '../services/staff_check_in_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
@@ -52,6 +53,17 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
   // Pending approval requests
   int _pendingRequestsCount = 0;
   StreamSubscription<QuerySnapshot>? _pendingRequestsSub;
+  
+  // Unread notifications count (aggregated from all sources)
+  int _unreadNotificationCount = 0;
+  StreamSubscription<QuerySnapshot>? _staffNotificationsSub;
+  StreamSubscription<QuerySnapshot>? _branchAdminNotifsSub;
+  StreamSubscription<QuerySnapshot>? _customerNotifsSub;
+  StreamSubscription<QuerySnapshot>? _targetAdminNotifsSub;
+  final Set<String> _staffUnreadIds = {};
+  final Set<String> _branchAdminUnreadIds = {};
+  final Set<String> _customerUnreadIds = {};
+  final Set<String> _targetAdminUnreadIds = {};
 
   // Clock In/Out state
   ClockStatus _clockStatus = ClockStatus.out;
@@ -109,6 +121,7 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     
     _loadData();
     _listenToPendingRequests();
+    _listenToUnreadNotifications();
     _fetchTodayAppointments();
     _refreshCheckInStatus(); // Load current check-in status
     
@@ -166,6 +179,10 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     _workTimer?.cancel();
     _backgroundLocationService.stopMonitoring();
     _pendingRequestsSub?.cancel();
+    _staffNotificationsSub?.cancel();
+    _branchAdminNotifsSub?.cancel();
+    _customerNotifsSub?.cancel();
+    _targetAdminNotifsSub?.cancel();
     NotificationService().dispose();
     super.dispose();
   }
@@ -848,6 +865,87 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
     );
   }
   
+  /// Recalculate total unread notification count from all sources
+  void _recalcUnreadCount() {
+    final allIds = <String>{
+      ..._staffUnreadIds,
+      ..._branchAdminUnreadIds,
+      ..._customerUnreadIds,
+      ..._targetAdminUnreadIds,
+    };
+    if (mounted) {
+      setState(() {
+        _unreadNotificationCount = allIds.length;
+      });
+    }
+  }
+
+  /// Listen to unread notifications from all relevant sources for branch admin
+  void _listenToUnreadNotifications() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // 1. Staff notifications (staffUid) - branch admin can also be assigned as staff
+    _staffNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('staffUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _staffUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to staff notifications: $e');
+    });
+
+    // 2. Branch admin notifications (branchAdminUid)
+    _branchAdminNotifsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('branchAdminUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _branchAdminUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to branch admin notifications: $e');
+    });
+
+    // 3. Customer notifications (customerUid)
+    _customerNotifsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('customerUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _customerUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to customer notifications: $e');
+    });
+
+    // 4. Target admin notifications (targetAdminUid)
+    _targetAdminNotifsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('targetAdminUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _targetAdminUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to target admin notifications: $e');
+    });
+  }
+
   /// Listen to pending appointment requests for branch admin approval
   void _listenToPendingRequests() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -1480,28 +1578,66 @@ class _BranchAdminDashboardState extends State<BranchAdminDashboard> with Ticker
                 ],
               ),
             ),
-            // Logged in admin name on the right
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(FontAwesomeIcons.userTie, size: 12, color: AppColors.primary),
-                  const SizedBox(width: 6),
-                  Text(
-                    widget.branchName.isNotEmpty ? '${widget.branchName} Admin' : 'Branch Admin',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Notification bell icon with badge
+                InkWell(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const NotificationsPage()),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(20),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(4.0),
+                        child: Icon(FontAwesomeIcons.bell,
+                            color: AppColors.muted, size: 22),
+                      ),
+                      if (_unreadNotificationCount > 0)
+                        Positioned(
+                          top: -2,
+                          right: -2,
+                          child: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: const BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 8),
+                // Logged in admin name
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(FontAwesomeIcons.userTie, size: 12, color: AppColors.primary),
+                      const SizedBox(width: 6),
+                      Text(
+                        widget.branchName.isNotEmpty ? '${widget.branchName} Admin' : 'Branch Admin',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),

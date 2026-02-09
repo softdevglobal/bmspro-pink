@@ -98,9 +98,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   List<Map<String, dynamic>> _todayAppointments = [];
   bool _isLoadingAppointments = true;
   
-  // Unread notifications count
+  // Unread notifications count (aggregated from all sources)
   int _unreadNotificationCount = 0;
-  StreamSubscription<QuerySnapshot>? _notificationsSub;
+  StreamSubscription<QuerySnapshot>? _notificationsSub; // staffUid
+  StreamSubscription<QuerySnapshot>? _ownerNotificationsSub; // ownerUid
+  StreamSubscription<QuerySnapshot>? _branchAdminNotificationsSub; // branchAdminUid
+  StreamSubscription<QuerySnapshot>? _customerNotificationsSub; // customerUid
+  StreamSubscription<QuerySnapshot>? _targetAdminNotificationsSub; // targetAdminUid
+  final Set<String> _staffUnreadIds = {};
+  final Set<String> _ownerUnreadIds = {};
+  final Set<String> _branchAdminUnreadIds = {};
+  final Set<String> _customerUnreadIds = {};
+  final Set<String> _targetAdminUnreadIds = {};
   
   // Pending appointment requests count (for staff)
   int _pendingRequestsCount = 0;
@@ -157,24 +166,100 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     }
   }
 
-  /// Listen to unread notifications for the current staff
+  /// Recalculate the total unread count from all source sets
+  void _recalcUnreadCount() {
+    final allIds = <String>{
+      ..._staffUnreadIds,
+      ..._ownerUnreadIds,
+      ..._branchAdminUnreadIds,
+      ..._customerUnreadIds,
+      ..._targetAdminUnreadIds,
+    };
+    if (mounted) {
+      setState(() {
+        _unreadNotificationCount = allIds.length;
+      });
+    }
+  }
+
+  /// Listen to unread notifications from ALL sources (staff, owner, branch admin, customer, targetAdmin)
   void _listenToUnreadNotifications() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
+    // 1. Staff notifications (staffUid)
     _notificationsSub = FirebaseFirestore.instance
         .collection('notifications')
         .where('staffUid', isEqualTo: user.uid)
         .where('read', isEqualTo: false)
         .snapshots()
         .listen((snapshot) {
-      if (mounted) {
-        setState(() {
-          _unreadNotificationCount = snapshot.docs.length;
-        });
-      }
+      _staffUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
     }, onError: (e) {
-      debugPrint('Error listening to notifications: $e');
+      debugPrint('Error listening to staff notifications: $e');
+    });
+
+    // 2. Owner notifications (ownerUid)
+    _ownerNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('ownerUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _ownerUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to owner notifications: $e');
+    });
+
+    // 3. Branch admin notifications (branchAdminUid)
+    _branchAdminNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('branchAdminUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _branchAdminUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to branch admin notifications: $e');
+    });
+
+    // 4. Customer notifications (customerUid)
+    _customerNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('customerUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _customerUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to customer notifications: $e');
+    });
+
+    // 5. Target admin notifications (targetAdminUid)
+    _targetAdminNotificationsSub = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('targetAdminUid', isEqualTo: user.uid)
+        .where('read', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      _targetAdminUnreadIds
+        ..clear()
+        ..addAll(snapshot.docs.map((d) => d.id));
+      _recalcUnreadCount();
+    }, onError: (e) {
+      debugPrint('Error listening to target admin notifications: $e');
     });
   }
 
@@ -481,6 +566,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     _workTimer?.cancel();
     _backgroundLocationService.stopMonitoring();
     _notificationsSub?.cancel();
+    _ownerNotificationsSub?.cancel();
+    _branchAdminNotificationsSub?.cancel();
+    _customerNotificationsSub?.cancel();
+    _targetAdminNotificationsSub?.cancel();
     _pendingRequestsSub?.cancel();
     NotificationService().dispose();
     super.dispose();
