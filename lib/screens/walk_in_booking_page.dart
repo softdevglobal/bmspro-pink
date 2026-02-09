@@ -2053,31 +2053,110 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         ? _currentUserId 
         : (selectedStaffId != null && selectedStaffId != 'any' ? selectedStaffId : null);
     
+    // Determine if "Any Staff" is selected
+    final bool isAnyStaffSelected = staffIdToCheck == null || staffIdToCheck.isEmpty;
+    
+    // For "Any Staff" bookings, get all eligible staff IDs for this service+branch.
+    // A slot is only blocked when ALL eligible staff are occupied at that time.
+    final List<String> eligibleStaffIds = [];
+    if (isAnyStaffSelected && _userRole != 'salon_staff') {
+      final eligible = _getAvailableStaffForService(serviceId);
+      for (final st in eligible) {
+        final id = st['id']?.toString() ?? '';
+        // Exclude the synthetic "Any Staff" entry and empty IDs
+        if (id.isNotEmpty && id != 'any') {
+          eligibleStaffIds.add(id);
+        }
+      }
+    }
+    
     // Get the selected date string for comparison (for booking filtering)
     final bookingDateStr = _selectedDate != null
         ? '${_selectedDate!.year.toString().padLeft(4, '0')}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}'
         : null;
+
+    // Helper: check if a specific staff member has a conflicting booking at a given time slot
+    bool isStaffOccupiedAtSlot(int slotMinutes, String targetStaffId) {
+      if (bookingDateStr == null) return false;
+      final newServiceEndMinutes = slotMinutes + durationMinutes;
+      
+      for (final booking in _bookings) {
+        if (booking['date'] != bookingDateStr) continue;
+        final status = (booking['status']?.toString() ?? '').toLowerCase();
+        if (status == 'cancelled' || status == 'canceled' || status == 'staffrejected') continue;
+        
+        if (booking['services'] is List && (booking['services'] as List).isNotEmpty) {
+          for (final svc in (booking['services'] as List)) {
+            if (svc is Map) {
+              final svcStaffId = svc['staffId']?.toString() ?? '';
+              if (svcStaffId != targetStaffId) continue;
+              
+              final svcTime = svc['time']?.toString() ?? '';
+              if (svcTime.isEmpty) continue;
+              final svcTimeParts = svcTime.split(':');
+              if (svcTimeParts.length < 2) continue;
+              
+              final svcStartMinutes = (int.tryParse(svcTimeParts[0]) ?? 0) * 60 + (int.tryParse(svcTimeParts[1]) ?? 0);
+              final svcDuration = (svc['duration'] ?? 60) as int;
+              final svcEndMinutes = svcStartMinutes + svcDuration;
+              
+              if (slotMinutes < svcEndMinutes && svcStartMinutes < newServiceEndMinutes) {
+                return true;
+              }
+            }
+          }
+        } else {
+          final bookingStaffId = booking['staffId']?.toString() ?? '';
+          if (bookingStaffId != targetStaffId) continue;
+          
+          final bookingTime = booking['time']?.toString() ?? '';
+          if (bookingTime.isEmpty) continue;
+          final timeParts = bookingTime.split(':');
+          if (timeParts.length < 2) continue;
+          
+          final bookingStartMinutes = (int.tryParse(timeParts[0]) ?? 0) * 60 + (int.tryParse(timeParts[1]) ?? 0);
+          final bookingDuration = (booking['duration'] ?? 60) as int;
+          final bookingEndMinutes = bookingStartMinutes + bookingDuration;
+          
+          if (slotMinutes < bookingEndMinutes && bookingStartMinutes < newServiceEndMinutes) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
 
     // Helper function to check if a time slot is OCCUPIED (booking in progress at that time)
     // Also checks if the NEW service would OVERLAP with any existing booking
     // Returns: {'occupied': bool, 'reason': String?}
     Map<String, dynamic> isSlotOccupied(TimeOfDay slotTime) {
       if (bookingDateStr == null) return {'occupied': false};
-      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return {'occupied': false};
       
       final slotMinutes = slotTime.hour * 60 + slotTime.minute;
+      
+      if (isAnyStaffSelected) {
+        // "Any Staff" mode: slot is occupied only if ALL eligible staff are booked
+        if (eligibleStaffIds.isEmpty) return {'occupied': false};
+        
+        final allStaffOccupied = eligibleStaffIds.every((sid) => isStaffOccupiedAtSlot(slotMinutes, sid));
+        if (allStaffOccupied) {
+          return {'occupied': true, 'reason': 'all_staff_booked'};
+        }
+        return {'occupied': false};
+      }
+      
+      // Specific staff mode
+      if (staffIdToCheck == null || staffIdToCheck.isEmpty) return {'occupied': false};
+      
       // Calculate when this new service would END
       final newServiceEndMinutes = slotMinutes + durationMinutes;
       
       for (final booking in _bookings) {
-        // Check if booking is for the same date
         if (booking['date'] != bookingDateStr) continue;
         
-        // Check status - skip cancelled bookings
         final status = (booking['status']?.toString() ?? '').toLowerCase();
         if (status == 'cancelled' || status == 'canceled' || status == 'staffrejected') continue;
         
-        // Check if booking has individual services (multi-service booking)
         if (booking['services'] is List && (booking['services'] as List).isNotEmpty) {
           for (final svc in (booking['services'] as List)) {
             if (svc is Map) {
@@ -2086,7 +2165,6 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
               
               final svcTime = svc['time']?.toString() ?? '';
               if (svcTime.isEmpty) continue;
-              
               final svcTimeParts = svcTime.split(':');
               if (svcTimeParts.length < 2) continue;
               
@@ -2094,26 +2172,21 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
               final svcDuration = (svc['duration'] ?? 60) as int;
               final svcEndMinutes = svcStartMinutes + svcDuration;
               
-              // Check for ANY overlap between new service and existing service
-              // Overlap occurs if: newStart < existingEnd AND existingStart < newEnd
               if (slotMinutes < svcEndMinutes && svcStartMinutes < newServiceEndMinutes) {
-                // Determine the reason for the conflict
                 if (slotMinutes >= svcStartMinutes && slotMinutes < svcEndMinutes) {
-                  return {'occupied': true, 'reason': 'booked'}; // Slot starts during existing booking
+                  return {'occupied': true, 'reason': 'booked'};
                 } else {
-                  return {'occupied': true, 'reason': 'insufficient_time'}; // Service would extend into existing booking
+                  return {'occupied': true, 'reason': 'insufficient_time'};
                 }
               }
             }
           }
         } else {
-          // Single service booking - check main staffId
           final bookingStaffId = booking['staffId']?.toString() ?? '';
           if (bookingStaffId != staffIdToCheck) continue;
           
           final bookingTime = booking['time']?.toString() ?? '';
           if (bookingTime.isEmpty) continue;
-          
           final timeParts = bookingTime.split(':');
           if (timeParts.length < 2) continue;
           
@@ -2121,14 +2194,11 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           final bookingDuration = (booking['duration'] ?? 60) as int;
           final bookingEndMinutes = bookingStartMinutes + bookingDuration;
           
-          // Check for ANY overlap between new service and existing booking
-          // Overlap occurs if: newStart < existingEnd AND existingStart < newEnd
           if (slotMinutes < bookingEndMinutes && bookingStartMinutes < newServiceEndMinutes) {
-            // Determine the reason for the conflict
             if (slotMinutes >= bookingStartMinutes && slotMinutes < bookingEndMinutes) {
-              return {'occupied': true, 'reason': 'booked'}; // Slot starts during existing booking
+              return {'occupied': true, 'reason': 'booked'};
             } else {
-              return {'occupied': true, 'reason': 'insufficient_time'}; // Service would extend into existing booking
+              return {'occupied': true, 'reason': 'insufficient_time'};
             }
           }
         }
@@ -2142,13 +2212,56 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
     // Returns: {'blocked': bool, 'reason': String?}
     Map<String, dynamic> isSlotBlockedByCurrentSelection(TimeOfDay slotTime) {
       // For staff bookings, always check for conflicts since staff are auto-assigned to all services
-      // For other roles, only check if staff is assigned
+      // For other roles, handle "Any Staff" aggregate check or specific staff check
+      
+      if (isAnyStaffSelected && _userRole != 'salon_staff') {
+        // "Any Staff" mode: check if enough free staff remain after existing bookings
+        // AND other services in the current booking session
+        if (eligibleStaffIds.isEmpty) return {'blocked': false};
+        
+        final slotMinutes = slotTime.hour * 60 + slotTime.minute;
+        final newServiceEndMinutes = slotMinutes + durationMinutes;
+        
+        final occupiedByExisting = eligibleStaffIds.where((sid) => isStaffOccupiedAtSlot(slotMinutes, sid)).length;
+        
+        int overlappingCurrentServices = 0;
+        for (final otherServiceId in _selectedServiceIds) {
+          if (otherServiceId == serviceId) continue;
+          
+          final otherTime = _serviceTimeSelections[otherServiceId];
+          if (otherTime == null) continue;
+          
+          final otherStaffId = _serviceStaffSelections[otherServiceId];
+          final otherIsAny = otherStaffId == null || otherStaffId == 'any';
+          
+          if (!otherIsAny && !eligibleStaffIds.contains(otherStaffId)) continue;
+          
+          final otherService = _services.firstWhere(
+            (s) => s['id'] == otherServiceId,
+            orElse: () => {},
+          );
+          final otherDuration = (otherService['duration'] ?? 60) as int;
+          
+          final otherStartMinutes = otherTime.hour * 60 + otherTime.minute;
+          final otherEndMinutes = otherStartMinutes + otherDuration;
+          
+          if (slotMinutes < otherEndMinutes && otherStartMinutes < newServiceEndMinutes) {
+            overlappingCurrentServices++;
+          }
+        }
+        
+        final freeStaff = eligibleStaffIds.length - occupiedByExisting;
+        if (freeStaff <= overlappingCurrentServices) {
+          return {'blocked': true, 'reason': 'all_staff_booked'};
+        }
+        
+        return {'blocked': false};
+      }
+      
       final bool shouldCheckConflicts;
       if (_userRole == 'salon_staff' && _currentUserId != null) {
-        // Staff bookings: always check conflicts (staff is assigned to all services)
         shouldCheckConflicts = true;
       } else {
-        // Other roles: only check if staff is assigned
         if (staffIdToCheck == null || staffIdToCheck.isEmpty) return {'blocked': false};
         shouldCheckConflicts = true;
       }
@@ -2187,13 +2300,11 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         final otherEndMinutes = otherStartMinutes + otherDuration;
         
         // Check for ANY overlap between new service and other selected service
-        // Overlap occurs if: newStart < otherEnd AND otherStart < newEnd
         if (slotMinutes < otherEndMinutes && otherStartMinutes < newServiceEndMinutes) {
-          // Determine the reason for the conflict
           if (slotMinutes >= otherStartMinutes && slotMinutes < otherEndMinutes) {
-            return {'blocked': true, 'reason': 'selected'}; // Slot starts during other selected service
+            return {'blocked': true, 'reason': 'selected'};
           } else {
-            return {'blocked': true, 'reason': 'insufficient_time_selected'}; // Would extend into other service
+            return {'blocked': true, 'reason': 'insufficient_time_selected'};
           }
         }
       }
