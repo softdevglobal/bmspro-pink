@@ -2075,6 +2075,15 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
         ? '${_selectedDate!.year.toString().padLeft(4, '0')}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}'
         : null;
 
+    // Helper: detect "Any Staff" staffId values (null, empty, "any", etc.)
+    bool isAnyStaffValue(String? sid) {
+      if (sid == null || sid.isEmpty) return true;
+      final s = sid.toLowerCase().trim();
+      if (s == 'null') return true;
+      if (s.contains('any')) return true;
+      return false;
+    }
+
     // Helper: check if a specific staff member has a conflicting booking at a given time slot
     bool isStaffOccupiedAtSlot(int slotMinutes, String targetStaffId) {
       if (bookingDateStr == null) return false;
@@ -2126,6 +2135,71 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       return false;
     }
 
+    // Helper: Count how many eligible staff slots are consumed at a given time
+    // by existing bookings (both specific-staff and any-staff bookings).
+    // This mirrors the server-side logic in booking-requests and slot-holds APIs.
+    Map<String, dynamic> countConsumedStaffAtSlot(int slotMinutes) {
+      if (bookingDateStr == null) return {'bookedStaffIds': <String>{}, 'anyStaffCount': 0};
+      final newServiceEndMinutes = slotMinutes + durationMinutes;
+      final Set<String> bookedStaffIds = {};
+      int anyStaffCount = 0;
+
+      for (final booking in _bookings) {
+        if (booking['date'] != bookingDateStr) continue;
+        final status = (booking['status']?.toString() ?? '').toLowerCase();
+        if (status == 'cancelled' || status == 'canceled' || status == 'staffrejected') continue;
+
+        if (booking['services'] is List && (booking['services'] as List).isNotEmpty) {
+          for (final svc in (booking['services'] as List)) {
+            if (svc is! Map) continue;
+            final svcTime = svc['time']?.toString() ?? '';
+            if (svcTime.isEmpty) continue;
+            final svcTimeParts = svcTime.split(':');
+            if (svcTimeParts.length < 2) continue;
+
+            final svcStartMinutes = (int.tryParse(svcTimeParts[0]) ?? 0) * 60 + (int.tryParse(svcTimeParts[1]) ?? 0);
+            final svcDuration = (svc['duration'] ?? 60) as int;
+            final svcEndMinutes = svcStartMinutes + svcDuration;
+
+            if (!(slotMinutes < svcEndMinutes && svcStartMinutes < newServiceEndMinutes)) continue;
+
+            final svcStaffId = svc['staffId']?.toString() ?? '';
+            if (!isAnyStaffValue(svcStaffId)) {
+              // Specific staff booking — mark that staff as busy
+              if (eligibleStaffIds.contains(svcStaffId)) {
+                bookedStaffIds.add(svcStaffId);
+              }
+            } else {
+              // "Any Staff" booking — consumes one staff slot from the pool
+              anyStaffCount++;
+            }
+          }
+        } else {
+          final bookingTime = booking['time']?.toString() ?? '';
+          if (bookingTime.isEmpty) continue;
+          final timeParts = bookingTime.split(':');
+          if (timeParts.length < 2) continue;
+
+          final bStartMinutes = (int.tryParse(timeParts[0]) ?? 0) * 60 + (int.tryParse(timeParts[1]) ?? 0);
+          final bDuration = (booking['duration'] ?? 60) as int;
+          final bEndMinutes = bStartMinutes + bDuration;
+
+          if (!(slotMinutes < bEndMinutes && bStartMinutes < newServiceEndMinutes)) continue;
+
+          final bStaffId = booking['staffId']?.toString() ?? '';
+          if (!isAnyStaffValue(bStaffId)) {
+            if (eligibleStaffIds.contains(bStaffId)) {
+              bookedStaffIds.add(bStaffId);
+            }
+          } else {
+            anyStaffCount++;
+          }
+        }
+      }
+
+      return {'bookedStaffIds': bookedStaffIds, 'anyStaffCount': anyStaffCount};
+    }
+
     // Helper function to check if a time slot is OCCUPIED (booking in progress at that time)
     // Also checks if the NEW service would OVERLAP with any existing booking
     // Returns: {'occupied': bool, 'reason': String?}
@@ -2135,11 +2209,16 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       final slotMinutes = slotTime.hour * 60 + slotTime.minute;
       
       if (isAnyStaffSelected) {
-        // "Any Staff" mode: slot is occupied only if ALL eligible staff are booked
+        // "Any Staff" mode: slot is occupied only if ALL eligible staff slots are consumed.
+        // Count both specific-staff bookings AND "any staff" bookings that consume from the pool.
         if (eligibleStaffIds.isEmpty) return {'occupied': false};
         
-        final allStaffOccupied = eligibleStaffIds.every((sid) => isStaffOccupiedAtSlot(slotMinutes, sid));
-        if (allStaffOccupied) {
+        final consumed = countConsumedStaffAtSlot(slotMinutes);
+        final bookedStaffIds = consumed['bookedStaffIds'] as Set<String>;
+        final anyStaffCount = consumed['anyStaffCount'] as int;
+        final freeStaff = eligibleStaffIds.length - bookedStaffIds.length - anyStaffCount;
+        
+        if (freeStaff <= 0) {
           return {'occupied': true, 'reason': 'all_staff_booked'};
         }
         return {'occupied': false};
@@ -2216,13 +2295,18 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
       
       if (isAnyStaffSelected && _userRole != 'salon_staff') {
         // "Any Staff" mode: check if enough free staff remain after existing bookings
-        // AND other services in the current booking session
+        // (including other "any staff" bookings) AND other services in the current booking session
         if (eligibleStaffIds.isEmpty) return {'blocked': false};
         
         final slotMinutes = slotTime.hour * 60 + slotTime.minute;
         final newServiceEndMinutes = slotMinutes + durationMinutes;
         
-        final occupiedByExisting = eligibleStaffIds.where((sid) => isStaffOccupiedAtSlot(slotMinutes, sid)).length;
+        // Count how many eligible staff slots are consumed by existing bookings
+        // This includes both specific-staff bookings AND "any staff" bookings
+        final consumed = countConsumedStaffAtSlot(slotMinutes);
+        final bookedStaffIds = consumed['bookedStaffIds'] as Set<String>;
+        final anyStaffCount = consumed['anyStaffCount'] as int;
+        final occupiedByExisting = bookedStaffIds.length + anyStaffCount;
         
         int overlappingCurrentServices = 0;
         for (final otherServiceId in _selectedServiceIds) {
@@ -2232,7 +2316,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           if (otherTime == null) continue;
           
           final otherStaffId = _serviceStaffSelections[otherServiceId];
-          final otherIsAny = otherStaffId == null || otherStaffId == 'any';
+          final otherIsAny = isAnyStaffValue(otherStaffId);
           
           if (!otherIsAny && !eligibleStaffIds.contains(otherStaffId)) continue;
           
@@ -2250,6 +2334,7 @@ class _WalkInBookingPageState extends State<WalkInBookingPage> with TickerProvid
           }
         }
         
+        // Free staff = total eligible - occupied by existing bookings (specific + any-staff)
         final freeStaff = eligibleStaffIds.length - occupiedByExisting;
         if (freeStaff <= overlappingCurrentServices) {
           return {'blocked': true, 'reason': 'all_staff_booked'};
